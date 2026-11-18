@@ -3,6 +3,7 @@ package rp2350
 
 import (
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/akh/rp2350sim/internal/m33"
@@ -10,14 +11,17 @@ import (
 
 // Memory map.
 const (
-	ROMBase    = 0x00000000
-	ROMSize    = 32 * 1024
-	FlashBase  = 0x10000000
-	FlashSize  = 4 * 1024 * 1024
-	SRAMBase   = 0x20000000
-	SRAMSize   = 520 * 1024
-	SIOBase    = 0xD0000000
-	PPBBase    = 0xE0000000
+	ROMBase   = 0x00000000
+	ROMSize   = 32 * 1024
+	FlashBase = 0x10000000
+	FlashSize = 4 * 1024 * 1024
+	SRAMBase  = 0x20000000
+	SRAMSize  = 520 * 1024
+	SIOBase   = 0xD0000000
+	PPBBase   = 0xE0000000
+	// SCSBase is the start of the System Control Space registers (NVIC, SCB,
+	// SysTick). PPBBase also covers the ITM and DWT, which are not modelled.
+	SCSBase    = 0xE000E000
 	PeriphBase = 0x40000000
 )
 
@@ -53,6 +57,7 @@ type Chip struct {
 	io  ioBank
 	sio sioBlock
 	tmr [2]timerBlock
+	usb *usbBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -68,6 +73,9 @@ type Chip struct {
 	// OnUART0 and OnUART1 receive console bytes written by firmware.
 	OnUART0 func(b byte)
 	OnUART1 func(b byte)
+
+	// USBLog, when non-nil, receives USB host-state diagnostics.
+	USBLog io.Writer
 
 	// IRQCount counts delivered exceptions (diagnostics).
 	IRQCount uint64
@@ -123,6 +131,8 @@ func New() *Chip {
 	c.AddSPI(0x40080000, 0)
 	c.AddSPI(0x40088000, 1)
 	c.addRegBlock(newDMA(c).block)
+	c.usb = newUSB(c)
+	c.addRegBlock(c.usb.block)
 	return c
 }
 
@@ -147,7 +157,7 @@ func (c *Chip) Step() {
 	c.Cycles++
 
 	c.tickPeripherals()
-	if c.NVIC.NextPending() != 0 {
+	if c.NVIC.PeekPending() != 0 {
 		c.IRQCount++
 	}
 
@@ -190,6 +200,9 @@ func (c *Chip) tickPeripherals() {
 	now := c.Cycles / cyclesPerMicrosecond
 	for i := range c.tmr {
 		c.tmr[i].tick(now)
+	}
+	if c.usb != nil {
+		c.usb.tick(c)
 	}
 }
 
@@ -255,7 +268,10 @@ func (c *Chip) Read8(addr uint32) uint8 {
 		return c.ROM[addr]
 	}
 	if addr >= PeriphBase {
-		return uint8(c.readMMIO(addr))
+		// Peripherals are word registers; byte and halfword accesses select
+		// within the containing word (the DPRAM is byte-addressed this way).
+		v := c.readMMIO(addr &^ 3)
+		return uint8(v >> ((addr & 3) * 8))
 	}
 	return c.unhandledRead8(addr)
 }
@@ -273,12 +289,9 @@ func (c *Chip) Read16(addr uint32) uint16 {
 		return uint16(c.ROM[addr]) | uint16(c.ROM[addr+1])<<8
 	}
 	if addr >= PeriphBase {
-		v := c.readMMIO(addr)
-		if addr < SIOBase && addr&2 != 0 {
+		v := c.readMMIO(addr &^ 3)
+		if addr&2 != 0 {
 			return uint16(v >> 16)
-		}
-		if addr < SIOBase {
-			return uint16(v)
 		}
 		return uint16(v)
 	}
@@ -393,8 +406,8 @@ func (c *Chip) readMMIO(addr uint32) uint32 {
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
 		return c.sio.read(c, addr-SIOBase)
 	}
-	if addr >= PPBBase && addr < PPBBase+0x10000 {
-		return c.NVIC.read(addr - PPBBase)
+	if addr >= SCSBase && addr < SCSBase+0x1000 {
+		return c.NVIC.read(addr - SCSBase)
 	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {
@@ -413,8 +426,8 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 		c.sio.write(c, addr-SIOBase, v)
 		return
 	}
-	if addr >= PPBBase && addr < PPBBase+0x10000 {
-		c.NVIC.write(addr-PPBBase, v)
+	if addr >= SCSBase && addr < SCSBase+0x1000 {
+		c.NVIC.write(addr-SCSBase, v)
 		return
 	}
 	for _, b := range c.regs {
@@ -475,6 +488,13 @@ func (c *Chip) SIOPushes() uint64 { return c.sio.Pushes }
 
 // Core1Launches reports how many times core 1 was released (diagnostics).
 func (c *Chip) Core1Launches() uint64 { return c.sio.Launches }
+
+// SetUSBCDC installs the callback that receives console bytes written by
+// firmware to the USB CDC data endpoint.
+func (c *Chip) SetUSBCDC(fn func([]byte)) { c.usb.OnCDC = fn }
+
+// SendUSBCDC delivers data from the host to the device's CDC OUT endpoint.
+func (c *Chip) SendUSBCDC(data []byte) { c.usb.SendCDC(data) }
 
 // NowMicros returns the current virtual time in microseconds.
 func (c *Chip) NowMicros() uint64 { return c.Cycles / cyclesPerMicrosecond }

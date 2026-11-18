@@ -171,6 +171,9 @@ func (c *CPU) setReg(i, v uint32) {
 // handling exception return when the special EXC_RETURN values are used.
 func (c *CPU) branchTo(addr uint32) {
 	if addr&0xF0000000 == 0xF0000000 {
+		// The stack pointer may have moved during this instruction (pop, for
+		// example), and the exception frame is read through the banked copy.
+		c.syncSP()
 		c.exceptionReturn(addr)
 		return
 	}
@@ -231,10 +234,22 @@ func (c *CPU) Step() int {
 		c.R[15] = pc + 2
 		c.exec16(pc, hw1)
 	}
+	c.syncSP()
 	if itBefore != 0 {
 		c.advanceIT()
 	}
 	return 1
+}
+
+// syncSP keeps the banked stack pointer in step with R13, which is the register
+// instructions actually modify. Exception entry/exit and CONTROL writes read
+// MSP/PSP directly, so those copies must not go stale.
+func (c *CPU) syncSP() {
+	if c.IPSR == 0 && c.CONTROL&2 != 0 {
+		c.PSP = c.R[13]
+	} else {
+		c.MSP = c.R[13]
+	}
 }
 
 func (c *CPU) advanceIT() {
@@ -324,7 +339,8 @@ func (c *CPU) Exception(n uint32) {
 	c.IPSR = n
 	c.APSR &^= flagQ
 	c.itstate = 0
-	c.R[15] = c.VectorBase() + 4*n
+	// PC is loaded from the vector table, with the Thumb bit stripped.
+	c.R[15] = c.Bus.Read32(c.VectorBase()+4*n) &^ 1
 }
 
 // VectorBase returns the active vector table base derived from VTOR.

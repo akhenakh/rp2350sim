@@ -15,8 +15,9 @@ func (c *CPU) exec32(pc uint32, hw1 uint16) {
 		c.exec32DataProc(hw1, hw2, false)
 
 	// ---- MOVW / MOVT / ADDW / SUBW (must precede the generic F0 group) ----
-	case hw1&0xFBF0 == 0xF240, hw1&0xFBF0 == 0xF2C0,
-		hw1&0xFBF0 == 0xF200, hw1&0xFBF0 == 0xF2A0:
+	// These all have hw2 bit 15 clear; conditional branches set it.
+	case hw2&0x8000 == 0 && (hw1&0xFBF0 == 0xF240 || hw1&0xFBF0 == 0xF2C0 ||
+		hw1&0xFBF0 == 0xF200 || hw1&0xFBF0 == 0xF2A0):
 		c.exec32ImmData(hw1, hw2)
 
 	// ---- MSR/MRS/barriers/bitfield ----
@@ -696,6 +697,9 @@ func (c *CPU) writeSpecialReg(sysm, v uint32) {
 		}
 	case 0x09: // PSP
 		c.PSP = v &^ 3
+		if c.IPSR == 0 && c.CONTROL&2 != 0 {
+			c.R[13] = c.PSP
+		}
 	case 0x10: // PRIMASK
 		c.PRIMASK = v & 1
 	case 0x11: // FAULTMASK

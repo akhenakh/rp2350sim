@@ -92,6 +92,10 @@ func main() {
 	}
 	c.OnUART0 = func(b byte) { os.Stdout.Write([]byte{b}) }
 	c.OnUART1 = func(b byte) { os.Stdout.Write([]byte{b}) }
+	c.SetUSBCDC(func(b []byte) { os.Stdout.Write(b) })
+	if os.Getenv("RP2350SIM_USB_LOG") != "" {
+		c.USBLog = os.Stderr
+	}
 
 	if *tracePins != "" {
 		wanted := map[int]bool{}

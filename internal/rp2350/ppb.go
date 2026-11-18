@@ -74,8 +74,19 @@ func (n *NVIC) wake() {
 	}
 }
 
-// NextPending implements m33.Interrupts.
+// PeekPending reports the highest-priority enabled pending IRQ without
+// clearing it. It is used for diagnostics only.
+func (n *NVIC) PeekPending() int {
+	return n.bestPending(false)
+}
+
+// NextPending implements m33.Interrupts. Taking an exception clears its pending
+// bit, as the core does in hardware.
 func (n *NVIC) NextPending() int {
+	return n.bestPending(true)
+}
+
+func (n *NVIC) bestPending(clear bool) int {
 	cpu := n.chip.currentCPU()
 	if cpu == nil {
 		return 0
@@ -100,6 +111,9 @@ func (n *NVIC) NextPending() int {
 	}
 	if best < 0 {
 		return 0
+	}
+	if clear {
+		n.pending[best/32] &^= 1 << uint(best%32)
 	}
 	return 16 + best
 }
