@@ -128,33 +128,42 @@ func RootView() {
 
 // boardPicker is the startup screen: one card per YAML board definition.
 func boardPicker() {
-	Container(Attrs(Grow(1), Expand, Center, Gap(14), Pad(28)), func() {
-		Label("rp2350sim", FontSize(32), FontWeight(700))
-		Label("RP2350 emulator · choose the board to emulate", FontSize(15))
-		Container(Attrs(Gap(10), FixWidth(780)), func() {
-			for i := range boards {
-				b := &boards[i]
-				ContainerWithKey(b.ID, Attrs(Row, CrossMid, Expand, Gap(14), Pad(14), Corners(10),
-					Background(220, 12, 10, 1), BorderWidth(1), BorderColor(220, 8, 28, 1)), func() {
-					st := ProcessButtonEvents(false)
-					if st.Hovered {
-						ModAttrs(Background(220, 12, 15, 1), BorderColor(220, 20, 45, 1))
-					}
-					if st.Clicked {
-						selectBoard(b)
-					}
-					Container(Attrs(Grow(1), Gap(3)), func() {
-						Label(b.Name, FontSize(17), FontWeight(700))
-						Label(b.Description, FontSize(12), TextColor(220, 6, 70, 1))
-					})
-					for _, badge := range boardBadges(b) {
-						Label(badge, FontSize(11), TextColor(140, 30, 70, 1), FontWeight(600))
-					}
-					Label("→", FontSize(16))
-				})
-			}
+	Container(Attrs(Grow(1), Expand, Gap(10), Pad(28)), func() {
+		Container(Attrs(CrossMid, Expand, Gap(4)), func() {
+			Label("rp2350sim", FontSize(32), FontWeight(700))
+			Label("RP2350 emulator · choose the board to emulate", FontSize(15))
 		})
-		Label("Board list: RP2350SIM_BOARDS=/path/to/boards.yaml", FontSize(11), TextColor(220, 5, 50, 1))
+		// The board list scrolls: it grows as boards.yaml grows.
+		Container(Attrs(Grow(1), Expand, Clip, Viewport, CrossMid), func() {
+			ScrollOnInput()
+			ScrollBars()
+			Container(Attrs(Gap(10), FixWidth(780)), func() {
+				for i := range boards {
+					b := &boards[i]
+					ContainerWithKey(b.ID, Attrs(Row, CrossMid, Expand, Gap(14), Pad(14), Corners(10),
+						Background(220, 12, 10, 1), BorderWidth(1), BorderColor(220, 8, 28, 1)), func() {
+						st := ProcessButtonEvents(false)
+						if st.Hovered {
+							ModAttrs(Background(220, 12, 15, 1), BorderColor(220, 20, 45, 1))
+						}
+						if st.Clicked {
+							selectBoard(b)
+						}
+						Container(Attrs(Grow(1), Gap(3)), func() {
+							Label(b.Name, FontSize(17), FontWeight(700))
+							Label(b.Description, FontSize(12), TextColor(220, 6, 70, 1))
+						})
+						for _, badge := range boardBadges(b) {
+							Label(badge, FontSize(11), TextColor(140, 30, 70, 1), FontWeight(600))
+						}
+						Label("→", FontSize(16))
+					})
+				}
+			})
+		})
+		Container(Attrs(CrossMid, Expand), func() {
+			Label("Board list: RP2350SIM_BOARDS=/path/to/boards.yaml", FontSize(11), TextColor(220, 5, 50, 1))
+		})
 	})
 }
 
