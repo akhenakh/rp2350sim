@@ -78,6 +78,44 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BLINKY}} -seconds 3 -trace-pins 25'
 
+  firmware:piotest:
+    desc: Build the PIO API conformance firmware
+    dir: firmware/piotest
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/piotest.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/piotest.elf .'
+
+  run:piotest:
+    desc: Run the PIO checks through the tinygo-org/pio API
+    deps: [build, firmware:piotest]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/piotest.elf -seconds 0.3'
+
+  firmware:ws2812:
+    desc: Build the WS2812B example (TinyGo PIO driver)
+    dir: firmware/ws2812
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/ws2812.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/ws2812.elf .'
+
+  run:ws2812:
+    desc: Run the WS2812B example and decode the LED frames
+    deps: [build, firmware:ws2812]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/ws2812.elf -seconds 1.7 -ws2812 0'
+
   run:lcd:
     desc: Run the ST7789 example in the emulator (LCD attached, backlight traced)
     deps: [build, firmware:lcd]

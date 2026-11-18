@@ -5,8 +5,8 @@ A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodif
 
 Status: runs real TinyGo programs end to end — package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
-DMA, PWM, ADC, I2C, PIO (WS2812 verified), an ST7789 display and W5500
-Ethernet. The Cortex-M33 interpreter is checked against QEMU instruction by
+DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), an ST7789 display and
+W5500 Ethernet. The Cortex-M33 interpreter is checked against QEMU instruction by
 instruction.
 
 ## Layout
@@ -36,6 +36,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
+| `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
+| `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
 | `task ui:blinky` (`ui`) | desktop UI with the blinky firmware loaded |
 | `task ui:lcd` | desktop UI with the ST7789 example loaded |
@@ -72,6 +74,7 @@ Useful flags:
 | `-watch ADDR`, `-watch-val V`, `-watch-reg N` | write and register logging |
 | `-poke ADDR=VAL` | write memory before starting |
 | `-peek ADDR` | print a memory word at exit |
+| `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
 

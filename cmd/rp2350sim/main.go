@@ -38,6 +38,7 @@ func main() {
 		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
 		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
@@ -96,6 +97,14 @@ func main() {
 				fmt.Fprintf(os.Stderr, format+"\n", args...)
 			}
 		}
+	}
+
+	if *wsPin >= 0 {
+		ws := devices.NewWS2812B(c, *wsPin)
+		ws.Logf = func(format string, args ...any) {
+			fmt.Printf("ws2812: "+format+"\n", args...)
+		}
+		c.CycleHooks = append(c.CycleHooks, ws.Tick)
 	}
 
 	spiLog := os.Getenv("RP2350SIM_SPI_LOG") != ""

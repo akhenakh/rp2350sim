@@ -456,7 +456,30 @@ func (c *Chip) readMMIO(addr uint32) uint32 {
 			return b.read(c, addr-b.base)
 		}
 	}
+	if off, b, ok := c.aliasTarget(addr); ok {
+		return b.read(c, off)
+	}
 	return c.unhandledRead32(addr)
+}
+
+// aliasTarget resolves the RP2350 atomic register aliases: XOR at +0x1000,
+// SET at +0x2000 and CLR at +0x3000 of a 4 KB register block.
+func (c *Chip) aliasTarget(addr uint32) (uint32, *regBlock, bool) {
+	for _, b := range c.regs {
+		if b.size > 0x1000 {
+			continue
+		}
+		if addr >= b.base+0x1000 && addr < b.base+0x1000+b.size {
+			return addr - (b.base + 0x1000), b, true
+		}
+		if addr >= b.base+0x2000 && addr < b.base+0x2000+b.size {
+			return addr - (b.base + 0x2000), b, true
+		}
+		if addr >= b.base+0x3000 && addr < b.base+0x3000+b.size {
+			return addr - (b.base + 0x3000), b, true
+		}
+	}
+	return 0, nil, false
 }
 
 func (c *Chip) writeMMIO(addr, v uint32) {
@@ -477,6 +500,18 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 			b.write(c, addr-b.base, v)
 			return
 		}
+	}
+	// Atomic aliases: SET/CLR/XOR.
+	if off, b, ok := c.aliasTarget(addr); ok {
+		switch {
+		case addr >= b.base+0x1000 && addr < b.base+0x2000: // XOR
+			b.write(c, off, b.read(c, off)^v)
+		case addr >= b.base+0x2000 && addr < b.base+0x3000: // SET
+			b.write(c, off, b.read(c, off)|v)
+		default: // CLR
+			b.write(c, off, b.read(c, off)&^v)
+		}
+		return
 	}
 	c.unhandledWrite(addr, v)
 }

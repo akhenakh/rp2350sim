@@ -172,8 +172,14 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 		case 0x08: // SHIFTCTRL; changing a FIFO join flushes both FIFOs
 			old := s.shiftctrl
 			s.shiftctrl = v
+			if pioDebug {
+				fmt.Fprintf(os.Stderr, "c=%d shiftctrl pio%d.%d %08x -> %08x\n", p.chip.Cycles, p.id, i, old, v)
+			}
 			if (old^v)&(1<<30|1<<31) != 0 {
 				s.txN, s.rxN = 0, 0
+				if pioDebug {
+					fmt.Fprintf(os.Stderr, "  flush\n")
+				}
 			}
 		case 0x0C: // ADDR
 			s.pc = uint8(v & 0x1F)
@@ -262,6 +268,9 @@ func (s *pioSM) txFull() bool { return s.txN >= s.txCap() }
 func (s *pioSM) rxFull() bool { return s.rxN >= s.rxCap() }
 
 func (s *pioSM) pushTx(v uint32) {
+	if pioDebug {
+		fmt.Fprintf(os.Stderr, "c=%d tx pio%d.%d <- %08x\n", s.p.chip.Cycles, s.p.id, s.idx, v)
+	}
 	if s.txFull() {
 		s.p.fdebug |= 1 << uint(16+s.idx) // TXOVER
 		return
@@ -271,6 +280,9 @@ func (s *pioSM) pushTx(v uint32) {
 }
 
 func (s *pioSM) popTx() (uint32, bool) {
+	if pioDebug {
+		fmt.Fprintf(os.Stderr, "c=%d popTx pio%d.%d txN=%d\n", s.p.chip.Cycles, s.p.id, s.idx, s.txN)
+	}
 	if s.txN == 0 {
 		return 0, false
 	}
@@ -362,8 +374,8 @@ func (s *pioSM) step() {
 	instr := s.p.mem[s.pc]
 	if pioDebug && pioDebugN < 120 {
 		pioDebugN++
-		fmt.Fprintf(os.Stderr, "pio%d.%d pc=%d instr=%04x out=%d y=%08x osr=%08x tx=%d pin=%v\n",
-			s.p.id, s.idx, s.pc, instr, s.outCount, s.y, s.osr, s.txN, s.p.chip.Pins.Level(0))
+		fmt.Fprintf(os.Stderr, "c=%d pio%d.%d pc=%d instr=%04x out=%d y=%08x osr=%08x tx=%d pin=%v\n",
+			s.p.chip.Cycles, s.p.id, s.idx, s.pc, instr, s.outCount, s.y, s.osr, s.txN, s.p.chip.Pins.Level(0))
 	}
 	delay := s.applySide(instr)
 	s.pcSet = false
@@ -379,8 +391,15 @@ func (s *pioSM) step() {
 // execNow runs an instruction written to SMx_INSTR: it takes effect
 // immediately and does not normally advance the program counter.
 func (s *pioSM) execNow(instr uint16) {
+	if pioDebug {
+		fmt.Fprintf(os.Stderr, "c=%d exec pio%d.%d instr=%04x x=%08x osr=%08x out=%d tx=%d rx=%d\n",
+			s.p.chip.Cycles, s.p.id, s.idx, instr, s.x, s.osr, s.outCount, s.txN, s.rxN)
+	}
 	s.pcSet = false
 	s.execute(instr)
+	if pioDebug {
+		fmt.Fprintf(os.Stderr, "  -> x=%08x osr=%08x out=%d tx=%d rx=%d\n", s.x, s.osr, s.outCount, s.txN, s.rxN)
+	}
 }
 
 func (s *pioSM) advance() {
@@ -643,7 +662,7 @@ func (s *pioSM) execOut(instr uint16) bool {
 	dest := int(instr>>5) & 7
 	right := s.outShiftRight()
 	sticky := s.execctrl&(1<<17) != 0
-	if s.autopull() && s.outCount >= s.pullThresh() {
+	if s.outCount >= s.pullThresh() && s.autopull() {
 		if v, ok := s.popTx(); ok {
 			s.osr = v
 			s.outCount = 0
@@ -653,6 +672,13 @@ func (s *pioSM) execOut(instr uint16) bool {
 			// program's falling edge must not be skipped).
 			s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
 			return false
+		}
+	} else if s.outCount >= 32 {
+		// An empty OSR is refilled from the TX FIFO on OUT even when
+		// autopull is disabled; this is how the HAL's SetX/SetY work.
+		if v, ok := s.popTx(); ok {
+			s.osr = v
+			s.outCount = 0
 		}
 	}
 	var v uint32
