@@ -21,7 +21,11 @@ func (c *CPU) exec32(pc uint32, hw1 uint16) {
 		c.exec32ImmData(hw1, hw2)
 
 	// ---- MSR/MRS/barriers/bitfield ----
-	case hw1&0xFF00 == 0xF300:
+	// The F3xx range overlaps the wide conditional branches BGT.W (0xF300)
+	// and BLE.W (0xF340), so only the exact system encodings may be claimed
+	// here. Bitfield instructions have hw2 bit 15 clear; branches have it
+	// set.
+	case isSystem32(hw1, hw2):
 		c.exec32System(hw1, hw2)
 
 	// ---- Modified immediate / branches ----
@@ -48,6 +52,26 @@ func (c *CPU) exec32(pc uint32, hw1 uint16) {
 		}
 		c.Halt("unimplemented 32-bit instruction")
 	}
+}
+
+// isSystem32 reports whether the F3xx pair is a system or bitfield
+// instruction rather than a wide conditional branch.
+func isSystem32(hw1, hw2 uint16) bool {
+	switch {
+	case hw1&0xFFF0 == 0xF380: // MSR
+		return true
+	case hw1 == 0xF3EF: // MRS
+		return true
+	case hw1&0xFFF0 == 0xF3B0: // barriers / CLREX
+		return true
+	case hw2&0x8000 == 0 && (hw1&0xFFF0 == 0xF340 || // SBFX
+		hw1&0xFFF0 == 0xF360 || // BFI / BFC
+		hw1&0xFFF0 == 0xF3C0): // UBFX
+		return true
+	case hw1 == 0xF3AF && hw2 == 0x8000: // NOP.W
+		return true
+	}
+	return false
 }
 
 // ---- E8 group ----
@@ -136,7 +160,58 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 			c.branchTo(pcVal)
 		}
 
-	case hw1&0xFF00 == 0xE900 && hw1&0x00C0 != 0: // STRD / LDRD (immediate, imm8*4)
+	case hw1&0xFFF0 == 0xE840: // STREX
+		rn := uint32(hw1 & 0xF)
+		rd := uint32(hw2 >> 8 & 0xF)
+		rt := uint32(hw2 >> 12)
+		imm := uint32(hw2&0xFF) << 2
+		addr := c.R[rn] + imm
+		if c.monitor == addr && c.monitorValid {
+			c.Bus.Write32(addr, c.R[rt])
+			c.R[rd] = 0
+		} else {
+			c.R[rd] = 1
+		}
+		c.monitorValid = false
+
+	case hw1&0xFFF0 == 0xE850: // LDREX
+		rn := uint32(hw1 & 0xF)
+		rt := uint32(hw2 >> 12)
+		imm := uint32(hw2&0xFF) << 2
+		addr := c.R[rn] + imm
+		c.R[rt] = c.Bus.Read32(addr)
+		c.monitor = addr
+		c.monitorValid = true
+
+	case hw1&0xFFF0 == 0xE8C0 && hw2&0x0F00 == 0x0F00: // STLEX / STL
+		rn := uint32(hw1 & 0xF)
+		rt := uint32(hw2 >> 12)
+		addr := c.R[rn]
+		if hw2&0xF0 == 0xE0 { // STLEX Rd, Rt, [Rn]
+			rd := uint32(hw2 & 0xF)
+			if c.monitor == addr && c.monitorValid {
+				c.Bus.Write32(addr, c.R[rt])
+				c.R[rd] = 0
+			} else {
+				c.R[rd] = 1
+			}
+			c.monitorValid = false
+		} else { // STL
+			c.Bus.Write32(addr, c.R[rt])
+		}
+
+	case hw1&0xFFF0 == 0xE8D0 && hw2&0x0F00 == 0x0F00 &&
+		(hw2&0xFF == 0xAF || hw2&0xFF == 0xEF): // LDA / LDAEX
+		rn := uint32(hw1 & 0xF)
+		rt := uint32(hw2 >> 12)
+		addr := c.R[rn]
+		c.R[rt] = c.Bus.Read32(addr)
+		if hw2&0xFF == 0xEF {
+			c.monitor = addr
+			c.monitorValid = true
+		}
+
+	case hw1&0xFE40 == 0xE840: // STRD / LDRD (immediate, imm8*4)
 		rn := uint32(hw1 & 0xF)
 		u := hw1&0x0080 != 0
 		p := hw1&0x0040 != 0
@@ -162,56 +237,6 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 		}
 		if w || !p {
 			c.R[rn] = uint32(int32(base) + imm)
-		}
-
-	case hw1&0xFFF0 == 0xE840: // STREX
-		rn := uint32(hw1 & 0xF)
-		rd := uint32(hw2 >> 8 & 0xF)
-		rt := uint32(hw2 >> 12)
-		imm := uint32(hw2&0xFF) << 2
-		addr := c.R[rn] + imm
-		if c.monitor == addr && c.monitorValid {
-			c.Bus.Write32(addr, c.R[rt])
-			c.R[rd] = 0
-		} else {
-			c.R[rd] = 1
-		}
-		c.monitorValid = false
-
-	case hw1&0xFFF0 == 0xE850: // LDREX
-		rn := uint32(hw1 & 0xF)
-		rt := uint32(hw2 >> 12)
-		imm := uint32(hw2&0xFF) << 2
-		addr := c.R[rn] + imm
-		c.R[rt] = c.Bus.Read32(addr)
-		c.monitor = addr
-		c.monitorValid = true
-
-	case hw1&0xFFF0 == 0xE8C0: // STLEX / STL
-		rn := uint32(hw1 & 0xF)
-		rt := uint32(hw2 >> 12)
-		addr := c.R[rn]
-		if hw2&0xF0 == 0xE0 { // STLEX Rd, Rt, [Rn]
-			rd := uint32(hw2 & 0xF)
-			if c.monitor == addr && c.monitorValid {
-				c.Bus.Write32(addr, c.R[rt])
-				c.R[rd] = 0
-			} else {
-				c.R[rd] = 1
-			}
-			c.monitorValid = false
-		} else { // STL
-			c.Bus.Write32(addr, c.R[rt])
-		}
-
-	case hw1&0xFFF0 == 0xE8D0 && (hw2&0xFF == 0xAF || hw2&0xFF == 0xEF): // LDA / LDAEX
-		rn := uint32(hw1 & 0xF)
-		rt := uint32(hw2 >> 12)
-		addr := c.R[rn]
-		c.R[rt] = c.Bus.Read32(addr)
-		if hw2&0xFF == 0xEF {
-			c.monitor = addr
-			c.monitorValid = true
 		}
 
 	default:

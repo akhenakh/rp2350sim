@@ -198,6 +198,51 @@ func TestBranchTargets(t *testing.T) {
 	}
 }
 
+// TestWideConditionalBranches covers the F3xx encodings that collide with the
+// system/bitfield instruction space: BGT.W (0xF300) and BLE.W (0xF340).
+func TestWideConditionalBranches(t *testing.T) {
+	// bgt.w #0x100: Z == 0 and N == V.
+	c := run32(t, 0xF300, 0x8080)
+	if c.R[15] != 0x104 {
+		t.Fatalf("bgt.w: pc=%#x want 0x104", c.R[15])
+	}
+
+	// ble.w #0x100: Z == 1.
+	c = run32With(t, 0xF340, 0x8080, flagZ)
+	if c.R[15] != 0x104 {
+		t.Fatalf("ble.w: pc=%#x want 0x104", c.R[15])
+	}
+
+	// sbfx r0, r1, #4, #8 must still decode as a bitfield instruction.
+	bus := newTestBus()
+	bus.Write16(0, 0xF341)
+	bus.Write16(2, 0x1007)
+	bus.Write16(4, 0xBF00)
+	c = New(bus)
+	c.R[15] = 0
+	c.R[1] = 0x0000_0F80
+	c.Step()
+	if c.R[15] != 4 {
+		t.Fatalf("sbfx: pc=%#x want 4", c.R[15])
+	}
+	if c.R[0] != 0xFFFFFFF8 {
+		t.Fatalf("sbfx: r0=%#x want 0xfffffff8", c.R[0])
+	}
+}
+
+func run32With(t *testing.T, hw1, hw2 uint16, flags uint32) *CPU {
+	t.Helper()
+	bus := newTestBus()
+	bus.Write16(0, hw1)
+	bus.Write16(2, hw2)
+	bus.Write16(4, 0xBF00)
+	c := New(bus)
+	c.R[15] = 0
+	c.APSR |= flags
+	c.Step()
+	return c
+}
+
 func TestITBlock(t *testing.T) {
 	// it eq ; movs r0, #1  (taken)
 	bus := newTestBus()
