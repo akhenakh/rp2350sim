@@ -13,15 +13,22 @@ var embeddedBoards []byte
 
 // BoardDef describes one selectable board and the devices attached to it.
 type BoardDef struct {
-	ID          string       `yaml:"id"`
-	Name        string       `yaml:"name"`
-	Description string       `yaml:"description"`
-	LCD         *LCDDevice   `yaml:"lcd"`
-	Ethernet    *EthDevice   `yaml:"ethernet"`
-	WS2812      *LEDDevice   `yaml:"ws2812"`
-	Analog      []SignalDef  `yaml:"analog"`
-	Scope       []int        `yaml:"scope"`
-	Logic       *LogicDevice `yaml:"logic"`
+	ID          string         `yaml:"id"`
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	LCD         *LCDDevice     `yaml:"lcd"`
+	Ethernet    *EthDevice     `yaml:"ethernet"`
+	WS2812      *LEDDevice     `yaml:"ws2812"`
+	Analog      []SignalDef    `yaml:"analog"`
+	Scope       []int          `yaml:"scope"`
+	Logic       *LogicDevice   `yaml:"logic"`
+	Serial      []SerialDevice `yaml:"serial"`
+}
+
+// SerialDevice exposes a hardware UART over TCP.
+type SerialDevice struct {
+	UART   int    `yaml:"uart"`
+	Listen string `yaml:"listen"`
 }
 
 type LCDDevice struct {
@@ -189,6 +196,12 @@ func LoadBoards() ([]BoardDef, error) {
 			if err := validSPI(spi, d.SPI, "ethernet"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
+		}
+		for _, sd := range b.Serial {
+			if sd.UART < 0 || sd.UART > 1 {
+				return nil, fmt.Errorf("boards: %s: serial uart must be 0 or 1", b.ID)
+			}
+			// An empty listen address means 127.0.0.1:0 (kernel-chosen port).
 		}
 	}
 	return file.Boards, nil

@@ -80,6 +80,15 @@ boards:
       spi: 0
       cs: 17
 
+  - id: pico2-serial
+    name: RP2350 + TCP serial
+    description: UART1 bridged to an automatic TCP port (shown in the Console tab)
+    scope: [4, 5]
+    serial:
+      - uart: 1
+    logic:
+      uart: { bus: 1, tx: 4, rx: 5, baud: 115200 }
+
   - id: pico2-analog
     name: RP2350 + analog + protocols
     description: 1 kHz sine on GP26 plus UART/I2C/SPI demo pins for the analyzers

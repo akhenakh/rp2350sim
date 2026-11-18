@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ type MachineState struct {
 	WSEnabled  bool
 	EthKind    string
 	EthLog     []string
+	Serial     []string
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -72,6 +74,13 @@ type Emu struct {
 	uartEvents []UARTEvent
 	spiEvents  []SPIEvent
 	i2cEvents  []I2CEvent
+
+	trigger LogicTrigger
+	frozen  frozenLogic
+
+	bridges    []*devices.UARTBridge
+	bridgeErrs []string
+	serialSig  string
 }
 
 // UARTEvent is one byte written to (or received from) a hardware UART.
@@ -88,6 +97,23 @@ type SPIEvent struct {
 	Cycle uint64
 	TX    byte
 	RX    byte
+}
+
+// LogicTrigger arms a stop condition for the logic analyzer. Kind is "",
+// "any", "uart", "i2c" or "spi"; Pause also pauses the machine.
+type LogicTrigger struct {
+	Kind  string
+	Pause bool
+}
+
+type frozenLogic struct {
+	triggered bool
+	info      string
+	pins      []int
+	samples   []devices.TraceSample
+	uart      []UARTEvent
+	spi       []SPIEvent
+	i2c       []I2CEvent
 }
 
 // I2CEvent is one phase of a hardware I2C transfer.
@@ -128,6 +154,51 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	e.loadLocked()
 }
 
+// SetLogicTrigger arms or disarms the analyzer trigger and clears any frozen
+// capture.
+func (e *Emu) SetLogicTrigger(t LogicTrigger) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.trigger = t
+	e.frozen = frozenLogic{}
+}
+
+// RearmLogic clears a frozen capture and waits for the next trigger event.
+func (e *Emu) RearmLogic() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.frozen = frozenLogic{}
+}
+
+// LogicTriggered reports whether a capture is frozen and what caused it.
+func (e *Emu) LogicTriggered() (bool, string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.frozen.triggered, e.frozen.info
+}
+
+// checkTriggerLocked captures the trace and event rings on a match. The
+// caller holds e.mu.
+func (e *Emu) checkTriggerLocked(kind, info string) {
+	if e.frozen.triggered || e.trigger.Kind == "" {
+		return
+	}
+	if e.trigger.Kind != "any" && e.trigger.Kind != kind {
+		return
+	}
+	e.frozen.triggered = true
+	e.frozen.info = info
+	if e.logic != nil {
+		e.frozen.pins, e.frozen.samples = e.logic.Snapshot()
+	}
+	e.frozen.uart = append([]UARTEvent(nil), e.uartEvents...)
+	e.frozen.spi = append([]SPIEvent(nil), e.spiEvents...)
+	e.frozen.i2c = append([]I2CEvent(nil), e.i2cEvents...)
+	if e.trigger.Pause {
+		e.running = false
+	}
+}
+
 // SetScopePins changes the scope channels without resetting the machine.
 func (e *Emu) SetScopePins(pins []int) {
 	e.mu.Lock()
@@ -153,6 +224,13 @@ func (e *Emu) ScopeData() ([]int, []devices.TraceSample, uint64) {
 func (e *Emu) LogicData() ([]int, []devices.TraceSample, uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.frozen.triggered {
+		interval := uint64(devices.LogicInterval)
+		if e.logic != nil {
+			interval = e.logic.Interval
+		}
+		return e.frozen.pins, e.frozen.samples, interval
+	}
 	if e.logic == nil {
 		return nil, nil, 0
 	}
@@ -171,6 +249,9 @@ func (e *Emu) USBEvents() []USBEvent {
 func (e *Emu) UARTEvents() []UARTEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.frozen.triggered {
+		return append([]UARTEvent(nil), e.frozen.uart...)
+	}
 	return append([]UARTEvent(nil), e.uartEvents...)
 }
 
@@ -178,6 +259,9 @@ func (e *Emu) UARTEvents() []UARTEvent {
 func (e *Emu) SPIEvents() []SPIEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.frozen.triggered {
+		return append([]SPIEvent(nil), e.frozen.spi...)
+	}
 	return append([]SPIEvent(nil), e.spiEvents...)
 }
 
@@ -185,6 +269,9 @@ func (e *Emu) SPIEvents() []SPIEvent {
 func (e *Emu) I2CEvents() []I2CEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.frozen.triggered {
+		return append([]I2CEvent(nil), e.frozen.i2c...)
+	}
 	return append([]I2CEvent(nil), e.i2cEvents...)
 }
 
@@ -193,6 +280,9 @@ func (e *Emu) addUART(bus int, cycle uint64, in bool, b byte) {
 	if len(e.uartEvents) > 512 {
 		e.uartEvents = e.uartEvents[len(e.uartEvents)-256:]
 	}
+	if !in {
+		e.checkTriggerLocked("uart", fmt.Sprintf("UART TX 0x%02x", b))
+	}
 }
 
 func (e *Emu) addSPI(bus int, cycle uint64, tx, rx byte) {
@@ -200,6 +290,7 @@ func (e *Emu) addSPI(bus int, cycle uint64, tx, rx byte) {
 	if len(e.spiEvents) > 512 {
 		e.spiEvents = e.spiEvents[len(e.spiEvents)-256:]
 	}
+	e.checkTriggerLocked("spi", fmt.Sprintf("SPI MOSI 0x%02x", tx))
 }
 
 func (e *Emu) addI2C(bus int, cycle uint64, kind string, addr uint8, data byte, ack bool) {
@@ -207,6 +298,11 @@ func (e *Emu) addI2C(bus int, cycle uint64, kind string, addr uint8, data byte, 
 	if len(e.i2cEvents) > 512 {
 		e.i2cEvents = e.i2cEvents[len(e.i2cEvents)-256:]
 	}
+	info := fmt.Sprintf("I2C %s", kind)
+	if kind == "addr" || kind == "data" {
+		info = fmt.Sprintf("I2C %s 0x%02x", kind, data)
+	}
+	e.checkTriggerLocked("i2c", info)
 }
 
 func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
@@ -226,6 +322,7 @@ func (e *Emu) resetChip() {
 	e.ws = nil
 	e.ethKind = ""
 	e.ethLog = e.ethLog[:0]
+	e.frozen = frozenLogic{}
 	e.usbEvents = e.usbEvents[:0]
 	e.uartEvents = e.uartEvents[:0]
 	e.spiEvents = e.spiEvents[:0]
@@ -359,9 +456,73 @@ func (e *Emu) resetChip() {
 		e.addUSBEvent(c.Cycles, true, b)
 	})
 
+	e.attachSerial(c, e.board)
+
 	e.chip = c
 	e.lcdGen = 0
 	e.lcdFrame = nil
+}
+
+// attachSerial keeps the TCP bridges across chip resets when the board's
+// serial configuration is unchanged, so the listening port is stable; the
+// client connection survives a firmware reload. New UART callbacks are always
+// wrapped with the current bridges.
+func (e *Emu) attachSerial(c *rp2350.Chip, b *BoardDef) {
+	sig := ""
+	if b != nil {
+		sig = fmt.Sprintf("%+v", b.Serial)
+	}
+	if sig != e.serialSig || (b != nil && len(e.bridges) != len(b.Serial)) {
+		for _, br := range e.bridges {
+			br.Close()
+		}
+		e.bridges = e.bridges[:0]
+		e.bridgeErrs = e.bridgeErrs[:0]
+		if b != nil {
+			for _, sd := range b.Serial {
+				br := devices.NewUARTBridge(c, sd.UART, sd.Listen)
+				br.Logf = func(format string, args ...any) {
+					fmt.Fprintf(os.Stderr, format+"\n", args...)
+				}
+				if err := br.Start(); err != nil {
+					e.bridgeErrs = append(e.bridgeErrs, fmt.Sprintf("UART%d %s: %v", sd.UART, sd.Listen, err))
+				}
+				e.bridges = append(e.bridges, br)
+			}
+		}
+		e.serialSig = sig
+	} else {
+		for _, br := range e.bridges {
+			br.SetChip(c)
+		}
+	}
+
+	if b == nil {
+		return
+	}
+	for i, sd := range b.Serial {
+		if i >= len(e.bridges) {
+			break
+		}
+		br := e.bridges[i]
+		if sd.UART == 0 {
+			prev := c.OnUART0
+			c.OnUART0 = func(v byte) {
+				if prev != nil {
+					prev(v)
+				}
+				br.Write([]byte{v})
+			}
+		} else {
+			prev := c.OnUART1
+			c.OnUART1 = func(v byte) {
+				if prev != nil {
+					prev(v)
+				}
+				br.Write([]byte{v})
+			}
+		}
+	}
 }
 
 func (e *Emu) loadLocked() {
@@ -500,6 +661,15 @@ func (e *Emu) Snapshot() MachineState {
 	}
 	s.EthKind = strings.ToUpper(e.ethKind)
 	s.EthLog = append([]string(nil), e.ethLog...)
+	s.Serial = append([]string(nil), e.bridgeErrs...)
+	for _, br := range e.bridges {
+		listen, client, connected := br.Status()
+		if connected {
+			s.Serial = append(s.Serial, fmt.Sprintf("UART%d tcp %s ← %s", br.UART, listen, client))
+		} else {
+			s.Serial = append(s.Serial, fmt.Sprintf("UART%d tcp %s · listening", br.UART, listen))
+		}
+	}
 	return s
 }
 

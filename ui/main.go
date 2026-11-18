@@ -32,6 +32,8 @@ var (
 	scopePins          []int
 	scopeZoom          = 1.0
 	scopeRangeIdx      = 4
+	triggerKind        string
+	triggerPause       bool
 )
 
 // Scope voltage ranges in volts (full scale, from 0).
@@ -116,7 +118,7 @@ func RootView() {
 			case tabLogic:
 				logicPanel()
 			case tabConsole:
-				consolePanel()
+				consolePanel(snap)
 			default:
 				boardAndPins(snap)
 			}
@@ -169,6 +171,9 @@ func boardBadges(b *BoardDef) []string {
 	}
 	if len(b.Analog) > 0 {
 		out = append(out, "ANALOG")
+	}
+	if len(b.Serial) > 0 {
+		out = append(out, "TCP SERIAL")
 	}
 	if len(out) == 0 {
 		out = append(out, "GPIO")
@@ -776,6 +781,31 @@ func logicPanel() {
 			Filler(1)
 			Label("hardware taps + pin traces", FontSize(11), TextColor(220, 6, 60, 1))
 		})
+		Container(Attrs(Row, CrossMid, Gap(4)), func() {
+			Label("Trigger", FontSize(11), FontWeight(600))
+			triggerButton("Off", "")
+			triggerButton("Any", "any")
+			triggerButton("UART", "uart")
+			triggerButton("I2C", "i2c")
+			triggerButton("SPI", "spi")
+			pause := "Pause: off"
+			if triggerPause {
+				pause = "Pause: on"
+			}
+			if Button(NoIcon, pause) {
+				triggerPause = !triggerPause
+				emu.SetLogicTrigger(LogicTrigger{Kind: triggerKind, Pause: triggerPause})
+			}
+			if Button(NoIcon, "Rearm") {
+				emu.RearmLogic()
+			}
+			triggered, info := emu.LogicTriggered()
+			if triggered {
+				Label("TRIGGERED · "+info, FontSize(11), FontWeight(700), TextColor(0, 70, 55, 1))
+			} else if triggerKind != "" {
+				Label("armed: "+triggerKind, FontSize(11), TextColor(45, 60, 60, 1))
+			}
+		})
 		Container(Attrs(Grow(1), Expand, Clip, Viewport), func() {
 			ScrollOnInput()
 			ScrollBars()
@@ -799,6 +829,17 @@ func logicPanel() {
 			})
 		})
 	})
+}
+
+func triggerButton(name, kind string) {
+	label := name
+	if triggerKind == kind {
+		label = "● " + name
+	}
+	if Button(NoIcon, label) && triggerKind != kind {
+		triggerKind = kind
+		emu.SetLogicTrigger(LogicTrigger{Kind: kind, Pause: triggerPause})
+	}
 }
 
 func logicUART(pins []int, samples []devices.TraceSample, interval uint64, d *UARTDevice) {
@@ -1236,7 +1277,7 @@ func logicUSB() {
 	})
 }
 
-func consolePanel() {
+func consolePanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		FocusOnClick()
 		focused := HasFocus()
@@ -1250,6 +1291,13 @@ func consolePanel() {
 				Label("click to type", FontSize(11), TextColor(220, 5, 55, 1))
 			}
 		})
+		if len(snap.Serial) > 0 {
+			Container(Attrs(Row, Gap(16)), func() {
+				for _, line := range snap.Serial {
+					Label(line, FontSize(11), TextColor(140, 45, 65, 1))
+				}
+			})
+		}
 		ring := float32(25)
 		if focused {
 			ring = 140
@@ -1325,6 +1373,8 @@ func main() {
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
 	rFlag := flag.Float64("scope-range", 3.3, "initial scope voltage range in volts")
+	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
+	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth, ws, scope, logic, console")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
@@ -1367,6 +1417,11 @@ func main() {
 		}
 	}
 	scopeRangeIdx = best
+	if *trigFlag != "" {
+		triggerKind = *trigFlag
+		triggerPause = *trigPause
+		emu.SetLogicTrigger(LogicTrigger{Kind: triggerKind, Pause: triggerPause})
+	}
 
 	if *runTo > 0 {
 		emu.SetRunning(false)

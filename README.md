@@ -49,6 +49,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
 | `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
+| `task ui:serial` | UART1 bridged over TCP with an echo firmware |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
@@ -154,7 +155,9 @@ the tabs accordingly:
   models (so high-speed buses do not need pin-level sampling), and PIO or
   bit-banged traffic falls back to the pin trace. Decoded UART bytes, I2C
   address/data/ACK phases and SPI bytes are listed under synthesised
-  waveforms; USB CDC transfers are listed as well.
+  waveforms; USB CDC transfers are listed as well. **Trigger** arms on the next
+  UART, I2C, SPI or any protocol event and freezes the capture (and optionally
+  pauses the machine); **Rearm** waits for the next event.
 - **Console** (always): USB CDC + UART. Click it to give it keyboard focus;
   typed text and Enter/Backspace/Tab/arrows are forwarded to the firmware.
 
@@ -165,6 +168,27 @@ chooses the initial tab, and `--width`/`--height` set the window size. For
 headless scope snapshots, `--scope-zoom` and `--scope-range` set the initial
 time base and voltage range. `--png out.png --run 0.6 firmware.elf` renders a
 headless snapshot after advancing virtual time.
+
+## Serial over TCP
+
+A board can expose a hardware UART over TCP:
+
+```yaml
+serial:
+  - uart: 1          # UART1, default pins GP4/GP5
+    # listen: 127.0.0.1:0  (the default: a kernel-chosen free port)
+```
+
+The Console tab shows the assigned address (for example
+`UART1 tcp 127.0.0.1:39479 · listening`). Connect with `nc 127.0.0.1 39479`;
+bytes go into the UART receive FIFO and everything the firmware transmits
+comes back on the same connection. The listener is kept across firmware
+resets, so the port does not change while the UI is open.
+
+`task ui:serial` runs the `pico2-serial` board with `firmware/serialbridge`,
+which echoes UART1. The headless runner has the same feature:
+`-serial-tcp 1:127.0.0.1:0` prints the chosen address on stderr.
+`tools/serialcheck` is the client used by the smoke test.
 
 ## Tests
 
