@@ -1,0 +1,62 @@
+# Board definitions for the rp2350sim desktop UI.
+#
+# The UI starts with this list. Selecting a board configures the emulated chip:
+# each device below is attached to the given SPI bus (or GPIO), and the UI
+# shows a dedicated tab for it. Boards without a device do not get that tab.
+#
+# Fields:
+#   id, name, description        identity shown in the picker and toolbar
+#   lcd:    { spi, cs, dc, rst, width, height }
+#   ethernet: { kind: w5500|w6300, spi, cs }
+#   ws2812: { pin }
+#
+# RP2350SIM_BOARDS=/path/to/file.yaml replaces this embedded list.
+
+boards:
+  - id: pico2
+    name: Raspberry Pi Pico 2
+    description: RP2350A · USB CDC console · on-board LED on GP25
+
+  - id: pico2-lcd
+    name: RP2350 + ST7789 LCD
+    description: 240×135 ST7789 on SPI1 (CS GP9, DC GP8, RST GP12)
+    lcd:
+      spi: 1
+      cs: 9
+      dc: 8
+      rst: 12
+      width: 240
+      height: 135
+
+  - id: pico2-ws2812
+    name: RP2350 + WS2812B strip
+    description: WS2812B data line on GP0, decoded from the PIO wire protocol
+    ws2812:
+      pin: 0
+
+  - id: geek
+    name: Waveshare RP2350-GEEK
+    description: 240×135 ST7789 on SPI1, microSD and I2C header
+    lcd:
+      spi: 1
+      cs: 9
+      dc: 8
+      rst: 12
+      width: 240
+      height: 135
+
+  - id: poe-eth
+    name: Waveshare RP2350-POE-ETH
+    description: W6300 Ethernet on SPI0 (CS GP17) with PoE
+    ethernet:
+      kind: w6300
+      spi: 0
+      cs: 17
+
+  - id: pico2-w5500
+    name: RP2350 + W5500
+    description: Breadboard W5500 Ethernet on SPI0 (CS GP17)
+    ethernet:
+      kind: w5500
+      spi: 0
+      cs: 17

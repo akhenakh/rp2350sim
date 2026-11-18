@@ -43,10 +43,11 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
-| `task ui:blinky` (`ui`) | desktop UI with the blinky firmware loaded |
-| `task ui:lcd` | desktop UI with the ST7789 example loaded |
-| `task ui:ws2812` | desktop UI with the WS2812B example (strip shown from GP0) |
-| `task ui:png` | headless UI render to `build/ui.png` |
+| `task ui:blinky` (`ui`) | desktop UI on the `pico2` board with the blinky firmware |
+| `task ui:lcd` | desktop UI on the `geek` board with the ST7789 example |
+| `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
+| `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
+| `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task clean` | remove `build/` |
@@ -123,19 +124,29 @@ See `.operator/specs/hardware.md` for the board wiring and the remaining gaps.
 
 ```sh
 cd ui
-go run . ../firmware.elf
+go run . --board geek ../firmware.elf
 ```
 
-The window shows a Pico 2 board diagram (both headers, USB, BOOTSEL and the
-on-board LED on GP25) next to the live GPIO table, the ST7789 framebuffer, the
-Ethernet socket log and the USB/UART console. Click the console to give it
-keyboard focus; typed text (and Enter, Backspace, Tab, arrows) is forwarded to
-the firmware's USB CDC OUT endpoint and UART0. Set `RP2350SIM_ETH_KIND=w6300`
-to attach the W6300 model instead of the default W5500. **Open…** loads a firmware image through
-the OS file dialog (native on macOS/Windows, zenity/kdialog on Linux); the path
-field can also be edited and loaded directly. The toolbar also pauses/resumes
-and resets. `--png out.png --run 0.6 firmware.elf` renders a
-headless snapshot after advancing virtual time.
+The UI starts with a board picker. The list comes from `ui/boards.yaml` (or
+`RP2350SIM_BOARDS=/path/to/boards.yaml`), and each entry declares its hardware:
+an ST7789 LCD on an SPI bus with its CS/DC/RST pins, a W5500/W6300 controller,
+a WS2812B data pin, or none. `go run . --list-boards` prints the ids.
+
+Selecting a board attaches only those devices to the emulated chip and builds
+the tabs accordingly:
+
+- **Board** (always): the Pico 2 header diagram and the live GPIO table.
+- **LCD**: only when the board has an LCD; shows the framebuffer.
+- **Ethernet**: only for W5500/W6300 boards; shows the socket log.
+- **LEDs**: only for WS2812B boards; shows the last latched colours.
+- **Console** (always): USB CDC + UART. Click it to give it keyboard focus;
+  typed text and Enter/Backspace/Tab/arrows are forwarded to the firmware.
+
+The toolbar shows the selected board, a **Board…** button to return to the
+picker, the firmware path field, **Open…** (OS dialog), run/pause and reset.
+`--board ID` skips the picker, and `--tab board|lcd|eth|ws|console` chooses the
+initial tab. `--png out.png --run 0.6 firmware.elf` renders a headless
+snapshot after advancing virtual time.
 
 ## Tests
 

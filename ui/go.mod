@@ -6,6 +6,7 @@ require (
 	github.com/akhenakh/rp2350sim v0.0.0
 	github.com/ncruces/zenity v0.10.15
 	go.hasen.dev/shirei v0.9.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

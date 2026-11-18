@@ -71,7 +71,7 @@ contains "W6300 TCP server" 'server check 1: reply "pong\n"' "$log"
 contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
 
 # --- UI headless snapshot ---------------------------------------------------
-if (cd ui && go run . --png "../$BUILD/ui-smoke.png" --run 0.4 ../build/blinky.elf >/dev/null 2>&1) &&
+if (cd ui && go run . --board pico2 --png "../$BUILD/ui-smoke.png" --run 0.4 ../build/blinky.elf >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI headless snapshot"
 else

@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"image"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,23 +58,15 @@ type Emu struct {
 	lcdGen   int
 	lcdFrame *image.RGBA
 
-	ws    *devices.WS2812B
-	wsPin int
+	board *BoardDef
 
+	ws      *devices.WS2812B
 	ethKind string
 	ethLog  []string
 }
 
 func NewEmu() *Emu {
-	e := &Emu{wsPin: -1, ethKind: "w5500"}
-	if v := os.Getenv("RP2350SIM_ETH_KIND"); v == "w6300" {
-		e.ethKind = "w6300"
-	}
-	if v := os.Getenv("RP2350SIM_WS2812_PIN"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			e.wsPin = n
-		}
-	}
+	e := &Emu{}
 	e.mu.Lock()
 	e.resetChip()
 	e.mu.Unlock()
@@ -84,11 +74,21 @@ func NewEmu() *Emu {
 	return e
 }
 
-// resetChip builds a fresh machine and re-attaches the board devices.
+// SetBoard selects the board whose devices are attached on the next boot.
+func (e *Emu) SetBoard(b *BoardDef) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.board = b
+	e.errText = ""
+	e.loadLocked()
+}
+
+// resetChip builds a fresh machine and attaches the selected board's devices.
 func (e *Emu) resetChip() {
 	c := rp2350.New()
-	e.lcd = devices.NewST7789(c, 9, 8, 12)
-	c.OnSPI1 = e.lcd.Transfer
+	e.lcd = nil
+	e.ws = nil
+	e.ethKind = ""
 	e.ethLog = e.ethLog[:0]
 	logEth := func(format string, args ...any) {
 		e.ethLog = append(e.ethLog, fmt.Sprintf(format, args...))
@@ -96,22 +96,40 @@ func (e *Emu) resetChip() {
 			e.ethLog = e.ethLog[len(e.ethLog)-32:]
 		}
 	}
-	if e.ethKind == "w6300" {
-		eth := devices.NewW6300(c, 17)
-		eth.Logf = logEth
-		c.OnSPI0 = eth.Transfer
-		c.CycleHooks = append(c.CycleHooks, eth.Tick)
-	} else {
-		eth := devices.NewW5500(c, 17)
-		eth.Logf = logEth
-		c.OnSPI0 = eth.Transfer
-		c.CycleHooks = append(c.CycleHooks, eth.Tick)
-	}
 
-	e.ws = nil
-	if e.wsPin >= 0 {
-		e.ws = devices.NewWS2812B(c, e.wsPin)
-		c.CycleHooks = append(c.CycleHooks, e.ws.Tick)
+	if b := e.board; b != nil {
+		if d := b.LCD; d != nil {
+			e.lcd = devices.NewST7789(c, d.CS, d.DC, d.RST)
+			if d.SPI == 1 {
+				c.OnSPI1 = e.lcd.Transfer
+			} else {
+				c.OnSPI0 = e.lcd.Transfer
+			}
+		}
+		if d := b.Ethernet; d != nil {
+			e.ethKind = d.Kind
+			var transfer func(byte) byte
+			var tick func()
+			if d.Kind == "w6300" {
+				eth := devices.NewW6300(c, d.CS)
+				eth.Logf = logEth
+				transfer, tick = eth.Transfer, eth.Tick
+			} else {
+				eth := devices.NewW5500(c, d.CS)
+				eth.Logf = logEth
+				transfer, tick = eth.Transfer, eth.Tick
+			}
+			if d.SPI == 1 {
+				c.OnSPI1 = transfer
+			} else {
+				c.OnSPI0 = transfer
+			}
+			c.CycleHooks = append(c.CycleHooks, tick)
+		}
+		if d := b.WS2812; d != nil {
+			e.ws = devices.NewWS2812B(c, d.Pin)
+			c.CycleHooks = append(c.CycleHooks, e.ws.Tick)
+		}
 	}
 
 	appendBytes := func(b []byte) {
@@ -132,10 +150,10 @@ func (e *Emu) resetChip() {
 }
 
 func (e *Emu) loadLocked() {
+	e.resetChip()
 	if e.img == nil {
 		return
 	}
-	e.resetChip()
 	for _, seg := range e.img.Segments {
 		e.chip.LoadSegment(seg.Addr, seg.Data)
 	}
@@ -211,7 +229,9 @@ func (e *Emu) loop() {
 			continue // keep snapshots deterministic
 		}
 		e.mu.Lock()
-		running := e.running && e.chip != nil && !e.chip.Halted
+		// The picker screen has no board yet; keep the machine idle so an
+		// empty reset vector is not executed in the background.
+		running := e.running && e.board != nil && e.chip != nil && !e.chip.Halted
 		if running {
 			e.chip.Run(chunk)
 		}
