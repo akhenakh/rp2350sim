@@ -46,6 +46,10 @@ func (c *CPU) exec32(pc uint32, hw1 uint16) {
 	case hw1&0xFF00 == 0xFB00:
 		c.exec32MulDiv(hw1, hw2)
 
+	// ---- Coprocessor (VFP and the RP2350 redundancy coprocessor) ----
+	case hw1&0xEE00 == 0xEC00 || hw1&0xEE00 == 0xEE00:
+		c.exec32Coproc(hw1, hw2)
+
 	default:
 		if c.Unimplemented != nil && c.Unimplemented(pc, hw1, hw2) {
 			return
@@ -160,55 +164,79 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 			c.branchTo(pcVal)
 		}
 
-	case hw1&0xFFF0 == 0xE840: // STREX
+	case hw1&0xFFF0 == 0xE840: // STREX (word)
 		rn := uint32(hw1 & 0xF)
 		rd := uint32(hw2 >> 8 & 0xF)
 		rt := uint32(hw2 >> 12)
 		imm := uint32(hw2&0xFF) << 2
 		addr := c.R[rn] + imm
-		if c.monitor == addr && c.monitorValid {
-			c.Bus.Write32(addr, c.R[rt])
-			c.R[rd] = 0
-		} else {
-			c.R[rd] = 1
-		}
-		c.monitorValid = false
+		c.storeExclusive(addr, c.R[rt], 4, rd)
 
-	case hw1&0xFFF0 == 0xE850: // LDREX
+	case hw1&0xFFF0 == 0xE850: // LDREX (word)
 		rn := uint32(hw1 & 0xF)
 		rt := uint32(hw2 >> 12)
 		imm := uint32(hw2&0xFF) << 2
-		addr := c.R[rn] + imm
-		c.R[rt] = c.Bus.Read32(addr)
-		c.monitor = addr
-		c.monitorValid = true
+		c.loadExclusive(c.R[rn]+imm, rt, 4)
 
-	case hw1&0xFFF0 == 0xE8C0 && hw2&0x0F00 == 0x0F00: // STLEX / STL
+	case hw1&0xFFF0 == 0xE8C0: // STREXB/H, STLEX
 		rn := uint32(hw1 & 0xF)
 		rt := uint32(hw2 >> 12)
 		addr := c.R[rn]
-		if hw2&0xF0 == 0xE0 { // STLEX Rd, Rt, [Rn]
-			rd := uint32(hw2 & 0xF)
-			if c.monitor == addr && c.monitorValid {
-				c.Bus.Write32(addr, c.R[rt])
-				c.R[rd] = 0
+		low := hw2 & 0xFF
+		switch low & 0xF0 {
+		case 0x40, 0x50: // STREXB / STREXH
+			rd := uint32(low & 0xF)
+			if low&0xF0 == 0x40 {
+				c.storeExclusive(addr, c.R[rt], 1, rd)
 			} else {
-				c.R[rd] = 1
+				c.storeExclusive(addr, c.R[rt], 2, rd)
+			}
+		case 0x80, 0x90, 0xA0: // STLB / STLH / STL (release, no status)
+			switch low & 0xF0 {
+			case 0x80:
+				c.Bus.Write8(addr, uint8(c.R[rt]))
+			case 0x90:
+				c.Bus.Write16(addr, uint16(c.R[rt]))
+			default:
+				c.Bus.Write32(addr, c.R[rt])
 			}
 			c.monitorValid = false
-		} else { // STL
-			c.Bus.Write32(addr, c.R[rt])
+		case 0xC0, 0xD0: // STLEXB / STLEXH
+			rd := uint32(low & 0xF)
+			if low&0xF0 == 0xC0 {
+				c.storeExclusive(addr, c.R[rt], 1, rd)
+			} else {
+				c.storeExclusive(addr, c.R[rt], 2, rd)
+			}
+		case 0xE0: // STLEX (word)
+			c.storeExclusive(addr, c.R[rt], 4, uint32(low&0xF))
+		default:
+			c.undecoded(hw1, hw2)
 		}
 
-	case hw1&0xFFF0 == 0xE8D0 && hw2&0x0F00 == 0x0F00 &&
-		(hw2&0xFF == 0xAF || hw2&0xFF == 0xEF): // LDA / LDAEX
+	case hw1&0xFFF0 == 0xE8D0: // LDREXB/H, LDAEXB/H, LDAEX
 		rn := uint32(hw1 & 0xF)
 		rt := uint32(hw2 >> 12)
 		addr := c.R[rn]
-		c.R[rt] = c.Bus.Read32(addr)
-		if hw2&0xFF == 0xEF {
-			c.monitor = addr
-			c.monitorValid = true
+		switch hw2 & 0xFF {
+		case 0x4F: // LDREXB
+			c.loadExclusive(addr, rt, 1)
+		case 0x5F: // LDREXH
+			c.loadExclusive(addr, rt, 2)
+		case 0x8F: // LDAB
+			c.loadExclusive(addr, rt, 1)
+		case 0x9F: // LDAH
+			c.loadExclusive(addr, rt, 2)
+		case 0xAF: // LDA
+			c.loadExclusive(addr, rt, 4)
+		case 0xCF: // LDAEXB
+			c.loadExclusive(addr, rt, 1)
+		case 0xDF: // LDAEXH
+			c.loadExclusive(addr, rt, 2)
+		case 0xEF: // LDAEX
+			c.loadExclusive(addr, rt, 4)
+		default:
+			c.undecoded(hw1, hw2)
 		}
 
 	case hw1&0xFE40 == 0xE840: // STRD / LDRD (immediate, imm8*4)
@@ -245,6 +273,49 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 		}
 		c.Halt("unimplemented E8-group instruction")
 	}
+}
+
+// undecoded reports an instruction the E8 group does not model.
+func (c *CPU) undecoded(hw1, hw2 uint16) {
+	if c.Unimplemented != nil && c.Unimplemented(c.R[15]-4, hw1, hw2) {
+		return
+	}
+	c.Halt("unimplemented E8-group instruction")
+}
+
+// loadExclusive performs the load half of LDREX/LDREXB/LDREXH and the acquire
+// variants: the value is loaded and the exclusive monitor armed.
+func (c *CPU) loadExclusive(addr, rt uint32, size int) {
+	switch size {
+	case 1:
+		c.R[rt] = uint32(c.Bus.Read8(addr))
+	case 2:
+		c.R[rt] = uint32(c.Bus.Read16(addr))
+	default:
+		c.R[rt] = c.Bus.Read32(addr)
+	}
+	c.monitor = addr
+	c.monitorValid = true
+}
+
+// storeExclusive performs the store half of STREX/STREXB/STREXH: the store
+// succeeds only while the monitor still covers addr, and the status is written
+// to Rd (0 = stored, 1 = failed).
+func (c *CPU) storeExclusive(addr, v uint32, size int, rd uint32) {
+	if c.monitor == addr && c.monitorValid {
+		switch size {
+		case 1:
+			c.Bus.Write8(addr, uint8(v))
+		case 2:
+			c.Bus.Write16(addr, uint16(v))
+		default:
+			c.Bus.Write32(addr, v)
+		}
+		c.R[rd] = 0
+	} else {
+		c.R[rd] = 1
+	}
+	c.monitorValid = false
 }
 
 // ---- EA/EB group: data processing, shifted register ----
@@ -544,49 +615,57 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 			addr = (c.pcRead() &^ 3) - imm
 		}
 		if op == 5 {
-			c.R[rt] = c.Bus.Read32(addr)
+			if rt == 15 {
+				c.branchTo(c.Bus.Read32(addr))
+			} else {
+				c.R[rt] = c.Bus.Read32(addr)
+			}
 		} else {
 			c.R[rt] = uint32(c.Bus.Read8(addr))
 		}
 		return
 	}
 
-	if hw2&0x0800 != 0 { // T4: imm8 with P/U/W
-		p := hw2&0x0400 != 0
-		uu := hw2&0x0200 != 0
-		w := hw2&0x0100 != 0
-		imm8 := uint32(hw2 & 0xFF)
-		offset := int32(imm8)
-		if !uu {
-			offset = -offset
-		}
-		base := c.R[rn]
-		addr := base
-		if p {
-			addr = uint32(int32(base) + offset)
-		}
-		c.doLoadStore(op, signed, addr, rt)
-		if w {
-			if p {
-				c.R[rn] = addr
-			} else {
-				c.R[rn] = uint32(int32(base) + offset)
+	// Bit 7 of the first halfword selects the 12-bit immediate form (T3).
+	// The imm8 P/U/W form (T4) and the register form (T2) both have it clear;
+	// bit 11 of the second halfword then selects between them. Testing the
+	// second halfword first mis-decodes T3 whenever imm12 has bit 11 set,
+	// which is common for peripheral accesses such as [rX, #0x828].
+	if !u {
+		if hw2&0x0800 != 0 { // T4: imm8 with P/U/W
+			p := hw2&0x0400 != 0
+			uu := hw2&0x0200 != 0
+			w := hw2&0x0100 != 0
+			imm8 := uint32(hw2 & 0xFF)
+			offset := int32(imm8)
+			if !uu {
+				offset = -offset
 			}
+			base := c.R[rn]
+			addr := base
+			if p {
+				addr = uint32(int32(base) + offset)
+			}
+			c.doLoadStore(op, signed, addr, rt)
+			if w {
+				if p {
+					c.R[rn] = addr
+				} else {
+					c.R[rn] = uint32(int32(base) + offset)
+				}
+			}
+			return
 		}
-		return
-	}
-
-	if u {
-		// Immediate 12-bit form (T3).
-		addr := c.R[rn] + uint32(hw2&0xFFF)
+		// Register offset form (T2).
+		rm := uint32(hw2 & 0xF)
+		imm2 := uint32(hw2>>4) & 3
+		addr := c.R[rn] + (c.R[rm] << imm2)
 		c.doLoadStore(op, signed, addr, rt)
 		return
 	}
 
-	// Register offset form (T2).
-	rm := uint32(hw2 & 0xF)
-	imm2 := uint32(hw2>>4) & 3
-	addr := c.R[rn] + (c.R[rm] << imm2)
+	// Immediate 12-bit form (T3).
+	addr := c.R[rn] + uint32(hw2&0xFFF)
 	c.doLoadStore(op, signed, addr, rt)
 }
 
@@ -614,6 +693,10 @@ func (c *CPU) doLoadStore(op uint32, signed bool, addr, rt uint32) {
 	case 4:
 		c.Bus.Write32(addr, c.R[rt])
 	case 5:
+		if rt == 15 {
+			c.branchTo(c.Bus.Read32(addr))
+			return
+		}
 		c.R[rt] = c.Bus.Read32(addr)
 	}
 }

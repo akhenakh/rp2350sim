@@ -99,9 +99,30 @@ func (t *timerBlock) write(c *Chip, off, v uint32) {
 		t.block.regs[off/4] = t.intR
 	case off == 0x40:
 		t.intE = v
-	case off == 0x44:
+		t.pend()
+	case off == 0x44: // INTF: write 1 to force, write 0 to clear
 		t.intF = v
+		t.pend()
 	}
+}
+
+// pend raises the NVIC line for every enabled raw/forced interrupt. The alarm
+// pool relies on INTF to run its handler, which then programs the hardware
+// alarm; without this the default alarm pool never arms.
+func (t *timerBlock) pend() {
+	active := (t.intR | t.intF) & t.intE
+	if active == 0 {
+		return
+	}
+	for i := range 4 {
+		if active&(1<<uint(i)) != 0 {
+			t.chip.NVIC.Pend(t.idx*4 + i)
+		}
+	}
+	t.chip.CPU0.Sleeping = false
+	t.chip.CPU0.SleepOnEvent = false
+	t.chip.CPU1.Sleeping = false
+	t.chip.CPU1.SleepOnEvent = false
 }
 
 // tick checks alarms against the current microsecond time.

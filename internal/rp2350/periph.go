@@ -58,9 +58,21 @@ func newResets(c *Chip) *regBlock {
 func newClocks(c *Chip) *regBlock {
 	b := newRegBlock(0x40010000, 0x100)
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
-		// The SELECTED register of each of the 10 clock muxes sits at 8 mod 12.
+		// The SELECTED register of each of the 10 clock muxes sits at 8 mod 12
+		// and is a one-hot of the glitchless source: bit 0 for the primary
+		// input, bit 1 for the auxiliary mux. The SDK polls it for equality
+		// with 0x1 (primary) and for bit 1 (aux), so a constant would hang
+		// clock_configure.
 		if off < 10*12 && off%12 == 8 {
-			return 0xFFFFFFFF, true
+			clock := off / 12
+			ctrl := b.regs[(off-8)/4]
+			// CLK_REF (4) has a two-bit glitchless mux: ROSC, aux, XOSC,
+			// LPOSC. CLK_SYS (5) has one bit: clk_ref or aux. SELECTED is a
+			// one-hot of the active source, and the SDK polls the exact bit.
+			if clock == 4 {
+				return 1 << (ctrl & 0x3), true
+			}
+			return 1 << (ctrl & 0x1), true
 		}
 		if off == 0xB0 || off == 0xB4 { // ENABLED0/1
 			return 0xFFFFFFFF, true
@@ -148,6 +160,53 @@ func newROSC(c *Chip) *regBlock {
 			return state & 1, true
 		}
 		return 0, false
+	}
+	return b
+}
+
+// ---- BOOTRAM / bootrom boot locks ----
+//
+// The bootrom keeps eight spinlocks and two write-once registers in a block
+// next to its RAM. The Pico SDK's runtime claims a lock while it initialises
+// the bootrom state, so a plain zero register file would hang startup.
+const (
+	bootramBase       = 0x400e0000
+	bootramWriteOnce0 = 0x800
+	bootramWriteOnce1 = 0x804
+	bootramLockStat   = 0x808
+	bootramLock0      = 0x80c
+	bootramLockCount  = 8
+	bootramUnclaimed  = 0xff
+)
+
+func newBootRAM(c *Chip) *regBlock {
+	b := newRegBlock(bootramBase, 0x1000)
+	unclaimed := uint8(bootramUnclaimed)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		switch {
+		case off == bootramLockStat:
+			return uint32(unclaimed), true
+		case off >= bootramLock0 && off < bootramLock0+bootramLockCount*4:
+			n := (off - bootramLock0) / 4
+			if unclaimed&(1<<n) != 0 {
+				unclaimed &^= 1 << n
+				return 1 << n, true
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+	b.writeFn = func(c *Chip, off, v uint32) {
+		switch {
+		case off == bootramWriteOnce0 || off == bootramWriteOnce1:
+			i := off / 4
+			b.regs[i] |= v
+		case off == bootramLockStat:
+			unclaimed = uint8(v)
+		case off >= bootramLock0 && off < bootramLock0+bootramLockCount*4:
+			n := (off - bootramLock0) / 4
+			unclaimed |= 1 << n
+		}
 	}
 	return b
 }

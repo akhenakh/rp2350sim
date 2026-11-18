@@ -93,6 +93,8 @@ type Chip struct {
 	IRQCount uint64
 	usbPoll  int
 	pioLogN  int
+	rom      *bootROM
+	booted   bool
 
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
@@ -122,6 +124,7 @@ func New() *Chip {
 		Unhandled: map[uint32]uint32{},
 		byBase:    map[uint32]*regBlock{},
 	}
+	c.rom = installBootROM(c)
 	c.Pins = NewPinState()
 	c.io.init(c)
 	c.sio.init(c)
@@ -141,6 +144,7 @@ func New() *Chip {
 	c.addRegBlock(newPLL(c, 0x40050000))
 	c.addRegBlock(newPLL(c, 0x40058000))
 	c.addRegBlock(newTicks(c))
+	c.addRegBlock(newBootRAM(c))
 	c.addRegBlock(newWatchdog(c))
 	c.addRegBlock(newSysInfo(c))
 	c.addRegBlock(newROSC(c))
@@ -221,6 +225,16 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 		c.core = 1
 	}
 	cpu.Bus = c
+	pc := cpu.R[15]
+	if c.booted && pc < ROMSize {
+		if c.rom.exec(c, cpu, pc) {
+			return
+		}
+		// The bootrom is a fixed mask ROM, not extendable memory. Falling
+		// through would execute the table bytes as instructions.
+		cpu.Halt(fmt.Sprintf("execution from unmapped bootrom address %#08x", pc))
+		return
+	}
 	cpu.Step()
 }
 
@@ -305,6 +319,7 @@ func (c *Chip) Reset() {
 // Boot vectors core 0 at the image in flash.
 func (c *Chip) Boot() {
 	c.Reset()
+	c.booted = true
 	c.CPU0.SetVectorTable(FlashBase)
 	c.CPU1.Parked = true
 }
