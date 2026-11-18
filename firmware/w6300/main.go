@@ -109,8 +109,11 @@ func tcpServer() {
 	fmt.Printf("server: listening on :%d\n", tcpServe)
 
 	// Accept twice: the driver re-arms the listener on a free hardware
-	// socket after handing the established socket to the caller.
-	for i := 0; i < 2; i++ {
+	// socket after handing the established socket to the caller. A peer can
+	// close between the response and the next accept, so per-connection
+	// errors continue instead of ending the server.
+	served := 0
+	for served < 2 {
 		conn, err := ln.Accept()
 		if err != nil {
 			fmt.Printf("server: accept: %s\n", err)
@@ -123,15 +126,16 @@ func tcpServer() {
 		if err != nil {
 			fmt.Printf("server: read: %s\n", err)
 			conn.Close()
-			return
+			continue
 		}
 		if _, err := conn.Write([]byte("pong\n")); err != nil {
 			fmt.Printf("server: write: %s\n", err)
 			conn.Close()
-			return
+			continue
 		}
 		fmt.Printf("server: got %q\n", buf[:n])
 		conn.Close()
+		served++
 	}
 }
 

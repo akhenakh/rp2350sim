@@ -325,6 +325,11 @@ func (d *Device) sendChunk(sockfd int, buf []byte, deadline time.Time) (int, err
 	switch {
 	case irq == sockIntUnknown:
 		return 0, os.ErrDeadlineExceeded
+	case irq&sockIntSendOK != 0:
+		// The peer may close while the SEND is completing; the bytes are
+		// already on the wire, so a simultaneous DISCON must not turn a
+		// successful send into net.ErrClosed.
+		return int(bufLen), nil
 	case irq&sockIntDisconnect != 0:
 		sock.setClosed(true)
 		return 0, net.ErrClosed

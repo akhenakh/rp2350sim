@@ -55,7 +55,8 @@ fi
 
 # --- W6300 Ethernet against the host helper --------------------------------
 if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
-	bad "W6300 ports" "port 9000 is already in use; kill any leftover ethhost first"
+	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
+	exit 1
 fi
 "$BUILD/ethhost" >"$BUILD/ethhost-smoke.log" 2>&1 &
 host=$!
