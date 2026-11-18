@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Task
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install TinyGo
+        run: |
+          version=0.43.0
+          curl -fsSL "https://github.com/tinygo-org/tinygo/releases/download/v${version}/tinygo${version}.linux-amd64.tar.gz" \
+            | sudo tar -xz -C /opt
+          echo "/opt/tinygo/bin" >> "$GITHUB_PATH"
+
+      - name: Install QEMU and a multiarch GDB
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm gdb-multiarch
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v gdb-multiarch)" "$HOME/.local/bin/arm-none-eabi-gdb"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify
+        run: task ci
