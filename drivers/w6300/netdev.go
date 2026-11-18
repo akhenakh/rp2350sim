@@ -284,10 +284,7 @@ func (d *Device) Send(sockfd int, buf []byte, _ int, deadline time.Time) (int, e
 
 	var n int
 	for i := 0; i < bufLen; i += d.maxSockSize {
-		end := i + d.maxSockSize
-		if end > bufLen {
-			end = bufLen
-		}
+		end := min(i+d.maxSockSize, bufLen)
 
 		sent, err := d.sendChunk(sockfd, buf[i:end], deadline)
 		if err != nil {

@@ -25,7 +25,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ethhost:", err)
 		os.Exit(1)
 	}
-	defer tcpLn.Close()
+	defer func() { _ = tcpLn.Close() }()
 
 	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", *udpPort))
 	if err != nil {
@@ -37,7 +37,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ethhost:", err)
 		os.Exit(1)
 	}
-	defer udpConn.Close()
+	defer func() { _ = udpConn.Close() }()
 
 	fmt.Printf("ethhost: tcp %s, udp %s\n", tcpLn.Addr(), udpConn.LocalAddr())
 
@@ -59,7 +59,7 @@ func main() {
 				return
 			}
 			go func(conn net.Conn) {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				n, err := io.Copy(conn, conn)
 				if err != nil {
 					fmt.Printf("tcp %s: %v\n", conn.RemoteAddr(), err)
@@ -74,7 +74,7 @@ func main() {
 		// Give the emulated firmware time to listen, then connect twice so
 		// the second accept proves the listener re-armed.
 		time.Sleep(time.Second)
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			// The emulated listener re-arms asynchronously; retry while the
 			// firmware catches up with wall time.
 			addr := fmt.Sprintf("127.0.0.1:%d", *checkPort)
@@ -94,13 +94,13 @@ func main() {
 			}
 			if _, err := conn.Write([]byte("ping\n")); err != nil {
 				fmt.Printf("server check %d: write: %v\n", i+1, err)
-				conn.Close()
+				_ = conn.Close()
 				return
 			}
-			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 			buf := make([]byte, 64)
 			n, err := conn.Read(buf)
-			conn.Close()
+			_ = conn.Close()
 			if err != nil {
 				fmt.Printf("server check %d: read: %v\n", i+1, err)
 				return

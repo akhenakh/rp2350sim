@@ -88,27 +88,24 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 		for addr, v := range c.mem {
 			fmt.Fprintf(&script, "set {unsigned int}0x%08x = 0x%08x\n", addr, v)
 		}
-		for r := 0; r < 13; r++ {
+		for r := range 13 {
 			fmt.Fprintf(&script, "set $r%d = 0x%08x\n", r, c.regs[r])
 		}
 		fmt.Fprintf(&script, "set $sp = 0x%08x\n", qemuStackTop)
 		fmt.Fprintf(&script, "set $lr = 0x%08x\n", qemuCodeBase+0x101)
 		fmt.Fprintf(&script, "set $xpsr = 0x%08x\n", c.cpsr|0x01000000)
 		fmt.Fprintf(&script, "set $pc = 0x%08x\n", qemuCodeBase|1)
-		steps := c.steps
-		if steps < 1 {
-			steps = 1
-		}
-		for k := 0; k < steps; k++ {
+		steps := max(c.steps, 1)
+		for range steps {
 			script.WriteString("stepi\n")
 		}
 		fmt.Fprintf(&script, "printf \"CASE %d", i)
-		for r := 0; r < 13; r++ {
+		for range 13 {
 			script.WriteString(" %08x")
 		}
 		script.WriteString(" %08x %08x %08x %08x\\n\"")
 		args := []string{}
-		for r := 0; r < 13; r++ {
+		for r := range 13 {
 			args = append(args, fmt.Sprintf("$r%d", r))
 		}
 		args = append(args, "$sp", "$lr", "$pc", "$xpsr")
@@ -136,7 +133,7 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 
 	results := make([]oracleResult, len(cases))
 	seen := make([]bool, len(cases))
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if !strings.HasPrefix(line, "CASE ") {
 			continue
 		}
@@ -151,7 +148,7 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 		}
 		var vals [17]uint32
 		ok := true
-		for k := 0; k < 17; k++ {
+		for k := range 17 {
 			if _, err := fmt.Sscanf(f[2+k], "%x", &vals[k]); err != nil {
 				ok = false
 				break
@@ -194,7 +191,7 @@ func TestQEMUInstructions(t *testing.T) {
 			continue
 		}
 		var diff []string
-		for r := 0; r < 13; r++ {
+		for r := range 13 {
 			if cpu.R[r] != want.Regs[r] {
 				diff = append(diff, fmt.Sprintf("r%d got %#08x want %#08x", r, cpu.R[r], want.Regs[r]))
 			}
@@ -238,14 +235,11 @@ func runLocal(c diffCase) (*CPU, *testBus) {
 	cpu.R[13] = qemuStackTop
 	cpu.R[14] = qemuCodeBase + 0x101
 	cpu.APSR = c.cpsr
-	for i := 0; i < 13; i++ {
+	for i := range 13 {
 		cpu.R[i] = c.regs[i]
 	}
-	steps := c.steps
-	if steps < 1 {
-		steps = 1
-	}
-	for i := 0; i < steps; i++ {
+	steps := max(c.steps, 1)
+	for range steps {
 		cpu.Step()
 	}
 	return cpu, bus

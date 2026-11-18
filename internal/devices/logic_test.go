@@ -56,7 +56,7 @@ func i2cTrace(addr, data byte) []TraceSample {
 	const per = 20 // samples per SCL half period
 	var out []TraceSample
 	add := func(sda, scl bool, n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			var s TraceSample
 			if sda {
 				s.V[0] = 3.3
@@ -116,7 +116,7 @@ func spiTrace(mosi, miso byte) []TraceSample {
 	const half = 10
 	var out []TraceSample
 	add := func(mo, mi, sck, cs bool, n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			var s TraceSample
 			if mo {
 				s.V[0] = 3.3
@@ -155,7 +155,7 @@ func TestDecodeSPI(t *testing.T) {
 func TestTraceSamplesPins(t *testing.T) {
 	c := rp2350.New()
 	tr := NewTrace(c, []int{0, 1}, 10, 4)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		c.Cycles += 10
 		if i%2 == 0 {
 			c.Pins.SetAnalog(0, 3.3)
@@ -181,7 +181,7 @@ func TestTraceSamplesPins(t *testing.T) {
 func TestSignalSourceSine(t *testing.T) {
 	c := rp2350.New()
 	src := NewSignalSource(c, 26, WaveSine, 1000, 1.65, 1.65)
-	for i := 0; i < 400; i++ {
+	for range 400 {
 		c.Cycles += 150
 		src.Tick()
 	}

@@ -25,7 +25,7 @@ func openFirmwareDialog() {
 		if !zenity.IsAvailable() {
 			// No native dialog backend: fall back to the path in the toolbar.
 			if p := strings.TrimSpace(fwPath); p != "" {
-				emu.Load(p)
+				_ = emu.Load(p)
 			}
 			shirei.RequestNextFrame()
 			return

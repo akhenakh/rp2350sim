@@ -17,7 +17,7 @@ func TestDMAPacedTransfer(t *testing.T) {
 
 	src := uint32(0x20000000)
 	dst := uint32(0x20000100)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		c.Write8(src+uint32(i), byte(0xA0+i))
 	}
 
@@ -34,10 +34,10 @@ func TestDMAPacedTransfer(t *testing.T) {
 		t.Fatal("transfer completed before any cycle")
 	}
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		c.Step()
 	}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if got := c.Read8(dst + uint32(i)); got != byte(0xA0+i) {
 			t.Fatalf("byte %d = %#x, want %#x", i, got, 0xA0+i)
 		}
@@ -73,7 +73,7 @@ func TestDMAIRQQuiet(t *testing.T) {
 	c.Write32(dmaBase+0x414, 1) // INTE1: channel 1
 	c.Write32(dmaBase+0x4C, dmaCtrlEN|dmaCtrlIRQQuiet)
 
-	for i := 0; i < 1; i++ {
+	for range 1 {
 		c.Step()
 	}
 	if got := c.Read8(0x20000200); got != 0x42 {

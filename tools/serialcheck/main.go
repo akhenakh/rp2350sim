@@ -36,14 +36,14 @@ func main() {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	want := []byte(strings.TrimSuffix(*msg, "\n"))
 	if _, err := conn.Write([]byte(*msg)); err != nil {
 		fmt.Fprintln(os.Stderr, "serialcheck:", err)
 		os.Exit(1)
 	}
-	conn.SetReadDeadline(deadline)
+	_ = conn.SetReadDeadline(deadline)
 	var got []byte
 	buf := make([]byte, 256)
 	for !bytes.Contains(got, want) {

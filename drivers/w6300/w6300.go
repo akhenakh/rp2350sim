@@ -123,7 +123,7 @@ func (d *Device) setupSockets(maxSockets int) error {
 	d.maxSockSize = 32 * 1024 / maxSockets
 	d.sockets = socks
 
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		size := byte(d.maxSockSize >> 10)
 		if i >= maxSockets {
 			size = 0

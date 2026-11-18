@@ -1,0 +1,23 @@
+version: "2"
+
+run:
+  # The differential corpus is behind the qemu tag; lint it too so its helpers
+  # are not reported as dead code.
+  build-tags:
+    - qemu
+
+linters:
+  default: standard
+  enable:
+    - modernize
+  exclusions:
+    rules:
+      # Tests may ignore errors from helpers that cannot fail meaningfully.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

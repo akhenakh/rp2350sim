@@ -25,7 +25,7 @@ func TestPWMCounterAdvances(t *testing.T) {
 	// A pin on slice 0 channel A is GPIO0.
 	c.Pins.Func[0] = pwmFuncSel
 	const cycles = 300150 // just over 2ms of virtual time
-	for i := 0; i < cycles; i++ {
+	for range cycles {
 		c.Step()
 	}
 	// The last microsecond tick saw 2001us at 150MHz with a divide-by-1 clock.

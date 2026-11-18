@@ -42,7 +42,7 @@ func scopeImage(pins []int, samples []devices.TraceSample, width, height int, vm
 	if n < 2 || len(pins) == 0 {
 		return img
 	}
-	for x := 0; x < width; x++ {
+	for x := range width {
 		i0 := x * n / width
 		i1 := (x + 1) * n / width
 		if i1 <= i0 {
@@ -98,7 +98,7 @@ func logicImage(pins []int, samples []devices.TraceSample, lines []logicLine, wi
 		}
 		drawH(img, 0, width-1, li*lane, plotGrid)
 		prevHigh := samples[0].Bit(ch)
-		for x := 0; x < width; x++ {
+		for x := range width {
 			i := x * n / width
 			high := samples[i].Bit(ch)
 			if high != prevHigh {

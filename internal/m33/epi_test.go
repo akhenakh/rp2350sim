@@ -20,7 +20,7 @@ func TestHandlerPrologueEpilogue(t *testing.T) {
 	c := New(cb)
 	c.R[15] = 0x10000000
 	c.R[13] = 0x20000800
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		c.R[i] = 0x100 + uint32(i)
 	}
 	c.R[14] = 0x10000045

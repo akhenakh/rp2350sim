@@ -182,7 +182,7 @@ func (d *dmaBlock) complete(n int) {
 
 // syncIRQ maps INTR through the four INTE masks onto the DMA IRQs.
 func (d *dmaBlock) syncIRQ() {
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		inte := d.block.regs[(dmaRegINTR+uint32(i)*dmaIRQstep+4)/4]
 		if d.intr&inte != 0 {
 			d.chip.NVIC.Pend(10 + i)

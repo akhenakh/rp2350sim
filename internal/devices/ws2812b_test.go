@@ -48,7 +48,7 @@ func TestWS2812BDecode(t *testing.T) {
 	pushWS2812(c, 0xFF000000)
 	pushWS2812(c, 0x0000FF00)
 
-	for i := 0; i < 25000; i++ {
+	for range 25000 {
 		c.Step()
 	}
 	if got := ws.Frames(); got != 1 {

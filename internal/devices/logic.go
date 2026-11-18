@@ -29,7 +29,8 @@ func DecodeUART(samples []TraceSample, ch int, baud, sampleHz float64) []UARTFra
 		return samples[idx].Bit(ch), idx
 	}
 	for i := 1; i < len(samples); i++ {
-		if !(samples[i-1].Bit(ch) && !samples[i].Bit(ch)) {
+		falling := samples[i-1].Bit(ch) && !samples[i].Bit(ch)
+		if !falling {
 			continue
 		}
 		// The start bit must be low at its middle, otherwise it is noise.
@@ -38,7 +39,7 @@ func DecodeUART(samples []TraceSample, ch int, baud, sampleHz float64) []UARTFra
 		}
 		var b byte
 		last := i
-		for n := 0; n < 8; n++ {
+		for n := range 8 {
 			v, idx := at(i, 1.5+float64(n))
 			if v {
 				b |= 1 << uint(n)

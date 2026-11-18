@@ -29,7 +29,7 @@ func TestST7789Framebuffer(t *testing.T) {
 	d.sendCmd(0x2C)             // RAMWR
 	d.data(0xF8)                // red  0xF800
 	d.data(0x00)
-	for i := 0; i < 7; i++ { // 3 more red pixels + 4 green pixels
+	for i := range 7 { // 3 more red pixels + 4 green pixels
 		if i < 3 {
 			d.data(0xF8)
 			d.data(0x00)
@@ -54,8 +54,8 @@ func TestST7789Framebuffer(t *testing.T) {
 		{248, 0, 0}, {248, 0, 0}, {248, 0, 0}, {248, 0, 0},
 		{0, 252, 0}, {0, 252, 0}, {0, 252, 0}, {0, 252, 0},
 	}
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 4; x++ {
+	for y := range 2 {
+		for x := range 4 {
 			c := img.RGBAAt(x, y)
 			w := want[y*4+x]
 			if c.R != w.r || c.G != w.g || c.B != w.b {

@@ -200,7 +200,7 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 		rn := uint32(hw>>8) & 7
 		list := uint32(hw & 0xFF)
 		base := c.R[rn]
-		for i := uint32(0); i < 8; i++ {
+		for i := range uint32(8) {
 			if list&(1<<i) != 0 {
 				c.Bus.Write32(base, c.R[i])
 				base += 4
@@ -212,7 +212,7 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 		rn := uint32(hw>>8) & 7
 		list := uint32(hw & 0xFF)
 		base := c.R[rn]
-		for i := uint32(0); i < 8; i++ {
+		for i := range uint32(8) {
 			if list&(1<<i) != 0 {
 				c.R[i] = c.Bus.Read32(base)
 				base += 4
@@ -372,7 +372,7 @@ func (c *CPU) pushList(list uint32) {
 	n := popcount(list)
 	c.R[13] -= uint32(n) * 4
 	addr := c.R[13]
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		if list&(1<<i) != 0 {
 			c.Bus.Write32(addr, c.R[i])
 			addr += 4
@@ -384,7 +384,7 @@ func (c *CPU) popList(list uint32) {
 	addr := c.R[13]
 	var pcVal uint32
 	havePC := false
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		if list&(1<<i) != 0 {
 			v := c.Bus.Read32(addr)
 			addr += 4

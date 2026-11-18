@@ -25,7 +25,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pngcheck:", err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	img, _, err := image.Decode(f)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pngcheck:", err)

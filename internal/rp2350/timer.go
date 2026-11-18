@@ -109,7 +109,7 @@ func (t *timerBlock) tick(now uint64) {
 	if t.armed == 0 {
 		return
 	}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		bit := uint32(1) << uint(i)
 		if t.armed&bit == 0 {
 			continue

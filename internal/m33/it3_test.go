@@ -14,7 +14,7 @@ func TestITThree(t *testing.T) {
 	c.R[15] = 0
 	c.R[0] = 4 // LS true
 	c.R[1] = 0x99
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.Step()
 	}
 	if c.R[4] != 0x99 || c.R[5] != 0x99 || c.R[6] != 0x99 {

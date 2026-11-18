@@ -45,7 +45,7 @@ func ws2812Pulses(t *testing.T, c *Chip, word uint32, limit uint64) []int {
 	var widths []int
 	level := c.Pins.Level(0)
 	last := uint64(0)
-	for i := uint64(0); i < limit; i++ {
+	for range limit {
 		c.Step()
 		nl := c.Pins.Level(0)
 		if nl != level {

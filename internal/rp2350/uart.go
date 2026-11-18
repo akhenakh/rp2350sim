@@ -30,7 +30,6 @@ type uartBlock struct {
 	// NextRx supplies a byte when the receive queue is empty; ok=false means
 	// no data is available.
 	NextRx func() (b byte, ok bool)
-	fr     uint32
 }
 
 const (

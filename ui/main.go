@@ -312,7 +312,7 @@ func toolbar(snap MachineState) {
 		}
 		if Button(NoIcon, "Load") {
 			if p := strings.TrimSpace(fwPath); p != "" {
-				emu.Load(p)
+				_ = emu.Load(p)
 			}
 		}
 		runLabel := "Run"
@@ -360,9 +360,9 @@ func pinsPanel(snap MachineState) {
 			Label(fmt.Sprintf("%d active", countActive(snap)), FontSize(12))
 		})
 		Container(Attrs(Row, Grow(1), Expand, Gap(6)), func() {
-			for col := 0; col < 3; col++ {
+			for col := range 3 {
 				Container(Attrs(Gap(2), Grow(1), Expand), func() {
-					for row := 0; row < 10; row++ {
+					for row := range 10 {
 						p := col*10 + row
 						in := snap.Pins[p]
 						if pinView == 1 && !pinActive(in) {
@@ -382,7 +382,7 @@ func pinActive(in PinInfo) bool {
 
 func countActive(snap MachineState) int {
 	n := 0
-	for i := 0; i < 48; i++ {
+	for i := range 48 {
 		if pinActive(snap.Pins[i]) {
 			n++
 		}
@@ -527,7 +527,7 @@ func boardPanel(snap MachineState) {
 				Container(Attrs(FixSize(46, 12), Corners(2), Background(210, 6, 36, 1)), func() {})
 				Label("USB", FontSize(9), TextColor(220, 5, 62, 1))
 			})
-			for i := 0; i < 20; i++ {
+			for i := range 20 {
 				Container(Attrs(Row, CrossMid), func() {
 					headerPad(leftHeader[i], snap, false)
 					Filler(1)
@@ -660,10 +660,7 @@ func ethPanel(snap MachineState) {
 				Label("no socket activity", FontSize(12), TextColor(220, 5, 55, 1))
 				return
 			}
-			start := len(snap.EthLog) - 48
-			if start < 0 {
-				start = 0
-			}
+			start := max(len(snap.EthLog)-48, 0)
 			for _, line := range snap.EthLog[start:] {
 				Label(line, Fonts(Monospace...), FontSize(12), TextColor(140, 12, 80, 1))
 			}
@@ -685,10 +682,7 @@ func scopePanel() {
 	vmax := scopeRanges[scopeRangeIdx]
 	visible := samples
 	if scopeZoom > 1 && len(samples) > 0 {
-		n := len(samples) / int(scopeZoom)
-		if n < 4 {
-			n = 4
-		}
+		n := max(len(samples)/int(scopeZoom), 4)
 		visible = samples[len(samples)-n:]
 	}
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
@@ -727,9 +721,9 @@ func scopePanel() {
 			}
 		})
 		Container(Attrs(Gap(3)), func() {
-			for row := 0; row < 2; row++ {
+			for row := range 2 {
 				Container(Attrs(Row, Gap(4)), func() {
-					for col := 0; col < 10; col++ {
+					for col := range 10 {
 						i := row*10 + col
 						if i < len(scopeCandidates) {
 							scopePinChip(scopeCandidates[i])
@@ -948,13 +942,10 @@ func uartEventText(events []UARTEvent) string {
 // show the wire even though the UART model drives the console directly.
 func uartWave(events []UARTEvent, baud int) ([]int, []devices.TraceSample) {
 	const interval = 75 // 2 MHz, matching the logic trace
-	bit := int(math.Round(150e6 / float64(interval) / float64(baud)))
-	if bit < 1 {
-		bit = 1
-	}
+	bit := max(int(math.Round(150e6/float64(interval)/float64(baud))), 1)
 	var samples []devices.TraceSample
 	add := func(volts float32, n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			var s devices.TraceSample
 			s.T = uint64(len(samples)) * interval
 			s.V[0] = volts
@@ -964,7 +955,7 @@ func uartWave(events []UARTEvent, baud int) ([]int, []devices.TraceSample) {
 	add(3.3, bit) // idle
 	for _, ev := range events {
 		add(0, bit) // start
-		for b := 0; b < 8; b++ {
+		for b := range 8 {
 			if ev.Data&(1<<uint(b)) != 0 {
 				add(3.3, bit)
 			} else {
@@ -1003,7 +994,7 @@ func i2cWave(events []I2CEvent, bus int, lines []logicLine) ([]int, []devices.Tr
 	var samples []devices.TraceSample
 	pins := []int{lines[0].Pin, lines[1].Pin}
 	add := func(n int, sda, scl bool) {
-		for i := 0; i < n; i++ {
+		for range n {
 			var s devices.TraceSample
 			s.T = uint64(len(samples)) * 75
 			if sda {
@@ -1152,7 +1143,7 @@ func spiWave(events []SPIEvent, lines []logicLine) ([]int, []devices.TraceSample
 		pins[i] = line.Pin
 	}
 	add := func(n int, f func(s *devices.TraceSample)) {
-		for i := 0; i < n; i++ {
+		for range n {
 			var s devices.TraceSample
 			s.T = uint64(len(samples)) * interval
 			f(&s)
@@ -1229,10 +1220,7 @@ func uartFrameText(frames []devices.UARTFrame, samples []devices.TraceSample) st
 		return "no frames"
 	}
 	base := samples[0].T
-	start := len(frames) - 16
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(frames)-16, 0)
 	var b strings.Builder
 	for _, f := range frames[start:] {
 		if f.Data >= 0x20 && f.Data < 0x7f {
@@ -1291,10 +1279,7 @@ func spiText(frames []devices.SPIFrame) string {
 	if len(frames) == 0 {
 		return "no frames"
 	}
-	start := len(frames) - 12
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(frames)-12, 0)
 	var b strings.Builder
 	for _, f := range frames[start:] {
 		fmt.Fprintf(&b, "MOSI %02x MISO %02x  ", f.MOSI, f.MISO)
@@ -1315,10 +1300,7 @@ func logicUSB() {
 			return
 		}
 		base := events[0].Cycle
-		start := len(events) - 10
-		if start < 0 {
-			start = 0
-		}
+		start := max(len(events)-10, 0)
 		for _, ev := range events[start:] {
 			dir := "IN "
 			if !ev.In {
@@ -1410,10 +1392,7 @@ func updateConsole(snap MachineState) {
 		seenPos = 0
 	}
 	if snap.ConsolePos > seenPos {
-		n := int(snap.ConsolePos - seenPos)
-		if n > len(snap.Console) {
-			n = len(snap.Console)
-		}
+		n := min(int(snap.ConsolePos-seenPos), len(snap.Console))
 		console.Append([]byte(snap.Console[len(snap.Console)-n:]))
 		seenPos = snap.ConsolePos
 	}
@@ -1461,7 +1440,7 @@ func main() {
 	// Allow a firmware path on the command line as a convenience.
 	if rest := flag.Args(); len(rest) > 0 {
 		fwPath = rest[0]
-		emu.Load(fwPath)
+		_ = emu.Load(fwPath)
 	}
 	setTab(*tabName)
 	if *zFlag >= 1 {

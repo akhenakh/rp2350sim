@@ -74,7 +74,6 @@ type CPU struct {
 
 	// Exception state.
 	VTOR  uint32
-	excLR uint32
 	curPC uint32
 
 	// Exclusive-access monitor (one address per core).
@@ -159,13 +158,6 @@ func (c *CPU) setNZForced(v uint32) {
 
 func (c *CPU) nzcv() (n, z, cy, v bool) {
 	return c.flag(flagN), c.flag(flagZ), c.flag(flagC), c.flag(flagV)
-}
-
-func (c *CPU) setNZCV(n, z, cy, v bool) {
-	c.setFlag(flagN, n)
-	c.setFlag(flagZ, z)
-	c.setFlag(flagC, cy)
-	c.setFlag(flagV, v)
 }
 
 // pcRead is the value of PC seen by instructions reading R15.
@@ -321,13 +313,6 @@ func (c *CPU) condTrue(cond uint8) bool {
 	}
 	return false
 }
-
-// Memory helpers with alignment rules matching the architecture.
-
-func (c *CPU) read16(addr uint32) uint16     { return c.Bus.Read16(addr) }
-func (c *CPU) read32(addr uint32) uint32     { return c.Bus.Read32(addr) }
-func (c *CPU) write16(addr uint32, v uint16) { c.Bus.Write16(addr, v) }
-func (c *CPU) write32(addr uint32, v uint32) { c.Bus.Write32(addr, v) }
 
 // Exception enters handler mode for the given exception number.
 func (c *CPU) Exception(n uint32) {

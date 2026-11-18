@@ -28,7 +28,7 @@ func (p *pwmBlock) tick(now uint64) {
 		return // counters only need microsecond resolution
 	}
 	p.lastNow = now
-	for slice := 0; slice < pwmSlices; slice++ {
+	for slice := range pwmSlices {
 		csr := p.block.regs[(slice*pwmStride+0)/4]
 		if csr&1 == 0 { // CSR_EN
 			continue
@@ -49,7 +49,7 @@ func (p *pwmBlock) tick(now uint64) {
 		p.block.regs[(slice*pwmStride+8)/4] = uint32(ctr)
 
 		cc := p.block.regs[(slice*pwmStride+0x0C)/4]
-		for pin := 0; pin < 48; pin++ {
+		for pin := range 48 {
 			if int(p.chip.Pins.Func[pin]) != pwmFuncSel {
 				continue
 			}

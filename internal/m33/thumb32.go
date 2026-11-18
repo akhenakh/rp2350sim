@@ -99,7 +99,7 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 		list := uint32(hw2 & 0xFFFF)
 		wback := hw1&0x0020 != 0
 		base := c.R[rn]
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			if list&(1<<i) != 0 {
 				c.Bus.Write32(base, c.R[i])
 				base += 4
@@ -120,7 +120,7 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 		n := popcount(list)
 		base := c.R[rn] - uint32(n)*4
 		addr := base
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			if list&(1<<i) != 0 {
 				c.Bus.Write32(addr, c.R[i])
 				addr += 4
@@ -141,7 +141,7 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 		base := c.R[rn]
 		var pcVal uint32
 		havePC := false
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			if list&(1<<i) != 0 {
 				v := c.Bus.Read32(base)
 				base += 4

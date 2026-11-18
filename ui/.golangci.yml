@@ -1,0 +1,13 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - modernize
+  settings:
+    staticcheck:
+      # The UI is written in Shirei's declarative DSL; its API is designed to
+      # be dot-imported.
+      dot-import-whitelist:
+        - go.hasen.dev/shirei
+        - go.hasen.dev/shirei/widgets

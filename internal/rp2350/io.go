@@ -358,7 +358,7 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 // inputWord builds a 32-bit GPIO input value for the given base pin.
 func (p *PinState) inputWord(base int) uint32 {
 	var v uint32
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if p.Level(base + i) {
 			v |= 1 << uint(i)
 		}
@@ -384,7 +384,7 @@ func (c *Chip) pinsChanged(oldOut, oldOE uint64) {
 	if c.Pins.OnChange == nil {
 		return
 	}
-	for pin := 0; pin < 48; pin++ {
+	for pin := range 48 {
 		old := c.Pins.levelWith(oldOut, oldOE, pin)
 		now := c.Pins.Level(pin)
 		if old != now {
