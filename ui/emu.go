@@ -158,7 +158,7 @@ func (e *Emu) ToggleRunning() bool {
 func (e *Emu) loop() {
 	// Small chunks keep the mutex hold time low enough for a smooth UI while
 	// still running the firmware as fast as the interpreter allows.
-	const chunk = 100_000
+	const chunk = 150_000
 	for {
 		time.Sleep(time.Millisecond)
 		if shirei.GetHost().HeadlessRender {

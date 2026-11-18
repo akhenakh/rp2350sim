@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -37,10 +38,20 @@ func main() {
 		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
 	)
 	flag.Parse()
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 	if *path == "" {
 		flag.Usage()
 		os.Exit(2)
@@ -300,7 +311,7 @@ func main() {
 	fmt.Printf("cycles=%d (%.3fs virtual) wall=%s\n", c.Cycles, float64(c.Cycles)/150e6, wall)
 	fmt.Printf("core0 pc=%#08x sp=%#08x lr=%#08x\n", c.CPU0.R[15], c.CPU0.R[13], c.CPU0.R[14])
 	fmt.Printf("core1 pc=%#08x sp=%#08x lr=%#08x parked=%v\n", c.CPU1.R[15], c.CPU1.R[13], c.CPU1.R[14], c.CPU1.Parked)
-	fmt.Printf("irq delivered (pending samples): %d\n", c.IRQCount)
+	fmt.Printf("irq delivered: %d\n", c.IRQCount)
 	fmt.Printf("sio pushes=%d core1 launches=%d\n", c.SIOPushes(), c.Core1Launches())
 	fmt.Printf("runqueue head=%#08x tail=%#08x sleepQueue=%#08x currentTask=%#08x mainExited=%d\n",
 		c.Read32(0x200017c0), c.Read32(0x200017c4), c.Read32(0x2000179c), c.Read32(0x2000175c), c.Read32(0x20001758))

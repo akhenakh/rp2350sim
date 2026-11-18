@@ -5,8 +5,9 @@ package rp2350
 // clock on the way in, and pins whose function select is PWM are driven from
 // the resulting duty cycle.
 type pwmBlock struct {
-	chip  *Chip
-	block *regBlock
+	chip    *Chip
+	block   *regBlock
+	lastNow uint64
 }
 
 const (
@@ -23,6 +24,10 @@ func newPWM(c *Chip) *pwmBlock {
 
 // tick updates slice counters and PWM-driven pins from the microsecond clock.
 func (p *pwmBlock) tick(now uint64) {
+	if now == p.lastNow {
+		return // counters only need microsecond resolution
+	}
+	p.lastNow = now
 	for slice := 0; slice < pwmSlices; slice++ {
 		csr := p.block.regs[(slice*pwmStride+0)/4]
 		if csr&1 == 0 { // CSR_EN

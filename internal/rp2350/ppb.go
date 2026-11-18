@@ -87,6 +87,14 @@ func (n *NVIC) NextPending() int {
 }
 
 func (n *NVIC) bestPending(clear bool) int {
+	// Fast path: nothing pending, or nothing pending that is enabled. This is
+	// the common case and it runs on every cycle.
+	if n.pending[0]|n.pending[1] == 0 {
+		return 0
+	}
+	if n.pending[0]&n.enabled[0]|(n.pending[1]&n.enabled[1]) == 0 {
+		return 0
+	}
 	cpu := n.chip.currentCPU()
 	if cpu == nil {
 		return 0
@@ -114,6 +122,7 @@ func (n *NVIC) bestPending(clear bool) int {
 	}
 	if clear {
 		n.pending[best/32] &^= 1 << uint(best%32)
+		n.chip.IRQCount++
 	}
 	return 16 + best
 }

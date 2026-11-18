@@ -82,6 +82,7 @@ type Chip struct {
 
 	// IRQCount counts delivered exceptions (diagnostics).
 	IRQCount uint64
+	usbPoll  int
 
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
@@ -172,9 +173,6 @@ func (c *Chip) Step() {
 	c.Cycles++
 
 	c.tickPeripherals()
-	if c.NVIC.PeekPending() != 0 {
-		c.IRQCount++
-	}
 
 	if !c.Paused {
 		c.stepCore(c.CPU0)
@@ -212,15 +210,26 @@ func (c *Chip) advanceSleep(max uint64) {
 }
 
 func (c *Chip) tickPeripherals() {
-	now := c.Cycles / cyclesPerMicrosecond
-	for i := range c.tmr {
-		c.tmr[i].tick(now)
+	// Timers and PWM counters only need microsecond resolution; running them
+	// once per microsecond instead of once per cycle leaves the per-cycle
+	// budget to the CPU.
+	if c.Cycles%cyclesPerMicrosecond == 0 {
+		now := c.Cycles / cyclesPerMicrosecond
+		for i := range c.tmr {
+			c.tmr[i].tick(now)
+		}
+		if c.pwm != nil {
+			c.pwm.tick(now)
+		}
 	}
 	if c.usb != nil {
-		c.usb.tick(c)
-	}
-	if c.pwm != nil {
-		c.pwm.tick(now)
+		// The USB host state machine only needs to observe the device every
+		// few cycles; full-speed bit times are 12 cycles at 150 MHz.
+		c.usbPoll++
+		if c.usbPoll >= 8 {
+			c.usbPoll = 0
+			c.usb.tick(c)
+		}
 	}
 	for _, h := range c.CycleHooks {
 		h()

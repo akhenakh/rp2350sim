@@ -28,6 +28,7 @@ type usbBlock struct {
 	state     usbHostState
 	step      int
 	wait      int
+	pollTick  int
 	outSent   bool
 	collected []byte
 
@@ -262,7 +263,14 @@ func (u *usbBlock) tick(c *Chip) {
 	case usbHostControl:
 		u.pollControl()
 	case usbHostRunning:
-		u.pollEndpoints()
+		// USB full-speed packets are microseconds apart; sampling the
+		// endpoints every 64 cycles is far finer than needed and keeps the
+		// idle host cheap.
+		u.pollTick++
+		if u.pollTick >= 64 {
+			u.pollTick = 0
+			u.pollEndpoints()
+		}
 	}
 }
 

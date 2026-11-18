@@ -48,6 +48,7 @@ Useful flags:
 | `-watch ADDR`, `-watch-val V`, `-watch-reg N` | write and register logging |
 | `-poke ADDR=VAL` | write memory before starting |
 | `-sample N` | print the PC in 10M-cycle chunks |
+| `-cpuprofile PATH` | write a CPU profile |
 
 Diagnostics environment variables: `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`,
 `RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`.
@@ -104,8 +105,9 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 - Missing peripherals: PIO, I2C, W6300 Ethernet, USB host, PSRAM.
 - The TinyGo build under test does not launch core 1, so the emulator runs
   single-core in practice.
-- Time is virtual and one instruction is one cycle; throughput is about 15M
-  cycles/s, so firmware runs slower than real time.
+- Time is virtual and one instruction is one cycle; throughput is about 160M
+  cycles/s (faster than the emulated 150 MHz clock), so firmware runs at or
+  above real time. `-cpuprofile` writes a Go CPU profile.
 - Hardware notes, board wiring and design contracts live in `.operator/specs/`.
 
 ## References
