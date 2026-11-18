@@ -50,7 +50,23 @@ Useful flags:
 | `-sample N` | print the PC in 10M-cycle chunks |
 
 Diagnostics environment variables: `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`,
-`RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`.
+`RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`.
+
+## Ethernet
+
+`-eth` attaches a W5500 on SPI0 (CS GP17), the POE-ETH wiring. The emulated
+hardware sockets are backed by the host network, so TinyGo's stock
+`tinygo.org/x/drivers/w5500` netdev driver works unchanged and can talk to
+servers running on this machine.
+
+TinyGo's `net.Dial("tcp", "host:port")` needs `LookupPort`, which is not
+implemented in this TinyGo build; construct the address explicitly:
+
+```go
+conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.IP{127,0,0,1}, Port: 8080})
+```
+
+See `.operator/specs/hardware.md` for the W6300 difference and the roadmap.
 
 ## Desktop UI
 

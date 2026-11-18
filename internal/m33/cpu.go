@@ -44,6 +44,10 @@ type CPU struct {
 	IPSR uint32
 	// PRIMASK disables configurable-priority interrupts when bit 0 is set.
 	PRIMASK uint32
+	// itNoFlags suppresses flag updates from 16-bit data-processing
+	// instructions executing inside an IT block (ARMv8-M rule).
+	itNoFlags bool
+
 	// CONTROL bit 1 selects PSP in thread mode.
 	CONTROL uint32
 	// MSP and PSP are the banked stack pointers.
@@ -133,8 +137,20 @@ func (c *CPU) setFlag(f uint32, v bool) {
 }
 
 func (c *CPU) setNZ(v uint32) {
+	if c.itNoFlags {
+		return
+	}
 	c.setFlag(flagN, v&0x80000000 != 0)
 	c.setFlag(flagZ, v == 0)
+}
+
+// setNZForced updates N/Z even inside an IT block. CMP, CMN, TST and TEQ are
+// the only 16-bit instructions whose flags are not suppressed there.
+func (c *CPU) setNZForced(v uint32) {
+	saved := c.itNoFlags
+	c.itNoFlags = false
+	c.setNZ(v)
+	c.itNoFlags = saved
 }
 
 func (c *CPU) nzcv() (n, z, cy, v bool) {
@@ -232,7 +248,9 @@ func (c *CPU) Step() int {
 		c.exec32(pc, hw1)
 	} else {
 		c.R[15] = pc + 2
+		c.itNoFlags = itBefore != 0
 		c.exec16(pc, hw1)
+		c.itNoFlags = false
 	}
 	c.syncSP()
 	if itBefore != 0 {

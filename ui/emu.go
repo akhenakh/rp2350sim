@@ -64,6 +64,9 @@ func (e *Emu) resetChip() {
 	c := rp2350.New()
 	e.lcd = devices.NewST7789(c, 9, 8, 12)
 	c.OnSPI1 = e.lcd.Transfer
+	eth := devices.NewW5500(c, 17)
+	c.OnSPI0 = eth.Transfer
+	c.CycleHooks = append(c.CycleHooks, eth.Tick)
 
 	appendBytes := func(b []byte) {
 		e.console = append(e.console, b...)

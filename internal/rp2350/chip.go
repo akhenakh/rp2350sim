@@ -88,6 +88,10 @@ type Chip struct {
 	// OnUnhandled is called for each unmapped access (may be nil).
 	OnUnhandled func(addr uint32, write bool, val uint32)
 
+	// CycleHooks run once per virtual cycle. Devices use them to observe pin
+	// levels that change without a bus access (for example chip select).
+	CycleHooks []func()
+
 	// MMIO trace hook.
 	Trace func(addr uint32, write bool, val uint32, pc uint32)
 	// OnWrite is called for every memory write when set (debugging).
@@ -217,6 +221,9 @@ func (c *Chip) tickPeripherals() {
 	}
 	if c.pwm != nil {
 		c.pwm.tick(now)
+	}
+	for _, h := range c.CycleHooks {
+		h()
 	}
 }
 

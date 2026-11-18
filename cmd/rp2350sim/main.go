@@ -36,6 +36,7 @@ func main() {
 		valStr     = flag.String("watch-val", "", "log writes of this value (hex)")
 		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
+		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
 	)
@@ -74,8 +75,22 @@ func main() {
 			fmt.Fprintf(os.Stderr, "dma ch=%d read=%#08x write=%#08x count=%d ctrl=%#08x\n", ch, ra, wa, count, ctrl)
 		}
 	}
+	var w5500 *devices.W5500
+	if *ethFlag {
+		w5500 = devices.NewW5500(c, 17)
+		c.CycleHooks = append(c.CycleHooks, w5500.Tick)
+		if os.Getenv("RP2350SIM_ETH_LOG") != "" {
+			w5500.Logf = func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}
+		}
+	}
+
 	spiLog := os.Getenv("RP2350SIM_SPI_LOG") != ""
 	c.OnSPI0 = func(tx byte) byte {
+		if w5500 != nil {
+			return w5500.Transfer(tx)
+		}
 		if spiLog {
 			fmt.Fprintf(os.Stderr, "spi0 tx %02x\n", tx)
 		}

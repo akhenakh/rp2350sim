@@ -54,7 +54,7 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 			c.R[rd] = imm
 			c.setNZ(imm)
 		case 1:
-			c.subFlags(c.R[rd], imm, 1)
+			c.cmpFlags(c.R[rd], imm)
 		case 2:
 			c.R[rd] = c.addFlags(c.R[rd], imm, 0)
 		case 3:
@@ -112,13 +112,13 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 			c.R[rd] = shiftROR(c, a, b&0xFF, true)
 			c.setNZ(c.R[rd])
 		case 0x8: // TST
-			c.setNZ(a & b)
+			c.setNZForced(a & b)
 		case 0x9: // RSB (NEG)
 			c.R[rd] = c.subFlags(0, b, 1)
 		case 0xA: // CMP
-			c.subFlags(a, b, 1)
+			c.cmpFlags(a, b)
 		case 0xB: // CMN
-			c.addFlags(a, b, 0)
+			c.cmnFlags(a, b)
 		case 0xC: // ORR
 			c.R[rd] = a | b
 			c.setNZ(c.R[rd])
@@ -400,6 +400,7 @@ func (c *CPU) popList(list uint32) {
 // Shift helpers that maintain the carry flag.
 
 func shiftLSL(c *CPU, v, n uint32, setCarry bool) uint32 {
+	setCarry = setCarry && !c.itNoFlags
 	if n == 0 {
 		return v
 	}
@@ -419,6 +420,7 @@ func shiftLSL(c *CPU, v, n uint32, setCarry bool) uint32 {
 }
 
 func shiftLSR(c *CPU, v, n uint32, setCarry bool) uint32 {
+	setCarry = setCarry && !c.itNoFlags
 	if n == 0 {
 		return v
 	}
@@ -438,6 +440,7 @@ func shiftLSR(c *CPU, v, n uint32, setCarry bool) uint32 {
 }
 
 func shiftASR(c *CPU, v, n uint32, setCarry bool) uint32 {
+	setCarry = setCarry && !c.itNoFlags
 	if n == 0 {
 		return v
 	}
@@ -455,6 +458,7 @@ func shiftASR(c *CPU, v, n uint32, setCarry bool) uint32 {
 }
 
 func shiftROR(c *CPU, v, n uint32, setCarry bool) uint32 {
+	setCarry = setCarry && !c.itNoFlags
 	if n == 0 {
 		return v
 	}
@@ -476,6 +480,9 @@ func shiftROR(c *CPU, v, n uint32, setCarry bool) uint32 {
 func (c *CPU) addFlags(x, y, carryIn uint32) uint32 {
 	sum := uint64(x) + uint64(y) + uint64(carryIn)
 	res := uint32(sum)
+	if c.itNoFlags {
+		return res
+	}
 	c.setFlag(flagC, sum > 0xFFFFFFFF)
 	c.setFlag(flagV, ^(x^y)&(x^res)&0x80000000 != 0)
 	c.setNZ(res)
@@ -485,10 +492,28 @@ func (c *CPU) addFlags(x, y, carryIn uint32) uint32 {
 func (c *CPU) subFlags(x, y, carryIn uint32) uint32 {
 	sum := uint64(x) + uint64(^y) + uint64(carryIn)
 	res := uint32(sum)
+	if c.itNoFlags {
+		return res
+	}
 	c.setFlag(flagC, sum > 0xFFFFFFFF)
 	c.setFlag(flagV, (x^y)&(x^res)&0x80000000 != 0)
 	c.setNZ(res)
 	return res
+}
+
+// cmpFlags and cmnFlags update flags even inside an IT block.
+func (c *CPU) cmpFlags(x, y uint32) {
+	saved := c.itNoFlags
+	c.itNoFlags = false
+	c.subFlags(x, y, 1)
+	c.itNoFlags = saved
+}
+
+func (c *CPU) cmnFlags(x, y uint32) {
+	saved := c.itNoFlags
+	c.itNoFlags = false
+	c.addFlags(x, y, 0)
+	c.itNoFlags = saved
 }
 
 func boolToU32(b bool) uint32 {

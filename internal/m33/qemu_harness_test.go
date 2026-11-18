@@ -250,3 +250,53 @@ func runLocal(c diffCase) (*CPU, *testBus) {
 	}
 	return cpu, bus
 }
+
+// TestQEMUITBlockSequence checks flag behaviour across two IT blocks with a
+// 16-bit conditional MOV between them (the LLVM pattern used by TinyGo's SPI
+// DMA setup).
+func TestQEMUITBlockSequence(t *testing.T) {
+	cases := []diffCase{{
+		name: "it-seq",
+		hw: []uint16{
+			0x2000,         // movs r0,#0
+			0x2800,         // cmp r0,#0
+			0xF04F, 0x0144, // mov.w r1,#0x44
+			0xBF08,         // it eq
+			0x2104,         // moveq r1,#4
+			0xF04F, 0x0211, // mov.w r2,#0x11
+			0xF502, 0x2280, // add.w r2,r2,#0x40000
+			0xF04F, 0x0148, // mov.w r1,#0x48
+			0xBF08, // it eq
+			0x2108, // moveq r1,#8
+		},
+		steps: 12,
+	}}
+	results := runOracle(t, cases)
+	got := results[0]
+	t.Logf("qemu r1=%#x r2=%#x apsr=%#x halt=%q", got.Regs[1], got.Regs[2], got.XPSR, got.Halt)
+	if got.Halt != "" {
+		t.Skipf("oracle could not run: %s", got.Halt)
+	}
+	cpu, _ := runLocal(cases[0])
+	t.Logf("local r1=%#x r2=%#x apsr=%#x", cpu.R[1], cpu.R[2], cpu.APSR)
+	if cpu.R[1] != got.Regs[1] {
+		t.Fatalf("r1 local %#x qemu %#x", cpu.R[1], got.Regs[1])
+	}
+}
+
+func TestQEMUITFlagRules(t *testing.T) {
+	cases := []diffCase{
+		{name: "it-adds", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x3001}, steps: 4},
+		{name: "it-cmp", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x2805}, steps: 4},
+		{name: "it-tst", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x4208}, steps: 4},
+	}
+	results := runOracle(t, cases)
+	for i, got := range results {
+		t.Logf("%s: qemu apsr=%#x halt=%q", cases[i].name, got.XPSR, got.Halt)
+		if got.Halt != "" {
+			continue
+		}
+		cpu, _ := runLocal(cases[i])
+		t.Logf("%s: local apsr=%#x", cases[i].name, cpu.APSR)
+	}
+}
