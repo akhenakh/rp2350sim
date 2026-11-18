@@ -63,6 +63,7 @@ type Chip struct {
 	i2c  [2]*i2cBlock
 	pio  [3]*pioBlock
 	uart [2]*uartBlock
+	dma  *dmaBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -140,7 +141,8 @@ func New() *Chip {
 	c.AddUART(0x40078000, 1)
 	c.AddSPI(0x40080000, 0)
 	c.AddSPI(0x40088000, 1)
-	c.addRegBlock(newDMA(c).block)
+	c.dma = newDMA(c)
+	c.addRegBlock(c.dma.block)
 	c.usb = newUSB(c)
 	c.addRegBlock(c.usb.block)
 	c.pwm = newPWM(c)
@@ -241,6 +243,9 @@ func (c *Chip) tickPeripherals() {
 		if c.pwm != nil {
 			c.pwm.tick(now)
 		}
+	}
+	if c.dma != nil && c.dma.busy() {
+		c.dma.tick()
 	}
 	if c.usb != nil {
 		// The USB host state machine only needs to observe the device every

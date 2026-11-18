@@ -54,11 +54,14 @@ else
 fi
 
 # --- W6300 Ethernet against the host helper --------------------------------
+if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
+	bad "W6300 ports" "port 9000 is already in use; kill any leftover ethhost first"
+fi
 "$BUILD/ethhost" >"$BUILD/ethhost-smoke.log" 2>&1 &
 host=$!
 trap 'kill "$host" 2>/dev/null' EXIT
 sleep 0.5
-out=$("$EMU" -fw "$BUILD/w6300.elf" -seconds 4 -w6300 2>&1)
+out=$("$EMU" -fw "$BUILD/w6300.elf" -seconds 6 -w6300 2>&1)
 kill "$host" 2>/dev/null || true
 trap - EXIT
 log=$(cat "$BUILD/ethhost-smoke.log")

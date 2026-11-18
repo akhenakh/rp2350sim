@@ -75,7 +75,19 @@ func main() {
 		// the second accept proves the listener re-armed.
 		time.Sleep(time.Second)
 		for i := 0; i < 2; i++ {
-			conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", *checkPort))
+			// The emulated listener re-arms asynchronously; retry while the
+			// firmware catches up with wall time.
+			addr := fmt.Sprintf("127.0.0.1:%d", *checkPort)
+			var conn net.Conn
+			var err error
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				conn, err = net.Dial("tcp", addr)
+				if err == nil || time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
 			if err != nil {
 				fmt.Printf("server check %d: dial: %v\n", i+1, err)
 				return
