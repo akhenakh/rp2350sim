@@ -109,13 +109,8 @@ func main() {
 					return
 				}
 			}
-			if pc == 0x1000183c {
-				sp, ln := c.Read32(cpu.R[1]), c.Read32(cpu.R[1]+4)
-				str := make([]byte, 0, ln)
-				for i := uint32(0); i < ln && i < 128; i++ {
-					str = append(str, c.Read8(sp+i))
-				}
-				fmt.Printf("PANIC type=%#08x data=%#08x strp=%#08x len=%d msg=%q\n", cpu.R[0], cpu.R[1], sp, ln, string(str))
+			if pc >= 0x100028a4 || pc < 0x10000010 {
+				fmt.Printf("LEFT IMAGE pc=%#08x lr=%#08x sp=%#08x\n", pc, cpu.R[14], cpu.R[13])
 				start := 0
 				if len(ring) > 40 {
 					start = len(ring) - 40

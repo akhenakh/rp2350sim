@@ -4,8 +4,9 @@ A Go emulator for the Raspberry Pi RP2350 (Pico 2), aimed at running TinyGo
 firmware with a Shirei desktop UI.
 
 Status: **early work in progress**. The M33 core runs real TinyGo firmware
-through runtime initialisation; a handful of instruction/flag bugs remain
-before `main()` is reached reliably.
+through package initialisation (clocks/PLL setup included). A remaining
+instruction-level bug in runtime code (heap allocator or the 64-bit division
+helper) stops it before `main()`; `AGENTS.md` records what is already fixed.
 
 ## Layout
 
