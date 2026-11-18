@@ -57,7 +57,7 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 		rn := uint32(hw1 & 0xF)
 		rm := uint32(hw2 & 0xF)
 		base := c.R[rn]
-		if hw1&0x0010 != 0 { // TBH
+		if hw2&0x0010 != 0 { // TBH (hw2 bit 4), TBB otherwise
 			off := uint32(c.Bus.Read16(base + c.R[rm]*2))
 			c.R[15] = c.pcRead() + off*2
 		} else {

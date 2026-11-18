@@ -122,6 +122,8 @@ SNIPPETS = [
 ("bl","bl 1f\n nop\n1:"),
 ("beq_w","beq 1f\n nop\n1:"),
 ("tbb","tbb [r3, r1]"),
+("tbb_pc","tbb [pc, r1]\n .byte 4, 6, 8, 10\n nop\n nop\n nop\n nop\n nop\n nop"),
+("tbh_pc","tbh [pc, r1, lsl #1]\n .short 4, 6\n nop\n nop\n nop\n nop"),
 ("tbh","tbh [r3, r1, lsl #1]"),
 ("ldr_w_imm","ldr.w r0, [r3, #0x24]"),
 ("str_w_imm","str.w r0, [r3, #0x24]"),
@@ -196,6 +198,8 @@ for name, asm in SNIPPETS:
                 mem[0x20000400] = 0x00000000
                 regs[1] = 0
                 regs[3] = 0x20000400
+            if name in ("tbb_pc","tbh_pc"):
+                regs[1] = 0
             if "ldr" in name or "str" in name or "ldm" in name or "stm" in name or "push" in name or "pop" in name or name in ("ldrex","strex","ldaex","stlex","lda","stl"):
                 mem[0x20000400] = 0x11223344
                 mem[0x20000404] = 0x55667788

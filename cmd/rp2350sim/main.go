@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akh/rp2350sim/internal/devices"
 	"github.com/akh/rp2350sim/internal/firmware"
 	"github.com/akh/rp2350sim/internal/m33"
 	"github.com/akh/rp2350sim/internal/rp2350"
@@ -33,6 +34,8 @@ func main() {
 		sampleN    = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
 		msgFlag    = flag.Bool("msg", false, "at a breakpoint, decode r1 as a runtime message string")
 		valStr     = flag.String("watch-val", "", "log writes of this value (hex)")
+		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
+		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
 	)
@@ -59,6 +62,36 @@ func main() {
 	if !*core1 {
 		c.CPU1.Parked = true
 	}
+
+	var lcd *devices.ST7789
+	if *lcdFlag || *lcdPNG != "" {
+		lcd = devices.NewST7789(c, 9, 8, 12)
+		lcd.Debug = os.Getenv("RP2350SIM_LCD_LOG") != ""
+	}
+
+	if os.Getenv("RP2350SIM_DMA_LOG") != "" {
+		c.OnDMA = func(ch int, ra, wa, count, ctrl uint32) {
+			fmt.Fprintf(os.Stderr, "dma ch=%d read=%#08x write=%#08x count=%d ctrl=%#08x\n", ch, ra, wa, count, ctrl)
+		}
+	}
+	spiLog := os.Getenv("RP2350SIM_SPI_LOG") != ""
+	c.OnSPI0 = func(tx byte) byte {
+		if spiLog {
+			fmt.Fprintf(os.Stderr, "spi0 tx %02x\n", tx)
+		}
+		return 0xFF
+	}
+	c.OnSPI1 = func(tx byte) byte {
+		if lcd != nil {
+			return lcd.Transfer(tx)
+		}
+		if spiLog {
+			fmt.Fprintf(os.Stderr, "spi1 tx %02x\n", tx)
+		}
+		return 0xFF
+	}
+	c.OnUART0 = func(b byte) { os.Stdout.Write([]byte{b}) }
+	c.OnUART1 = func(b byte) { os.Stdout.Write([]byte{b}) }
 
 	if *tracePins != "" {
 		wanted := map[int]bool{}
@@ -116,7 +149,20 @@ func main() {
 			n, _ := strconv.Atoi(*regStr)
 			watchReg = n
 		}
+		maxAddr := img.MaxAddr()
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
+			if pc >= maxAddr && pc < 0x10400000 {
+				fmt.Printf("OUTSIDE IMAGE pc=%#08x lr=%#08x sp=%#08x\n", pc, cpu.R[14], cpu.R[13])
+				start := 0
+				if len(ring) > 40 {
+					start = len(ring) - 40
+				}
+				for _, l := range ring[start:] {
+					fmt.Println("  ", l)
+				}
+				c.Halted = true
+				os.Exit(1)
+			}
 			if watchReg >= 0 {
 				if v := cpu.R[watchReg]; v != lastReg {
 					fmt.Printf("r%d: %#08x -> %#08x at pc=%#08x (hw=%04x)\n", watchReg, lastReg, v, pc, hw1)
@@ -248,6 +294,7 @@ func main() {
 	fmt.Printf("core0 pc=%#08x sp=%#08x lr=%#08x\n", c.CPU0.R[15], c.CPU0.R[13], c.CPU0.R[14])
 	fmt.Printf("core1 pc=%#08x sp=%#08x lr=%#08x parked=%v\n", c.CPU1.R[15], c.CPU1.R[13], c.CPU1.R[14], c.CPU1.Parked)
 	fmt.Printf("irq delivered (pending samples): %d\n", c.IRQCount)
+	fmt.Printf("sio pushes=%d core1 launches=%d\n", c.SIOPushes(), c.Core1Launches())
 	fmt.Printf("runqueue head=%#08x tail=%#08x sleepQueue=%#08x currentTask=%#08x mainExited=%d\n",
 		c.Read32(0x200017c0), c.Read32(0x200017c4), c.Read32(0x2000179c), c.Read32(0x2000175c), c.Read32(0x20001758))
 	if c.CPU0.Halted {
@@ -256,6 +303,15 @@ func main() {
 	if c.CPU1.Halted {
 		fmt.Printf("core1 halted: %s pc=%#08x lr=%#08x sp=%#08x\n", c.CPU1.HaltReason, c.CPU1.R[15], c.CPU1.R[14], c.CPU1.R[13])
 	}
+	if lcd != nil {
+		fmt.Printf("lcd: pixels=%d on=%v\n", lcd.PixelsWritten(), lcd.On())
+	}
+	if lcd != nil && *lcdPNG != "" {
+		if err := lcd.WritePNG(*lcdPNG); err != nil {
+			fmt.Fprintf(os.Stderr, "lcd png: %v\n", err)
+		}
+	}
+
 	if *unhandled {
 		fmt.Println("unmapped accesses:")
 		fmt.Print(c.DescribeUnhandled())

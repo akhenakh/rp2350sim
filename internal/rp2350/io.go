@@ -133,6 +133,8 @@ type sioBlock struct {
 	// Core 1 bootrom launch sequence state.
 	launchSeq   []uint32
 	core1Parked bool
+	Pushes      uint64
+	Launches    uint64
 }
 
 func (s *sioBlock) init(c *Chip) {
@@ -262,6 +264,7 @@ func (s *sioBlock) write(c *Chip, off, v uint32) {
 }
 
 func (s *sioBlock) push(c *Chip, from int, v uint32) {
+	s.Pushes++
 	if s.core1Parked && from == 0 {
 		// Core 1 is parked in the bootrom FIFO wait loop: echo the word and
 		// watch for the multicore launch sequence.
@@ -277,6 +280,7 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 			entry := s.launchSeq[5]
 			s.launchSeq = s.launchSeq[:0]
 			s.core1Parked = false
+			s.Launches++
 			c.CPU1.Parked = false
 			c.CPU1.VTOR = vt &^ 0x7F
 			c.CPU1.R[13] = sp

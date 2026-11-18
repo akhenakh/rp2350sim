@@ -57,6 +57,18 @@ type Chip struct {
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
 
+	// OnDMA reports DMA transfers (diagnostics).
+	OnDMA func(ch int, readAddr, writeAddr, count, ctrl uint32)
+
+	// OnSPI0 and OnSPI1 are called for every byte clocked out; they return the
+	// byte clocked in on MISO.
+	OnSPI0 func(tx byte) byte
+	OnSPI1 func(tx byte) byte
+
+	// OnUART0 and OnUART1 receive console bytes written by firmware.
+	OnUART0 func(b byte)
+	OnUART1 func(b byte)
+
 	// IRQCount counts delivered exceptions (diagnostics).
 	IRQCount uint64
 
@@ -101,10 +113,16 @@ func New() *Chip {
 	c.addRegBlock(newTicks(c))
 	c.addRegBlock(newWatchdog(c))
 	c.addRegBlock(newSysInfo(c))
+	c.addRegBlock(newROSC(c))
 	c.addRegBlock(c.io.bank0)
 	c.addRegBlock(c.io.pads)
 	c.addRegBlock(c.tmr[0].block)
 	c.addRegBlock(c.tmr[1].block)
+	c.AddUART(0x40070000, 0)
+	c.AddUART(0x40078000, 1)
+	c.AddSPI(0x40080000, 0)
+	c.AddSPI(0x40088000, 1)
+	c.addRegBlock(newDMA(c).block)
 	return c
 }
 
@@ -451,6 +469,12 @@ func (c *Chip) DescribeUnhandled() string {
 	}
 	return s
 }
+
+// SIOPushes reports the number of SIO FIFO words written (diagnostics).
+func (c *Chip) SIOPushes() uint64 { return c.sio.Pushes }
+
+// Core1Launches reports how many times core 1 was released (diagnostics).
+func (c *Chip) Core1Launches() uint64 { return c.sio.Launches }
 
 // NowMicros returns the current virtual time in microseconds.
 func (c *Chip) NowMicros() uint64 { return c.Cycles / cyclesPerMicrosecond }

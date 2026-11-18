@@ -132,3 +132,22 @@ func newSysInfo(c *Chip) *regBlock {
 	}
 	return b
 }
+
+// newROSC models the ring oscillator's random bit source.
+func newROSC(c *Chip) *regBlock {
+	b := newRegBlock(0x400E8000, 0x1000)
+	var state uint32 = 0x12345678
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		if off == 0x1C { // STATUS
+			return 1 << 31, true // ROSC_RUNNING
+		}
+		if off == 0x20 { // RANDOMBIT
+			state ^= state << 13
+			state ^= state >> 17
+			state ^= state << 5
+			return state & 1, true
+		}
+		return 0, false
+	}
+	return b
+}
