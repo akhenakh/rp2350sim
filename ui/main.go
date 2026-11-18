@@ -46,7 +46,11 @@ func RootView() {
 	snap := emu.Snapshot()
 	updateConsole(snap)
 
-	Container(Attrs(Viewport, Background(220, 8, 12, 1)), func() {
+	// The panels below paint explicit dark surfaces, so the text color must be
+	// set explicitly too: relying on the color scheme leaves dark-on-dark text
+	// when the host is in light mode.
+	lightText := TextColor(220, 8, 92, 1)
+	Container(Attrs(Viewport, Background(220, 8, 12, 1), AmendTextStyle(lightText)), func() {
 		toolbar(snap)
 		Container(Attrs(Row, Grow(1), Gap(10), Pad4(10, 10, 10, 10)), func() {
 			pinsPanel(snap)
