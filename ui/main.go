@@ -22,9 +22,10 @@ var (
 	console = NewTextRing(256 * 1024)
 	seenPos int64
 
-	boards        []BoardDef
-	selectedBoard *BoardDef
-	activeTab     = tabBoard
+	boards             []BoardDef
+	selectedBoard      *BoardDef
+	pendingBoardPicker bool
+	activeTab          = tabBoard
 )
 
 // Tabs. Board and Console always exist; the others appear only when the
@@ -60,6 +61,13 @@ func RootView() {
 	// The panels paint dark surfaces, so use the dark scheme's light text.
 	SetDarkMode(true)
 
+	// Apply a board change requested by the toolbar last frame, so the frame
+	// that handled the click renders a consistent tab set.
+	if pendingBoardPicker {
+		pendingBoardPicker = false
+		selectedBoard = nil
+	}
+
 	snap := emu.Snapshot()
 	updateConsole(snap)
 
@@ -70,6 +78,12 @@ func RootView() {
 			return
 		}
 		toolbar(snap)
+		// The toolbar's Board… button clears the selection mid-frame; show
+		// the picker instead of the tabs for this frame.
+		if selectedBoard == nil {
+			boardPicker()
+			return
+		}
 		tabsBar()
 		Container(Attrs(Grow(1), Expand, Pad4(10, 10, 10, 10)), func() {
 			switch activeTab {
@@ -176,6 +190,9 @@ func setTab(name string) {
 
 // tabsBar lists the main view plus one tab per device on the selected board.
 func tabsBar() {
+	if selectedBoard == nil {
+		return
+	}
 	Container(Attrs(Row, CrossMid, Gap(4), Pad4(2, 10, 2, 10), Background(220, 10, 15, 1)), func() {
 		tabButton("Board", tabBoard)
 		if selectedBoard.LCD != nil {
@@ -250,8 +267,7 @@ func toolbar(snap MachineState) {
 			emu.Reset()
 		}
 		if Button(NoIcon, "Board…") {
-			selectedBoard = nil
-			activeTab = tabBoard
+			pendingBoardPicker = true
 			RequestNextFrame()
 		}
 		if Button(NoIcon, "All / Active") {
