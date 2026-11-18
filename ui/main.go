@@ -137,7 +137,14 @@ func boardPicker() {
 		Container(Attrs(Grow(1), Expand, Clip, Viewport, CrossMid), func() {
 			ScrollOnInput()
 			ScrollBars()
-			Container(Attrs(Gap(10), FixWidth(780)), func() {
+			cardW := float32(viewW) * 0.52
+			if cardW < 780 {
+				cardW = 780
+			}
+			if cardW > 1200 {
+				cardW = 1200
+			}
+			Container(Attrs(Gap(10), FixWidth(cardW)), func() {
 				for i := range boards {
 					b := &boards[i]
 					ContainerWithKey(b.ID, Attrs(Row, CrossMid, Expand, Gap(14), Pad(14), Corners(10),
@@ -409,6 +416,17 @@ func pinCard(p int, in PinInfo) {
 	})
 }
 
+// lcdViewSize fits the 4:3-ish panel into the window while keeping its aspect.
+func lcdViewSize() Vec2 {
+	w := float32(viewW) * 0.62
+	h := w * 135 / 240
+	if maxH := float32(viewH) * 0.64; h > maxH {
+		h = maxH
+		w = h * 240 / 135
+	}
+	return Vec2{w, h}
+}
+
 func lcdPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
@@ -426,9 +444,9 @@ func lcdPanel(snap MachineState) {
 			Container(Attrs(Corners(6), Clip, Background(0, 0, 0, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
 				if snap.LCD != nil {
 					id := UseImage("lcd", snap.LCD)
-					ImageViewAt(id, Vec2{640, 360})
+					ImageViewAt(id, lcdViewSize())
 				} else {
-					Container(Attrs(FixSize(640, 360), Center), func() {
+					Container(Attrs(FixSizeVec(lcdViewSize()), Center), func() {
 						Label("LCD idle", FontSize(14), TextColor(220, 5, 55, 1))
 					})
 				}
@@ -452,17 +470,23 @@ func ws2812Panel(snap MachineState) {
 				Label(fmt.Sprintf("%d LEDs · frame %d", len(snap.WSColors), snap.WSFrames), FontSize(12))
 			}
 		})
-		Container(Attrs(Row, CrossMid, Gap(10), Pad(16), Corners(8), Background(220, 12, 8, 1),
-			BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
-			if len(snap.WSColors) == 0 {
-				Label("no data", FontSize(13), TextColor(220, 5, 55, 1))
-				return
-			}
-			for i, c := range snap.WSColors {
-				h, s, l, a := rgbToHSLA(c)
-				ContainerWithKey(i, Attrs(FixSize(38, 38), Corners(19), Background(h, s, l, a),
-					BorderWidth(1), BorderColor(220, 8, 35, 1)), func() {})
-			}
+		Container(Attrs(Grow(1), Expand, Center), func() {
+			Container(Attrs(Row, CrossMid, Gap(28), Pad4(30, 38, 24, 38), Corners(18),
+				Background(220, 14, 9, 1), BorderWidth(1), BorderColor(220, 12, 24, 1),
+				BoxShadow(26)), func() {
+				if len(snap.WSColors) == 0 {
+					Label("no data", FontSize(14), TextColor(220, 5, 55, 1))
+					return
+				}
+				for i, c := range snap.WSColors {
+					h, s, l, a := rgbToHSLA(c)
+					Container(Attrs(Gap(10), Center), func() {
+						ContainerWithKey(i, Attrs(FixSize(112, 112), Corners(56), Background(h, s, l, a),
+							BorderWidth(2), BorderColor(220, 10, 20, 1), Glow(16)), func() {})
+						Label(fmt.Sprintf("#%02X%02X%02X", c.R, c.G, c.B), Fonts(Monospace...), FontSize(12))
+					})
+				}
+			})
 		})
 	})
 }
@@ -1395,9 +1419,12 @@ func updateConsole(snap MachineState) {
 	}
 }
 
+// viewW and viewH mirror the window size so panels can fit their content.
+var viewW, viewH = 1280, 820
+
 func main() {
 	png := flag.String("png", "", "render one settled frame to PATH and exit")
-	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time before rendering")
+	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time at startup (live windows keep running)")
 	winW := flag.Int("width", 1280, "window width in points")
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
@@ -1408,6 +1435,7 @@ func main() {
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, scope, logic, console")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
 	flag.Parse()
+	viewW, viewH = *winW, *winH
 
 	var err error
 	boards, err = LoadBoards()
@@ -1455,6 +1483,11 @@ func main() {
 	if *runTo > 0 {
 		emu.SetRunning(false)
 		emu.RunFor(uint64(*runTo * 150_000_000))
+		// A live window keeps running after the warm-up; only the headless
+		// snapshot needs the machine frozen.
+		if *png == "" {
+			emu.SetRunning(true)
+		}
 	}
 
 	if *png != "" {

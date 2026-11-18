@@ -32,7 +32,7 @@ Other startup options:
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `scope`, `logic`, `console` |
 | `--width`, `--height` | window size in points |
-| `--run SECONDS` | advance virtual time before rendering/using the UI |
+| `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--png PATH` | render one settled frame and exit (headless) |
 | `--scope-zoom N`, `--scope-range V` | initial scope time zoom / full-scale volts |
 
@@ -101,10 +101,12 @@ same SPI bus.
 
 - **Board** — a stylised Pico 2 header diagram and the live GPIO table
   (function, direction, level). Click a GPIO chip in the scope to add it.
+  Panels size themselves to the window: the board card list widens and the LCD
+  view scales with the window instead of sitting at a fixed size.
 - **LCD** — the ST7789 framebuffer, only for boards with `lcd`.
 - **Ethernet / Wi-Fi** — socket state and a live log for W5500, W6300, CH9120
   or the virtual Wi-Fi transport.
-- **LEDs** — the last WS2812B frame as coloured swatches.
+- **LEDs** — the last WS2812B frame as large swatches with their RGB values.
 - **Scope** — see below.
 - **Logic** — see below.
 - **Console** — USB CDC + UART output. Click it to give it keyboard focus;
