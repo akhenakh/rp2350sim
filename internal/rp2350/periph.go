@@ -1,0 +1,134 @@
+package rp2350
+
+// regBlock is a flat 32-bit register file for a peripheral.
+type regBlock struct {
+	base uint32
+	size uint32
+	regs []uint32
+	// readFn, when set, may override a read. ok=false falls through to regs.
+	readFn func(c *Chip, off uint32) (uint32, bool)
+	// writeFn is called after the register file has been updated.
+	writeFn func(c *Chip, off uint32, v uint32)
+}
+
+func newRegBlock(base, size uint32) *regBlock {
+	return &regBlock{base: base, size: size, regs: make([]uint32, (size+3)/4)}
+}
+
+func (b *regBlock) read(c *Chip, off uint32) uint32 {
+	if b.readFn != nil {
+		if v, ok := b.readFn(c, off); ok {
+			return v
+		}
+	}
+	i := off / 4
+	if int(i) < len(b.regs) {
+		return b.regs[i]
+	}
+	return 0
+}
+
+func (b *regBlock) write(c *Chip, off, v uint32) {
+	i := off / 4
+	if int(i) < len(b.regs) {
+		b.regs[i] = v
+	}
+	if b.writeFn != nil {
+		b.writeFn(c, off, v)
+	}
+}
+
+// ---- RESETS ----
+
+const resetsMask = 0x1FFFFFFF
+
+func newResets(c *Chip) *regBlock {
+	b := newRegBlock(0x40020000, 0x1000)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		if off == 8 { // RESET_DONE
+			return ^b.regs[0] & resetsMask, true
+		}
+		return 0, false
+	}
+	return b
+}
+
+// ---- CLOCKS ----
+
+func newClocks(c *Chip) *regBlock {
+	b := newRegBlock(0x40010000, 0x100)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		// The SELECTED register of each of the 10 clock muxes sits at 8 mod 12.
+		if off < 10*12 && off%12 == 8 {
+			return 0xFFFFFFFF, true
+		}
+		if off == 0xB0 || off == 0xB4 { // ENABLED0/1
+			return 0xFFFFFFFF, true
+		}
+		return 0, false
+	}
+	return b
+}
+
+// ---- XOSC ----
+
+func newXOSC(c *Chip) *regBlock {
+	b := newRegBlock(0x40048000, 0x1000)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		if off == 4 { // STATUS
+			v := uint32(0)
+			if b.regs[0]&0xF000 != 0 { // ENABLE field
+				v |= 1 << 31 // STABLE
+			}
+			v |= b.regs[4] // preserve count
+			return v, true
+		}
+		return 0, false
+	}
+	return b
+}
+
+// ---- PLL ----
+
+func newPLL(c *Chip, base uint32) *regBlock {
+	b := newRegBlock(base, 0x1000)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		if off == 0 { // CS
+			v := b.regs[0]
+			if b.regs[1]&0x5 == 0 { // PD and VCOPD cleared
+				v |= 1 << 31 // LOCK
+			}
+			if v != 0 {
+				v |= 1 << 31
+			}
+			return v, true
+		}
+		return 0, false
+	}
+	return b
+}
+
+// ---- TICKS ----
+
+func newTicks(c *Chip) *regBlock {
+	return newRegBlock(0x40108000, 0x100)
+}
+
+// ---- WATCHDOG ----
+
+func newWatchdog(c *Chip) *regBlock {
+	return newRegBlock(0x400D8000, 0x1000)
+}
+
+// ---- SYSINFO ----
+
+func newSysInfo(c *Chip) *regBlock {
+	b := newRegBlock(0x40000000, 0x100)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		if off == 0 { // CHIP_ID
+			return 0x0000_0000, true
+		}
+		return 0, false
+	}
+	return b
+}

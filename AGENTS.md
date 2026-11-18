@@ -1,0 +1,54 @@
+# Agent notes
+
+## What this project is
+
+Go emulator for the RP2350 (Pico 2) targeting TinyGo firmware, with a Shirei UI
+planned on top. Hard targets: Waveshare RP2350-POE-ETH (W6300 Ethernet) and
+RP2350-GEEK (ST7789VW 135x240 LCD).
+
+## Facts established by investigation (do not re-derive)
+
+- TinyGo `-target=pico2` emits **Arm Cortex-M33** (`thumbv8m.main`, soft-float,
+  +dsp, no FPU/MVE/PACBTI). There is no TinyGo RISC-V rp2350 target.
+- Stock TinyGo firmware always launches core 1 through the SIO FIFO bootrom
+  handshake (`0,0,1,vector,sp,entry`, each word echoed) and uses SIO spinlocks.
+- TinyGo images need no bootrom: vector table at 0x10000000, `.data` LMA in
+  flash, reset handler copies/zeros. `SP=[0x10000000]`, `PC=[0x10000004]`.
+- TinyGo's SPI driver always uses DMA, including for small transfers.
+- TinyGo `net` is a BSD-socket offload shim (`netdev`); the W5500 driver uses the
+  chip's hardware sockets. W6300 (POE-ETH board) has a different register map,
+  SPI framing with a dummy byte, and 32+32 KB buffers; no TinyGo driver exists.
+- Waveshare RP2350-POE-ETH wiring: SPI0, SCK=GP18, MOSI=GP19, MISO=GP16,
+  CS=GP17, RST=GP20, INT=GP21, 70 MHz, QSPI-capable but wired single-SPI.
+- Waveshare RP2350-GEEK: ST7789VW, 135x240 (240x135 landscape with MADCTL=0x70,
+  offsets x+40 y+53), SPI1 SCK=GP10 MOSI=GP11, CS=GP9, DC=GP8, RST=GP12,
+  BL=GP25, microSD on GP18-23, I2C on GP28/29.
+
+## Debugging tools in `cmd/rp2350sim`
+
+`-trace`, `-trace-last`, `-bp`, `-bp2`, `-watch`, `-poke`, `-strict-mmio`.
+
+TracePC only fires for CPU0 and is installed only with `-trace-last`.
+
+## CPU implementation notes
+
+- Banked SP: `MSP`/`PSP` plus `CONTROL.SPSEL`; TinyGo's scheduler context switch
+  writes PSP and toggles CONTROL.
+- IT state is an 8-bit ITSTATE; do not advance it on the instruction that sets
+  it.
+- 16-bit conditional branches are 0x1A *and* 0x1B (cond in bits 11..8); 0x1C is
+  the unconditional branch.
+- CBZ/CBNZ need mask 0xFD00 (0xF500 confuses them).
+- 32-bit load/store: bit7 of hw1 selects imm12 (T3); T2 register offset only when
+  that bit is clear; T4 when hw2 bit11 is set.
+- MUL (T2) is signalled by hw2[15:12] == 0b1111; MLA/MLS otherwise.
+- STRD/LDRD immediate: hw1[7:5] = U/P/W, hw2[7:0] = imm8*4; the family requires
+  hw1 bits 7..6 not both zero (otherwise it is STMDB).
+- B.W (T4) and BL use S:J1:J2:imm10:imm11 with I = NOT(J XOR S); B<c>.W (T3)
+  uses S:J2:J1:imm6:imm11 and sign-extends from bit 20.
+
+## Next step
+
+Build the QEMU differential harness (`qemu-system-arm -M mps2-an505`, GDB stub)
+to compare register state instruction-by-instruction, then use it to find the
+remaining divergence in TinyGo's PLL search loop.
