@@ -6,7 +6,7 @@ firmware with a Shirei desktop UI.
 Status: **early work in progress**. The M33 core runs real TinyGo firmware
 through package initialisation (clocks/PLL setup included). A remaining
 instruction-level bug in runtime code (heap allocator or the 64-bit division
-helper) stops it before `main()`; `AGENTS.md` records what is already fixed.
+helper) stops it before `main()`; the project brain records what is already fixed (`.operator/specs/emulator.md`).
 
 ## Layout
 
