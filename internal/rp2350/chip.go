@@ -58,6 +58,8 @@ type Chip struct {
 	sio sioBlock
 	tmr [2]timerBlock
 	usb *usbBlock
+	pwm *pwmBlock
+	adc *adcBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -133,6 +135,10 @@ func New() *Chip {
 	c.addRegBlock(newDMA(c).block)
 	c.usb = newUSB(c)
 	c.addRegBlock(c.usb.block)
+	c.pwm = newPWM(c)
+	c.addRegBlock(c.pwm.block)
+	c.adc = newADC(c)
+	c.addRegBlock(c.adc.block)
 	return c
 }
 
@@ -203,6 +209,9 @@ func (c *Chip) tickPeripherals() {
 	}
 	if c.usb != nil {
 		c.usb.tick(c)
+	}
+	if c.pwm != nil {
+		c.pwm.tick(now)
 	}
 }
 
