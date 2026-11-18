@@ -40,6 +40,9 @@ func levelName(high bool) string {
 }
 
 func RootView() {
+	// The panels paint dark surfaces, so use the dark scheme's light text.
+	SetDarkMode(true)
+
 	snap := emu.Snapshot()
 	updateConsole(snap)
 
@@ -127,7 +130,7 @@ func pinsPanel(snap MachineState) {
 }
 
 func pinActive(in PinInfo) bool {
-	return in.OE || in.Func != 0x1f && in.Func != 0
+	return in.OE || in.Func != 0x1f
 }
 
 func countActive(snap MachineState) int {

@@ -60,6 +60,7 @@ type Chip struct {
 	usb *usbBlock
 	pwm *pwmBlock
 	adc *adcBlock
+	i2c [2]*i2cBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -139,6 +140,10 @@ func New() *Chip {
 	c.addRegBlock(c.pwm.block)
 	c.adc = newADC(c)
 	c.addRegBlock(c.adc.block)
+	c.i2c[0] = newI2C(c, 0x40090000, 0)
+	c.i2c[1] = newI2C(c, 0x40098000, 1)
+	c.addRegBlock(c.i2c[0].block)
+	c.addRegBlock(c.i2c[1].block)
 	return c
 }
 
