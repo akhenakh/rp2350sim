@@ -34,8 +34,8 @@ func (c *Chip) ExecGPIOCoproc(cpu *m33.CPU, hw1, hw2 uint16) {
 		switch opc {
 		case 0, 1, 2, 3:
 			c.cpApply(crm, opc, uint64(cpu.R[rt]))
-		case 4: // bit put
-			c.cpBit(crm, uint(cpu.R[rt]), 2+uint32(cpu.R[rt2]&1))
+		case 4: // bit put: Rt is the pin, Rt2 the value (1 set, 0 clear)
+			c.cpBit(crm, uint(cpu.R[rt]), 3-uint32(cpu.R[rt2]&1))
 		case 5, 6, 7:
 			if cpu.R[rt2]&1 != 0 {
 				c.cpBit(crm, uint(cpu.R[rt]), opc-4)
