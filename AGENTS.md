@@ -47,6 +47,27 @@ TracePC only fires for CPU0 and is installed only with `-trace-last`.
 - B.W (T4) and BL use S:J1:J2:imm10:imm11 with I = NOT(J XOR S); B<c>.W (T3)
   uses S:J2:J1:imm6:imm11 and sign-extends from bit 20.
 
+## Fixed bugs worth remembering
+
+- 16-bit `add Rd, SP, #imm` is opcode 0x15; implementing it as `add SP` silently
+  corrupted SP throughout the firmware.
+- 16-bit LDM must not write back Rn when Rn is in the register list.
+- 16-bit conditional branch is 0x1A/0x1B, not 0x1A.
+- CBZ/CBNZ discriminators are 0xFD00.
+- 32-bit LDR/STR: imm12 when hw1 bit7 is set; register offset otherwise (unless
+  hw2 bit11 marks the T4 form).
+- MUL is selected by hw2[15:12] == 0b1111.
+- Register shifts (LSL/LSR/ASR/ROR) live in the 0xFA group with hw2[7:4] == 0.
+- IT state must not advance on the instruction that sets it.
+
+## Current state
+
+With the instruction fixes above, the firmware completes TinyGo's package
+initialisation (PLL divisors come out as 125/5/2) and reaches `runtime.initAll`
+completion, but hangs in the heap allocator/GC path before `main`. With
+`-gc=leaking` it diverges elsewhere, so there is at least one remaining
+instruction bug exercised by runtime code.
+
 ## Next step
 
 Build the QEMU differential harness (`qemu-system-arm -M mps2-an505`, GDB stub)

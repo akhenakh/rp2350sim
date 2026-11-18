@@ -30,6 +30,7 @@ func main() {
 		watchStr   = flag.String("watch", "", "log writes to this address (hex)")
 		bp2Str     = flag.String("bp2", "", "secondary trace address (hex)")
 		pokeStr    = flag.String("poke", "", "comma separated addr=val pokes (hex) after boot")
+		sampleN    = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
 	)
 	flag.Parse()
 	if *path == "" {
@@ -189,7 +190,15 @@ func main() {
 	}
 
 	start := time.Now()
-	if *secs > 0 {
+	if *sampleN > 0 {
+		for i := 0; i < *sampleN; i++ {
+			c.Run(10_000_000)
+			fmt.Printf("sample %d: pc=%#08x lr=%#08x sp=%#08x r0=%#08x r1=%#08x\n", i, c.CPU0.R[15], c.CPU0.R[14], c.CPU0.R[13], c.CPU0.R[0], c.CPU0.R[1])
+			if c.CPU0.Halted || c.Halted {
+				break
+			}
+		}
+	} else if *secs > 0 {
 		c.Run(uint64(*secs * 150_000_000))
 	} else {
 		c.Run(*steps)

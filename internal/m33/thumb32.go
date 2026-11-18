@@ -712,6 +712,28 @@ func (c *CPU) exec32Unary(hw1, hw2 uint16) {
 	rd := uint32(hw2 >> 8 & 0xF)
 	rm := uint32(hw1 & 0xF)
 
+	// Register-shift forms (LSL/LSR/ASR/ROR) have zero in hw2[7:4].
+	if op == 0x0 && hw1&0x00F0 != 0xF0 {
+		rn := uint32(hw2 & 0xF)
+		shiftType := uint32(hw1>>4) & 0xF
+		v := c.R[rn]
+		n := c.R[rm] & 0xFF
+		switch shiftType {
+		case 0x0: // LSL
+			c.R[rd] = shiftLSL(c, v, n, n != 0)
+		case 0x2: // LSR
+			c.R[rd] = shiftLSR(c, v, n, n != 0)
+		case 0x4: // ASR
+			c.R[rd] = shiftASR(c, v, n, n != 0)
+		case 0x6: // ROR
+			c.R[rd] = shiftROR(c, v, n, n != 0)
+		default:
+			c.Halt("unimplemented register shift")
+		}
+		c.setNZ(c.R[rd])
+		return
+	}
+
 	switch hw1 & 0xFFF0 {
 	case 0xFA00: // SXTH
 		c.R[rd] = uint32(int32(int16(c.R[rm])))

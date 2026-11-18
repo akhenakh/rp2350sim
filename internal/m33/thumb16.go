@@ -189,8 +189,9 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 		rd := uint32(hw>>8) & 7
 		c.R[rd] = (c.pcRead() &^ 3) + uint32(hw&0xFF)<<2
 
-	case 0x15: // ADD SP, immediate
-		c.R[13] += uint32(hw&0x7F) << 2
+	case 0x15: // ADD Rd, SP, #imm8*4
+		rd := uint32(hw>>8) & 7
+		c.R[rd] = c.R[13] + uint32(hw&0xFF)<<2
 
 	case 0x16, 0x17: // miscellaneous
 		c.exec16Misc(hw)
@@ -217,7 +218,9 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 				base += 4
 			}
 		}
-		c.R[rn] = base
+		if list&(1<<rn) == 0 {
+			c.R[rn] = base
+		}
 
 	case 0x1A, 0x1B: // conditional branch / SVC / UDF
 		cond := uint8(hw >> 8 & 0xF)
