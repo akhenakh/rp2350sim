@@ -37,7 +37,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
-| `task ui` | desktop UI with the blinky firmware loaded |
+| `task ui:blinky` (`ui`) | desktop UI with the blinky firmware loaded |
+| `task ui:lcd` | desktop UI with the ST7789 example loaded |
 | `task ui:png` | headless UI render to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task clean` | remove `build/` |

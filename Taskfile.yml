@@ -90,12 +90,20 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/lcd.elf -seconds 1 -lcd -lcd-png {{.BUILD}}/lcd.png'
 
-  ui:
+  ui:blinky:
     desc: Run the desktop UI with the blinky firmware loaded
+    aliases: [ui]
     deps: [firmware:blinky]
     dir: ui
     cmds:
       - go run . '../{{.BLINKY}}'
+
+  ui:lcd:
+    desc: Run the desktop UI with the ST7789 example loaded
+    deps: [firmware:lcd]
+    dir: ui
+    cmds:
+      - go run . '../{{.BUILD}}/lcd.elf'
 
   ui:png:
     desc: Render the UI headlessly to build/ui.png with the LCD example
