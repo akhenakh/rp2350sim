@@ -1,13 +1,13 @@
 # rp2350sim
 
-A Go emulator for the Raspberry Pi RP2350 (Pico 2) that runs unmodified
-`tinygo build -target=pico2` firmware, with a Shirei desktop UI showing the
-board state.
+A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodified
+`tinygo build -target=pico2` firmware, with a desktop UI showing the board state.
 
 Status: runs real TinyGo programs end to end — package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
-DMA, PWM, ADC and an ST7789 display. The Cortex-M33 interpreter is checked
-against QEMU instruction by instruction.
+DMA, PWM, ADC, I2C, PIO (WS2812 verified), an ST7789 display and W5500
+Ethernet. The Cortex-M33 interpreter is checked against QEMU instruction by
+instruction.
 
 ## Layout
 
@@ -71,6 +71,7 @@ Useful flags:
 | `-bp ADDR`, `-bp2 ADDR` | stop / log at an address |
 | `-watch ADDR`, `-watch-val V`, `-watch-reg N` | write and register logging |
 | `-poke ADDR=VAL` | write memory before starting |
+| `-peek ADDR` | print a memory word at exit |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
 
@@ -128,7 +129,8 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 
 - The emulated CPU is the Cortex-M33 (thumbv8m.main); there is no RISC-V path.
   TinyGo `-target=pico2` emits Arm, and that is the contract.
-- Missing peripherals: PIO, I2C, W6300 Ethernet, USB host, PSRAM.
+- Missing peripherals: W6300 Ethernet (the PoE board's controller), USB host,
+  PSRAM.
 - The TinyGo build under test does not launch core 1, so the emulator runs
   single-core in practice.
 - Time is virtual and one instruction is one cycle; throughput is about 160M

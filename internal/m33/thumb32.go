@@ -742,14 +742,30 @@ func (c *CPU) exec32Unary(hw1, hw2 uint16) {
 	}
 
 	switch hw1 & 0xFFF0 {
-	case 0xFA00: // SXTH
-		c.R[rd] = uint32(int32(int16(c.R[rm])))
-	case 0xFA10: // UXTH
-		c.R[rd] = uint32(uint16(c.R[rm]))
-	case 0xFA40: // SXTB
-		c.R[rd] = uint32(int32(int8(c.R[rm])))
-	case 0xFA50: // UXTB
-		c.R[rd] = uint32(uint8(c.R[rm]))
+	case 0xFA00, 0xFA10, 0xFA40, 0xFA50:
+		// SXTH/UXTH/SXTB/UXTB and the SXTA*/UXTA* add forms: Rn=0b1111
+		// means no add, otherwise the extended value is added to Rn. The low
+		// two bits of hw2[5:4] select a rotate-right amount.
+		rn := uint32(hw1 & 0xF)
+		v := c.R[rm]
+		if rot := uint32(hw2>>4) & 3; rot != 0 {
+			v = v>>(8*rot) | v<<(32-8*rot)
+		}
+		var ext uint32
+		switch hw1 & 0xFFF0 {
+		case 0xFA00:
+			ext = uint32(int32(int16(v)))
+		case 0xFA10:
+			ext = uint32(uint16(v))
+		case 0xFA40:
+			ext = uint32(int32(int8(v)))
+		case 0xFA50:
+			ext = uint32(uint8(v))
+		}
+		if rn != 0xF {
+			ext += c.R[rn]
+		}
+		c.R[rd] = ext
 	case 0xFA90: // REV / REV16 / RBIT / REVSH
 		switch op {
 		case 0x8:

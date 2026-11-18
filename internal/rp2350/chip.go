@@ -61,6 +61,7 @@ type Chip struct {
 	pwm *pwmBlock
 	adc *adcBlock
 	i2c [2]*i2cBlock
+	pio [3]*pioBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -149,6 +150,12 @@ func New() *Chip {
 	c.i2c[1] = newI2C(c, 0x40098000, 1)
 	c.addRegBlock(c.i2c[0].block)
 	c.addRegBlock(c.i2c[1].block)
+	c.pio[0] = newPIO(c, pioBase0, 0)
+	c.pio[1] = newPIO(c, pioBase1, 1)
+	c.pio[2] = newPIO(c, pioBase2, 2)
+	for _, p := range c.pio {
+		c.addRegBlock(p.block)
+	}
 	return c
 }
 
@@ -229,6 +236,11 @@ func (c *Chip) tickPeripherals() {
 		if c.usbPoll >= 8 {
 			c.usbPoll = 0
 			c.usb.tick(c)
+		}
+	}
+	for _, p := range c.pio {
+		if p != nil {
+			p.tick()
 		}
 	}
 	for _, h := range c.CycleHooks {

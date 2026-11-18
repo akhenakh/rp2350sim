@@ -39,6 +39,7 @@ func main() {
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
+		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
 	)
@@ -328,6 +329,11 @@ func main() {
 		if err := lcd.WritePNG(*lcdPNG); err != nil {
 			fmt.Fprintf(os.Stderr, "lcd png: %v\n", err)
 		}
+	}
+
+	if *peekStr != "" {
+		a, _ := strconv.ParseUint(strings.TrimPrefix(*peekStr, "0x"), 16, 32)
+		fmt.Printf("mem[%#08x] = %#08x\n", uint32(a), c.Read32(uint32(a)))
 	}
 
 	if *unhandled {
