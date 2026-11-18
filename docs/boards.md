@@ -16,7 +16,9 @@ UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
 - ST7789VW 240×135 on SPI1: CS GP9, DC GP8, RST GP12, backlight GP25.
 - Use `-lcd` (runner) or the `geek` UI board; `-lcd-png out.png` exports the
   framebuffer.
-- Reference firmware: `firmware/lcd`.
+- Reference firmware: `firmware/lcd`, which animates palette bands and a
+  sweeping cursor so full-frame fills, partial updates and rotation are all
+  exercised.
 
 ## Waveshare RP2350-POE-ETH (W6300)
 
@@ -55,8 +57,8 @@ What works instead:
 - `drivers/ch9120.NetDevice` implements a one-socket `netdev.Netdever`
   (`Socket`/`Bind`/`Connect`/`Listen`/`Accept`/`Send`/`Recv`).
 - Firmware calls `netdev.UseNetdev` and then uses TinyGo's `net` package
-  normally; `firmware/wifi` dials a host TCP echo and prints
-  `wifi echo: hello wifi`.
+  normally; `firmware/wifi` dials a host TCP echo, writes a line every 500 ms
+  and prints each reply as `wifi echo: hello wifi`.
 - Bluetooth (LE/Classic) is **not** modelled.
 
 If you need CYW43439 fidelity, that is a separate, firmware-level emulation
