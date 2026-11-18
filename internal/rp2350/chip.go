@@ -600,6 +600,9 @@ func (c *Chip) SetUSBCDC(fn func([]byte)) { c.usb.OnCDC = fn }
 // SendUSBCDC delivers data from the host to the device's CDC OUT endpoint.
 func (c *Chip) SendUSBCDC(data []byte) { c.usb.SendCDC(data) }
 
+// USBCDCReady reports whether another host-to-device CDC packet can be queued.
+func (c *Chip) USBCDCReady() bool { return c.usb != nil && c.usb.CDCReady() }
+
 // SendUART delivers host bytes to a UART receive FIFO (0 or 1).
 func (c *Chip) SendUART(idx int, data []byte) {
 	if idx < 0 || idx >= len(c.uart) || c.uart[idx] == nil {

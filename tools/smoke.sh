@@ -32,6 +32,22 @@ if [ "$n" -ge 4 ]; then ok "blinky toggles GP25 ($n edges)"; else bad "blinky GP
 out=$("$EMU" -fw "$BUILD/echo.elf" -seconds 0.4 -input "smoke-input" 2>&1)
 contains "console echo" "smoke-input" "$out"
 
+# --- automation contract ----------------------------------------------------
+printf 'ci-contract' | "$EMU" -fw "$BUILD/echo.elf" -stdin -seconds 1 -quiet \
+	-expect ci-contract -stop-on-expect -summary-file "$BUILD/contract.json" \
+	>"$BUILD/contract.out" 2>"$BUILD/contract.err"
+if [ $? -eq 0 ] && grep -q "ci-contract" "$BUILD/contract.out" &&
+	grep -q '"exit_code": 0' "$BUILD/contract.json"; then
+	ok "automation contract (stdin, expect, summary)"
+else
+	bad "automation contract" "$(cat "$BUILD/contract.err")" "$(cat "$BUILD/contract.out")"
+fi
+"$EMU" -fw "$BUILD/echo.elf" -seconds 0.2 -quiet -expect "impossible-string" >/dev/null 2>&1
+if [ $? -eq 4 ]; then ok "missing expectation exit code"; else bad "missing expectation exit code"; fi
+printf '\x00\x00\x00\x20\x09\x00\x00\x10\x00\xde\x00\xbf' >"$BUILD/fault.bin"
+"$EMU" -fw "$BUILD/fault.bin" -seconds 0.05 -quiet >/dev/null 2>&1
+if [ $? -eq 3 ]; then ok "halt exit code"; else bad "halt exit code"; fi
+
 # --- PIO API conformance ----------------------------------------------------
 out=$("$EMU" -fw "$BUILD/piotest.elf" -seconds 0.4 2>&1)
 contains "PIO conformance" "pio: all checks passed" "$out"

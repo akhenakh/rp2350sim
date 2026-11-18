@@ -1,0 +1,201 @@
+# Command-line reference
+
+```
+rp2350sim -fw IMAGE [flags]
+```
+
+`-fw` accepts a `.elf`, `.uf2` or raw `.bin` image. UF2 family IDs are
+validated. The machine boots from the vector table at `0x10000000`; no RP2350
+bootrom is needed.
+
+## Output contract
+
+| stream | contents |
+|---|---|
+| **stdout** | only the firmware console (USB CDC, UART0/UART1) |
+| **stderr** | emulator diagnostics: header, traces, peripheral logs, summary, errors |
+
+So `rp2350sim -fw fw.elf -seconds 2 > firmware.log` produces a clean firmware
+log. `-quiet` additionally suppresses the header and the final summary; errors
+and halt reasons still go to stderr.
+
+## Exit codes
+
+| code | meaning |
+|---|---|
+| `0` | the run completed (or `-stop-on-expect` matched) |
+| `1` | load/configuration error, unreadable `-input-file`, summary write failed |
+| `2` | usage error (unknown flag, missing `-fw`, conflicting device flags) |
+| `3` | a core halted or faulted (unimplemented instruction, UDF, unmapped MMIO, outside image) |
+| `4` | one or more `-expect` strings were not seen |
+| `5` | `-wall-timeout` expired |
+
+Use `-allow-halt` to make code `3` exit `0` (useful while developing the CPU
+core).
+
+## Running and timing
+
+| flag | meaning |
+|---|---|
+| `-fw PATH` | firmware image (`.elf`, `.uf2`, `.bin`) |
+| `-seconds N` | virtual seconds to run (150 MHz clock); overrides `-steps` |
+| `-steps N` | cycle budget (default 50,000,000) |
+| `-core1` | start core 1 (default true; parked if false) |
+| `-wall-timeout D` | fail with code 5 after this much real time (0 = unlimited) |
+| `-quiet` | suppress the firmware header and final summary |
+| `-allow-halt` | exit 0 even when a core halts |
+| `-summary-file PATH` | write a JSON run summary |
+
+The machine always starts at cycle 0; `-seconds` is **virtual** time, not wall
+time. The emulator usually runs faster than the emulated clock, so a 3 s run
+may take less than 3 s of wall time.
+
+### Summary JSON
+
+`-summary-file` writes:
+
+```json
+{
+  "firmware": "firmware.elf",
+  "format": "elf",
+  "cycles": 75200000,
+  "virtual_seconds": 0.501333,
+  "wall_seconds": 1.842,
+  "halted": false,
+  "core0_pc": 268439026,
+  "core0_sp": 536885328,
+  "core1_pc": 0,
+  "core1_sp": 0,
+  "core1_parked": true,
+  "irqs": 12,
+  "core1_launches": 0,
+  "expectations_matched": false,
+  "wall_timed_out": false,
+  "exit_code": 0
+}
+```
+
+`expectations_matched` is `true` only when at least one `-expect` was given and
+all of them matched. `missing_expectations` and `halt_reason` appear when
+relevant.
+
+## Console input
+
+| flag | meaning |
+|---|---|
+| `-input TEXT` | send bytes to USB CDC and UART0 |
+| `-input-file PATH` | send the file contents (appended after `-input`) |
+| `-input-at D` | delay before the input is sent (default `200ms`) |
+| `-stdin` | forward host stdin to USB CDC and UART0 |
+| `-expect TEXT` | fail (code 4) unless this console text appears; repeatable |
+| `-stop-on-expect` | stop as soon as all `-expect` strings have appeared |
+
+`-input`/`-input-file` are useful for firmware that waits for a command after
+boot; `-stdin` is for scripted sessions:
+
+```sh
+printf 'help\nstatus\n' | rp2350sim -fw fw.elf -seconds 3 -stdin
+```
+
+Input is delivered to **USB CDC** and **UART0** simultaneously. USB is
+flow-controlled: bytes wait until the emulated host has enumerated the device
+and the previous packet has been consumed. The default `-input-at 200ms` covers
+USB enumeration; increase it for slow boot paths.
+
+`-expect` matches the **firmware console** (stdout), not emulator diagnostics.
+Matching is streaming, so it works across chunk boundaries. Combined with
+`-stop-on-expect` it gives fast CI assertions:
+
+```sh
+rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
+  -expect 'status: ok' -stop-on-expect -quiet > fw.log
+```
+
+## Devices and boards (headless runner)
+
+| flag | attaches |
+|---|---|
+| `-lcd` | ST7789 240×135 on SPI1 (CS GP9, DC GP8, RST GP12) |
+| `-lcd-png PATH` | write the LCD framebuffer to a PNG at exit |
+| `-eth` | W5500 on SPI0 (CS GP17) |
+| `-w6300` | W6300 on SPI0 (CS GP17) |
+| `-ch9120` | CH9120 on UART1 (GP20/21), CFG0 GP18, RST GP19, TCPCS GP17 |
+| `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
+
+`-eth` and `-w6300` are mutually exclusive. The UI has more boards
+(see [ui.md](ui.md)); the runner flags cover the common bring-up cases.
+
+### UART over TCP
+
+`-serial-tcp` exposes a hardware UART as a TCP server:
+
+```sh
+rp2350sim -fw fw.elf -seconds 30 -serial-tcp 1:127.0.0.1:0
+```
+
+The address format is `uart:host:port` (multiple entries comma-separated). Port
+`0` asks the kernel for a free port; the assigned address is printed on stderr:
+
+```
+uart bridge: uart1 listening on 127.0.0.1:39479
+```
+
+Connect with any TCP client (`nc`, `socat`, Python) and exchange bytes with the
+firmware's UART as if it were wired. The listener and client survive firmware
+resets in the UI but the headless runner is one process.
+
+## Diagnostics and debugging
+
+| flag | meaning |
+|---|---|
+| `-trace N` | trace the first N instructions (stderr) |
+| `-trace-from ADDR` | start tracing at this address |
+| `-trace-last` | keep a ring of recent instructions for faults |
+| `-trace-pins 25,15` | log GPIO level changes |
+| `-bp ADDR`, `-bp2 ADDR` | stop/log at an address (hex) |
+| `-watch ADDR`, `-watch-val V`, `-watch-reg N` | log writes / register changes |
+| `-poke ADDR=VAL` | write memory after boot |
+| `-peek ADDR` | print a word at exit |
+| `-sample N` | print the PC in 10M-cycle chunks |
+| `-strict-mmio` | halt on the first unmapped peripheral access |
+| `-unhandled` | report unmapped accesses at exit |
+| `-msg` | at `-bp`, decode `r1` as a runtime message string |
+| `-cpuprofile PATH` | write a Go CPU profile |
+
+### Environment variables
+
+| variable | effect |
+|---|---|
+| `RP2350SIM_ETH_LOG` | W5500 socket activity on stderr |
+| `RP2350SIM_W6300_LOG` | W6300 socket activity on stderr |
+| `RP2350SIM_CH9120_LOG` | CH9120 configuration/socket activity on stderr |
+| `RP2350SIM_SPI_LOG` | log every SPI byte |
+| `RP2350SIM_DMA_LOG` | log DMA transfers |
+| `RP2350SIM_LCD_LOG` | ST7789 command decoding |
+| `RP2350SIM_USB_LOG` | USB host/device state |
+| `RP2350SIM_PIO_LOG` | PIO state machine execution |
+
+## Examples
+
+```sh
+# 3 virtual seconds, firmware console only
+rp2350sim -fw firmware.elf -seconds 3 > firmware.log
+
+# Interactive console, fail unless it answers the command
+printf 'status\n' | rp2350sim -fw firmware.elf -seconds 3 -stdin \
+  -expect 'status: ok' -stop-on-expect -quiet
+
+# Assert multiple pieces of output and keep a machine-readable summary
+rp2350sim -fw firmware.elf -seconds 4 -quiet \
+  -expect 'wifi: connected' -expect 'tcp: ok' \
+  -summary-file summary.json
+
+# Trace a pin for three seconds
+rp2350sim -fw firmware.elf -seconds 3 -trace-pins 25
+
+# Export the LCD framebuffer
+rp2350sim -fw firmware.elf -seconds 3 -lcd -lcd-png lcd.png
+```
+
+See [ci.md](ci.md) for CI recipes and [tinygo.md](tinygo.md) for build
+integration.

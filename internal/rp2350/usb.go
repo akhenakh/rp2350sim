@@ -384,6 +384,12 @@ func (u *usbBlock) pollEndpoints() {
 	}
 }
 
+// CDCReady reports whether the host can publish another CDC OUT packet; the
+// device consumes the previous one and clears the buffer control.
+func (u *usbBlock) CDCReady() bool {
+	return u.state == usbHostRunning && u.word(usbBufCtrlOffOut(2))&usbBufFull == 0
+}
+
 // SendCDC queues a packet for the host to deliver to the device's CDC OUT
 // endpoint (endpoint 2). The UI and console input will use it.
 func (u *usbBlock) SendCDC(data []byte) {

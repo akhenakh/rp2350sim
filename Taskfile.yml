@@ -25,6 +25,11 @@ tasks:
     cmds:
       - go build -o {{.EMU}} ./cmd/rp2350sim
 
+  install:
+    desc: Install the rp2350sim binary into GOBIN
+    cmds:
+      - go install ./cmd/rp2350sim
+
   test:
     desc: Run the unit tests
     cmds:

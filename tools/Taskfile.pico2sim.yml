@@ -1,0 +1,34 @@
+version: '3'
+
+# Drop-in Taskfile for a TinyGo project. Include it from your Taskfile:
+#
+#   includes:
+#     pico2sim:
+#       taskfile: path/to/rp2350sim/tools/Taskfile.pico2sim.yml
+#
+# Then: task pico2sim:run SECONDS=5
+#
+# Variables are read from the environment/CLI: TINYGO, TARGET, FIRMWARE,
+# EMU, SECONDS, EXPECT, INPUT_FILE.
+
+tasks:
+  build:
+    desc: Build the current package for the RP2350 (TinyGo)
+    cmds:
+      - '{{.TINYGO | default "tinygo"}} build -target={{.TARGET | default "pico2"}} -o {{.FIRMWARE | default "build/firmware.elf"}} .'
+
+  run:
+    desc: Build and run the firmware in rp2350sim
+    deps: [build]
+    cmds:
+      - '{{.EMU | default "rp2350sim"}} -fw {{.FIRMWARE | default "build/firmware.elf"}} -seconds {{.SECONDS | default "3"}}'
+
+  ci:
+    desc: Run headlessly, assert EXPECT, and write a JSON summary
+    deps: [build]
+    cmds:
+      - |
+        {{.EMU | default "rp2350sim"}} -fw {{.FIRMWARE | default "build/firmware.elf"}} \
+          -seconds {{.SECONDS | default "3"}} -quiet \
+          {{if .INPUT_FILE}}-input-file {{.INPUT_FILE}} {{end}}-expect "{{.EXPECT}}" \
+          -stop-on-expect -summary-file {{.FIRMWARE | default "build/firmware.elf"}}.json

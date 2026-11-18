@@ -33,6 +33,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 |---|---|
 | `task` | build the emulator and the blinky firmware |
 | `task build` | build `build/rp2350sim` |
+| `task install` | install `rp2350sim` into `$(go env GOPATH)/bin` |
 | `task firmware:blinky` | TinyGo blinky ELF for the Pico 2 |
 | `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
@@ -96,9 +97,18 @@ Useful flags:
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
 
+| `-input-file FILE`, `-input-at D`, `-stdin` | scripted console input |
+| `-expect TEXT` (repeatable), `-stop-on-expect` | assert console output and fail the run |
+| `-wall-timeout D`, `-summary-file PATH` | bound real time / write a JSON summary |
+| `-allow-halt`, `-quiet` | tolerate a halted core / suppress the summary |
+
+**Output contract:** firmware console goes to **stdout**, all emulator
+diagnostics go to **stderr**. Exit codes: 0 success, 1 load error, 2 usage,
+3 halt/fault, 4 missing expectation, 5 wall timeout.
+
 Diagnostics environment variables: `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`,
 `RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`,
-`RP2350SIM_W6300_LOG`.
+`RP2350SIM_W6300_LOG`, `RP2350SIM_CH9120_LOG`, `RP2350SIM_PIO_LOG`.
 
 ## Ethernet
 
@@ -219,6 +229,16 @@ resets, so the port does not change while the UI is open.
 which echoes UART1. The headless runner has the same feature:
 `-serial-tcp 1:127.0.0.1:0` prints the chosen address on stderr.
 `tools/serialcheck` is the client used by the smoke test.
+
+## Documentation
+
+The user guide lives in [`docs/`](docs/README.md):
+
+- [`docs/cli.md`](docs/cli.md) — every flag, output contract and exit code
+- [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, artifacts
+- [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
+- [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, serial bridge
+- [`docs/boards.md`](docs/boards.md) — supported boards, wiring and limitations
 
 ## Tests
 
