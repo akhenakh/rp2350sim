@@ -2,8 +2,12 @@ package main
 
 import (
 	"image"
+	"os"
+	"strconv"
 	"sync"
 	"time"
+
+	"image/color"
 
 	"github.com/akh/rp2350sim/internal/devices"
 	"github.com/akh/rp2350sim/internal/firmware"
@@ -32,6 +36,9 @@ type MachineState struct {
 	LCD        *image.RGBA
 	Console    string
 	ConsolePos int64
+	WSColors   []color.RGBA
+	WSFrames   uint64
+	WSEnabled  bool
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -48,10 +55,18 @@ type Emu struct {
 
 	lcdGen   int
 	lcdFrame *image.RGBA
+
+	ws    *devices.WS2812B
+	wsPin int
 }
 
 func NewEmu() *Emu {
-	e := &Emu{}
+	e := &Emu{wsPin: -1}
+	if v := os.Getenv("RP2350SIM_WS2812_PIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			e.wsPin = n
+		}
+	}
 	e.mu.Lock()
 	e.resetChip()
 	e.mu.Unlock()
@@ -67,6 +82,12 @@ func (e *Emu) resetChip() {
 	eth := devices.NewW5500(c, 17)
 	c.OnSPI0 = eth.Transfer
 	c.CycleHooks = append(c.CycleHooks, eth.Tick)
+
+	e.ws = nil
+	if e.wsPin >= 0 {
+		e.ws = devices.NewWS2812B(c, e.wsPin)
+		c.CycleHooks = append(c.CycleHooks, e.ws.Tick)
+	}
 
 	appendBytes := func(b []byte) {
 		e.console = append(e.console, b...)
@@ -212,6 +233,11 @@ func (e *Emu) Snapshot() MachineState {
 		s.Console = string(e.console[start:])
 	}
 	s.ConsolePos = e.consolePos
+	if e.ws != nil {
+		s.WSEnabled = true
+		s.WSColors = e.ws.Colors()
+		s.WSFrames = e.ws.Frames()
+	}
 	return s
 }
 

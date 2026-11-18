@@ -41,6 +41,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
 | `task ui:blinky` (`ui`) | desktop UI with the blinky firmware loaded |
 | `task ui:lcd` | desktop UI with the ST7789 example loaded |
+| `task ui:ws2812` | desktop UI with the WS2812B example (strip shown from GP0) |
 | `task ui:png` | headless UI render to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task clean` | remove `build/` |

@@ -143,6 +143,13 @@ tasks:
     cmds:
       - go run . '../{{.BUILD}}/lcd.elf'
 
+  ui:ws2812:
+    desc: Run the UI with the WS2812B example (strip decoded from GP0)
+    deps: [firmware:ws2812]
+    dir: ui
+    cmds:
+      - 'RP2350SIM_WS2812_PIN=0 go run . ../{{.BUILD}}/ws2812.elf'
+
   ui:png:
     desc: Render the UI headlessly to build/ui.png with the LCD example
     deps: [firmware:lcd]

@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image/color"
+	"math"
 	"path/filepath"
 	"strings"
 
@@ -56,6 +58,7 @@ func RootView() {
 			pinsPanel(snap)
 			Container(Attrs(Grow(1), Expand, Gap(10)), func() {
 				lcdPanel(snap)
+				ws2812Panel(snap)
 				consolePanel()
 			})
 		})
@@ -199,6 +202,65 @@ func lcdPanel(snap MachineState) {
 			}
 		})
 	})
+}
+
+// ws2812Panel shows the last WS2812B frame decoded from the monitored pin.
+func ws2812Panel(snap MachineState) {
+	if !snap.WSEnabled {
+		return
+	}
+	Container(Attrs(Gap(6)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("WS2812B", FontSize(16), FontWeight(700))
+			if len(snap.WSColors) == 0 {
+				Label("waiting for frames", FontSize(12))
+			} else {
+				Label(fmt.Sprintf("%d LEDs · frame %d", len(snap.WSColors), snap.WSFrames), FontSize(12))
+			}
+		})
+		Container(Attrs(Row, CrossMid, Gap(8), Pad(10), Corners(6), Background(220, 12, 8, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+			if len(snap.WSColors) == 0 {
+				Label("no data", FontSize(12), TextColor(220, 5, 55, 1))
+				return
+			}
+			for i, c := range snap.WSColors {
+				h, s, l, a := rgbToHSLA(c)
+				ContainerWithKey(i, Attrs(FixSize(26, 26), Corners(13), Background(h, s, l, a), BorderWidth(1), BorderColor(220, 8, 35, 1)), func() {})
+			}
+		})
+	})
+}
+
+// rgbToHSLA converts an 8-bit colour into Shirei's HSLA range.
+func rgbToHSLA(c color.RGBA) (float32, float32, float32, float32) {
+	r := float64(c.R) / 255
+	g := float64(c.G) / 255
+	b := float64(c.B) / 255
+	max := math.Max(r, math.Max(g, b))
+	min := math.Min(r, math.Min(g, b))
+	l := (max + min) / 2
+	var h, s float64
+	if max != min {
+		d := max - min
+		if l > 0.5 {
+			s = d / (2 - max - min)
+		} else {
+			s = d / (max + min)
+		}
+		switch max {
+		case r:
+			h = (g - b) / d
+			if g < b {
+				h += 6
+			}
+		case g:
+			h = (b-r)/d + 2
+		default:
+			h = (r-g)/d + 4
+		}
+		h *= 60
+	}
+	return float32(h), float32(s * 100), float32(l * 100), float32(c.A) / 255
 }
 
 func consolePanel() {
