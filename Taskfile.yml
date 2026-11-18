@@ -78,6 +78,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BLINKY}} -seconds 3 -trace-pins 25'
 
+  run:lcd:
+    desc: Run the ST7789 example in the emulator (LCD attached, backlight traced)
+    deps: [build, firmware:lcd]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/lcd.elf -seconds 3 -lcd -trace-pins 25'
+
   lcd:
     desc: Run the ST7789 example and export its framebuffer as a PNG
     deps: [build, firmware:lcd]

@@ -35,6 +35,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task firmware:blinky` | TinyGo blinky ELF for the Pico 2 |
 | `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
+| `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
 | `task ui` | desktop UI with the blinky firmware loaded |
 | `task ui:png` | headless UI render to `build/ui.png` |
