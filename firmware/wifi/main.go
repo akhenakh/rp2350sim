@@ -48,19 +48,21 @@ func main() {
 	defer conn.Close()
 	println("wifi: connected")
 
-	if _, err := conn.Write([]byte("hello wifi\n")); err != nil {
-		println("wifi: write:", err.Error())
-		return
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		println("wifi: deadline:", err.Error())
-		return
-	}
 	buf := make([]byte, 64)
-	n, err := conn.Read(buf)
-	if err != nil {
-		println("wifi: read:", err.Error())
-		return
+	for {
+		if _, err := conn.Write([]byte("hello wifi\n")); err != nil {
+			println("wifi: write:", err.Error())
+			time.Sleep(time.Second)
+			continue
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := conn.Read(buf)
+		if err != nil {
+			println("wifi: read:", err.Error())
+			time.Sleep(time.Second)
+			continue
+		}
+		println("wifi echo:", string(buf[:n]))
+		time.Sleep(500 * time.Millisecond)
 	}
-	println("wifi echo:", string(buf[:n]))
 }
