@@ -16,7 +16,11 @@ type PinState struct {
 	OnChange func(pin int, level bool)
 }
 
-func NewPinState() *PinState { return &PinState{} }
+func NewPinState() *PinState {
+	p := &PinState{}
+	p.reset()
+	return p
+}
 
 func (p *PinState) reset() {
 	p.Out = 0
@@ -25,7 +29,9 @@ func (p *PinState) reset() {
 	p.ExtValid = 0
 	p.PullUp = [48]bool{}
 	p.PullDown = [48]bool{}
-	p.Func = [48]uint8{}
+	for i := range p.Func {
+		p.Func[i] = 0x1F // FUNCSEL_NULL
+	}
 }
 
 // Level returns the resolved level of a pin.

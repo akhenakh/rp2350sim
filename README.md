@@ -1,19 +1,23 @@
 # rp2350sim
 
-A Go emulator for the Raspberry Pi RP2350 (Pico 2), aimed at running TinyGo
-firmware with a Shirei desktop UI.
+A Go emulator for the Raspberry Pi RP2350 (Pico 2) that runs unmodified
+`tinygo build -target=pico2` firmware, with a Shirei desktop UI showing the
+board state.
 
-Status: **early work in progress**. The M33 core runs real TinyGo firmware
-through package initialisation (clocks/PLL setup included). A remaining
-instruction-level bug in runtime code (heap allocator or the 64-bit division
-helper) stops it before `main()`; the project brain records what is already fixed (`.operator/specs/emulator.md`).
+Status: runs real TinyGo programs end to end — package initialisation, the task
+scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
+DMA, PWM, ADC and an ST7789 display. The Cortex-M33 interpreter is checked
+against QEMU instruction by instruction.
 
 ## Layout
 
 ```
 cmd/rp2350sim/      headless runner and debugging tools
+ui/                 Shirei desktop UI (separate module)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
-internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO
+internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
+                    UART, SPI, DMA, PWM, ADC
+internal/devices/   external chips (ST7789 display)
 internal/firmware/  UF2 / ELF / raw image loaders
 ```
 
@@ -23,6 +27,9 @@ internal/firmware/  UF2 / ELF / raw image loaders
 go run ./cmd/rp2350sim -fw firmware.elf -seconds 1 -trace-pins 25
 ```
 
+The default USB console and UART both write to stdout, so `println` output
+appears directly.
+
 Useful flags:
 
 | flag | meaning |
@@ -31,14 +38,31 @@ Useful flags:
 | `-seconds` | virtual seconds to run (150 MHz master clock) |
 | `-steps` | cycle budget instead of `-seconds` |
 | `-trace-pins 25,15` | log GPIO level changes |
+| `-lcd` | attach an ST7789 on SPI1 (RP2350-GEEK wiring) |
+| `-lcd-png path.png` | write the LCD framebuffer at exit |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | print a summary of unmapped accesses at exit |
-| `-trace N` | trace the first N instructions |
+| `-trace N`, `-trace-from ADDR` | trace instructions |
 | `-trace-last` | keep a ring of recent instructions for diagnostics |
-| `-bp 0x10001b30` | breakpoint at an address |
-| `-bp2 0x...` | logging breakpoint that continues |
-| `-watch 0x2000177c` | log every write to an address |
-| `-poke 0xADDR=0xVAL` | write memory before starting |
+| `-bp ADDR`, `-bp2 ADDR` | stop / log at an address |
+| `-watch ADDR`, `-watch-val V`, `-watch-reg N` | write and register logging |
+| `-poke ADDR=VAL` | write memory before starting |
+| `-sample N` | print the PC in 10M-cycle chunks |
+
+Diagnostics environment variables: `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`,
+`RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`.
+
+## Desktop UI
+
+```sh
+cd ui
+go run . ../firmware.elf
+```
+
+The window shows live GPIO state (function, direction, level), the ST7789
+framebuffer, and the USB/UART console. The toolbar loads a firmware path,
+pauses/resumes and resets. `--png out.png --run 0.6 firmware.elf` renders a
+headless snapshot after advancing virtual time.
 
 ## Tests
 
@@ -46,21 +70,30 @@ Useful flags:
 go test ./...
 ```
 
-`internal/m33/thumb_test.go` exercises instruction semantics with hand-assembled
-encodings (LLVM `llvm-mc -triple=thumbv8m.main`).
+The decoder regression gate is a differential harness that runs a generated
+corpus of instructions (1344 cases) in QEMU's Cortex-M33 and compares registers,
+SP, PC and flags with this interpreter:
 
-## Known issues
+```sh
+go test -tags qemu ./internal/m33 -run TestQEMUInstructions
+```
 
-- The firmware reaches `runtime.initAll` but the PLL divisor search yields
-  `pd1 = 0`, which trips `pll.init`'s range check and panics. Control flow inside
-  the inlined search loop diverges from expected behaviour; a QEMU-based
-  differential harness is the planned way to flush the remaining core bugs.
-- No USB CDC, UART, SPI, DMA, PIO or PWM yet, so serial output is unavailable and
-  panic messages cannot be printed.
-- Cycle accounting is one cycle per instruction; timing is not accurate.
+It needs `qemu-system-arm` and `arm-none-eabi-gdb`. `tools/gen_corpus.py`
+regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
+
+## Scope and known gaps
+
+- The emulated CPU is the Cortex-M33 (thumbv8m.main); there is no RISC-V path.
+  TinyGo `-target=pico2` emits Arm, and that is the contract.
+- Missing peripherals: PIO, I2C, W6300 Ethernet, USB host, PSRAM.
+- The TinyGo build under test does not launch core 1, so the emulator runs
+  single-core in practice.
+- Time is virtual and one instruction is one cycle; throughput is about 15M
+  cycles/s, so firmware runs slower than real time.
+- Hardware notes, board wiring and design contracts live in `.operator/specs/`.
 
 ## References
 
-- RP2350 datasheet, `tinygo/src/device/rp/rp2350.go` for register definitions
+- RP2350 datasheet; `tinygo/src/device/rp/rp2350.go` register definitions
 - TinyGo `machine` and `runtime` packages for the boot contract
 - `qemu-system-arm -M mps2-an505` as the Cortex-M33 instruction oracle
