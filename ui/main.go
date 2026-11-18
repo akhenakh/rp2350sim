@@ -73,8 +73,13 @@ func toolbar(snap MachineState) {
 		attrs.FixedWidth = true
 		attrs.NoAutoFocus = true
 		TextInputExt(&fwPath, attrs)
+		if Button(NoIcon, "Open…") {
+			openFirmwareDialog()
+		}
 		if Button(NoIcon, "Load") {
-			emu.Load(strings.TrimSpace(fwPath))
+			if p := strings.TrimSpace(fwPath); p != "" {
+				emu.Load(p)
+			}
 		}
 		runLabel := "Run"
 		if snap.Running {

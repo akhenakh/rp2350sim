@@ -77,8 +77,10 @@ go run . ../firmware.elf
 ```
 
 The window shows live GPIO state (function, direction, level), the ST7789
-framebuffer, and the USB/UART console. The toolbar loads a firmware path,
-pauses/resumes and resets. `--png out.png --run 0.6 firmware.elf` renders a
+framebuffer, and the USB/UART console. **Open…** loads a firmware image through
+the OS file dialog (native on macOS/Windows, zenity/kdialog on Linux); the path
+field can also be edited and loaded directly. The toolbar also pauses/resumes
+and resets. `--png out.png --run 0.6 firmware.elf` renders a
 headless snapshot after advancing virtual time.
 
 ## Tests
