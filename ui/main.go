@@ -55,10 +55,14 @@ func RootView() {
 	Container(Attrs(Viewport, Background(220, 8, 12, 1), AmendTextStyle(lightText)), func() {
 		toolbar(snap)
 		Container(Attrs(Row, Grow(1), Gap(10), Pad4(10, 10, 10, 10)), func() {
-			pinsPanel(snap)
+			Container(Attrs(FixWidth(680), Row, Expand, Gap(10)), func() {
+				boardPanel(snap)
+				pinsPanel(snap)
+			})
 			Container(Attrs(Grow(1), Expand, Gap(10)), func() {
 				lcdPanel(snap)
 				ws2812Panel(snap)
+				ethPanel(snap)
 				consolePanel()
 			})
 		})
@@ -117,18 +121,18 @@ func toolbar(snap MachineState) {
 }
 
 func pinsPanel(snap MachineState) {
-	Container(Attrs(FixWidth(600), Expand, Gap(6)), func() {
+	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label("GPIO", FontSize(16), FontWeight(700))
 			Label("function · direction · level", FontSize(12))
 			Filler(1)
-			Label(fmt.Sprintf("%d pins", countActive(snap)), FontSize(12))
+			Label(fmt.Sprintf("%d active", countActive(snap)), FontSize(12))
 		})
-		Container(Attrs(Row, Gap(6)), func() {
-			for col := 0; col < 3; col++ {
-				Container(Attrs(Gap(2)), func() {
-					for row := 0; row < 16; row++ {
-						p := col*16 + row
+		Container(Attrs(Row, Grow(1), Expand, Gap(6)), func() {
+			for col := 0; col < 2; col++ {
+				Container(Attrs(Gap(2), Grow(1), Expand), func() {
+					for row := 0; row < 15; row++ {
+						p := col*15 + row
 						in := snap.Pins[p]
 						if pinView == 1 && !pinActive(in) {
 							continue
@@ -165,7 +169,7 @@ func pinCard(p int, in PinInfo) {
 	case in.Level:
 		h, s, l = 205, 45, 55
 	}
-	ContainerWithKey(p, Attrs(Row, CrossMid, Gap(6), Pad2(3, 6), Corners(4), Background(h, s, l, 1)), func() {
+	ContainerWithKey(p, Attrs(Row, CrossMid, Grow(1), Gap(6), Pad2(3, 6), Corners(4), Background(h, s, l, 1)), func() {
 		dotH, dotS, dotL := float32(210), float32(10), float32(45)
 		if in.Level {
 			dotH, dotS, dotL = 140, 70, 55
@@ -263,17 +267,204 @@ func rgbToHSLA(c color.RGBA) (float32, float32, float32, float32) {
 	return float32(h), float32(s * 100), float32(l * 100), float32(c.A) / 255
 }
 
+// The Pico 2 exposes 20 pins per header. Left is pin 1..20 top to bottom;
+// right is pin 40..21, which is how it reads when the USB connector is up.
+type headerPin struct {
+	label string
+	gpio  int // -1 for power, ground and control pins
+}
+
+var leftHeader = []headerPin{
+	{"GP0", 0}, {"GP1", 1}, {"GND", -1}, {"GP2", 2}, {"GP3", 3},
+	{"GP4", 4}, {"GP5", 5}, {"GND", -1}, {"GP6", 6}, {"GP7", 7},
+	{"GP8", 8}, {"GP9", 9}, {"GND", -1}, {"GP10", 10}, {"GP11", 11},
+	{"GP12", 12}, {"GP13", 13}, {"GND", -1}, {"GP14", 14}, {"GP15", 15},
+}
+
+var rightHeader = []headerPin{
+	{"VBUS", -1}, {"VSYS", -1}, {"GND", -1}, {"3V3_EN", -1}, {"3V3", -1},
+	{"ADC_VREF", -1}, {"GP28", 28}, {"GND", -1}, {"GP27", 27}, {"GP26", 26},
+	{"RUN", -1}, {"GP22", 22}, {"GND", -1}, {"GP21", 21}, {"GP20", 20},
+	{"GP19", 19}, {"GP18", 18}, {"GND", -1}, {"GP17", 17}, {"GP16", 16},
+}
+
+// boardPanel draws a stylised Pico 2: both headers, the USB connector, the
+// BOOTSEL button and the on-board LED on GP25.
+func boardPanel(snap MachineState) {
+	Container(Attrs(FixWidth(255), Gap(6)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("Board", FontSize(16), FontWeight(700))
+			Label("Pico 2", FontSize(12))
+			Filler(1)
+		})
+		Container(Attrs(Gap(1), Pad(10), Corners(12),
+			Background(150, 22, 22, 1), BorderWidth(1), BorderColor(150, 35, 38, 1)), func() {
+			Container(Attrs(Row, Center, Gap(6)), func() {
+				Container(Attrs(FixSize(46, 12), Corners(2), Background(210, 6, 36, 1)), func() {})
+				Label("USB", FontSize(9), TextColor(220, 5, 62, 1))
+			})
+			for i := 0; i < 20; i++ {
+				Container(Attrs(Row, CrossMid), func() {
+					headerPad(leftHeader[i], snap, false)
+					Filler(1)
+					boardCenter(i, snap)
+					Filler(1)
+					headerPad(rightHeader[i], snap, true)
+				})
+			}
+		})
+	})
+}
+
+func headerPad(hp headerPin, snap MachineState, right bool) {
+	h, s, l := padHSLA(hp, snap)
+	Container(Attrs(Row, CrossMid, Gap(4), FixWidth(82)), func() {
+		label := func() {
+			Label(hp.label, FontSize(9), TextColor(220, 6, 72, 1))
+		}
+		pad := func() {
+			Container(Attrs(FixSize(9, 9), Corners(2), Background(h, s, l, 1)), func() {})
+		}
+		if right {
+			label()
+			Filler(1)
+			pad()
+		} else {
+			pad()
+			Filler(1)
+			label()
+		}
+	})
+}
+
+func padHSLA(hp headerPin, snap MachineState) (h, s, l float32) {
+	if hp.gpio < 0 {
+		return 210, 5, 34
+	}
+	in := snap.Pins[hp.gpio]
+	switch {
+	case in.OE && in.Level:
+		return 140, 70, 50
+	case in.OE:
+		return 210, 15, 62
+	case in.Level:
+		return 205, 45, 55
+	default:
+		return 150, 18, 42
+	}
+}
+
+func boardCenter(row int, snap MachineState) {
+	Container(Attrs(FixWidth(58), Center), func() {
+		switch row {
+		case 5:
+			Label("Pico 2", FontSize(11), FontWeight(700), TextColor(220, 8, 92, 1))
+		case 12:
+			h, s, l := float32(140), float32(18), float32(28)
+			if snap.Pins[25].Level {
+				h, s, l = 140, 70, 55
+			}
+			Container(Attrs(FixSize(14, 14), Corners(7), Background(h, s, l, 1),
+				BorderWidth(1), BorderColor(210, 10, 55, 1)), func() {})
+			Label("LED", FontSize(8), TextColor(220, 5, 65, 1))
+		case 16:
+			Container(Attrs(FixSize(20, 9), Corners(2), Background(210, 8, 42, 1)), func() {})
+			Label("BOOTSEL", FontSize(7), TextColor(220, 5, 65, 1))
+		}
+	})
+}
+
+// ethPanel shows the socket activity of the attached Ethernet model.
+func ethPanel(snap MachineState) {
+	Container(Attrs(Gap(4)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("Ethernet", FontSize(16), FontWeight(700))
+			Label(snap.EthKind+" · SPI0 CS GP17", FontSize(12))
+			Filler(1)
+			Label(fmt.Sprintf("%d events", len(snap.EthLog)), FontSize(11))
+		})
+		Container(Attrs(FixHeight(92), Expand, Gap(1), Pad(8), Corners(6), Clip,
+			Background(220, 12, 8, 1), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+			if len(snap.EthLog) == 0 {
+				Label("no socket activity", FontSize(11), TextColor(220, 5, 55, 1))
+				return
+			}
+			start := len(snap.EthLog) - 6
+			if start < 0 {
+				start = 0
+			}
+			for _, line := range snap.EthLog[start:] {
+				Label(line, Fonts(Monospace...), FontSize(10), TextColor(140, 12, 80, 1))
+			}
+		})
+	})
+}
+
 func consolePanel() {
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
+		FocusOnClick()
+		focused := HasFocus()
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label("Console", FontSize(16), FontWeight(700))
 			Label("USB CDC + UART", FontSize(12))
 			Filler(1)
+			if focused {
+				Label("typing · Enter sends CR", FontSize(11), TextColor(140, 60, 60, 1))
+			} else {
+				Label("click to type", FontSize(11), TextColor(220, 5, 55, 1))
+			}
 		})
-		Container(Attrs(Grow(1), Expand, Background(220, 12, 8, 1), Corners(6), Pad(8), Clip), func() {
+		ring := float32(25)
+		if focused {
+			ring = 140
+		}
+		Container(Attrs(Grow(1), Expand, Background(220, 12, 8, 1), Corners(6), Pad(8), Clip,
+			BorderWidth(1), BorderColor(ring, 35, 40, 1)), func() {
 			LogView(console, TextStyle(Fonts(Monospace...), FontSize(12), TextColor(140, 12, 85, 1)))
 		})
+		if focused {
+			forwardConsoleInput()
+		}
 	})
+}
+
+// forwardConsoleInput sends this frame's typed text and editing keys to the
+// firmware's USB CDC OUT endpoint and UART0.
+func forwardConsoleInput() {
+	fi := GetFrameInput()
+	var out []byte
+	if fi.Text != "" {
+		out = append(out, fi.Text...)
+	}
+	switch fi.Key {
+	case KeyEnter:
+		out = append(out, '\r')
+	case KeyTab:
+		out = append(out, '\t')
+	case KeyEscape:
+		out = append(out, 0x1b)
+	case KeyDeleteBackward:
+		out = append(out, 0x7f)
+	case KeyDeleteForward:
+		out = append(out, 0x1b, '[', '3', '~')
+	case KeyUp:
+		out = append(out, 0x1b, '[', 'A')
+	case KeyDown:
+		out = append(out, 0x1b, '[', 'B')
+	case KeyRight:
+		out = append(out, 0x1b, '[', 'C')
+	case KeyLeft:
+		out = append(out, 0x1b, '[', 'D')
+	case KeyHome:
+		out = append(out, 0x1b, '[', 'H')
+	case KeyEnd:
+		out = append(out, 0x1b, '[', 'F')
+	}
+	if len(out) == 0 {
+		return
+	}
+	emu.SendInput(out)
+	RequestNextFrame()
 }
 
 func updateConsole(snap MachineState) {

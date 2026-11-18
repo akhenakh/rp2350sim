@@ -39,6 +39,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
 | `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
+| `task run:echo` | echo injected console input through USB CDC |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
@@ -81,6 +82,7 @@ Useful flags:
 | `-poke ADDR=VAL` | write memory before starting |
 | `-peek ADDR` | print a memory word at exit |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
+| `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
 
@@ -123,8 +125,12 @@ cd ui
 go run . ../firmware.elf
 ```
 
-The window shows live GPIO state (function, direction, level), the ST7789
-framebuffer, and the USB/UART console. **Open…** loads a firmware image through
+The window shows a Pico 2 board diagram (both headers, USB, BOOTSEL and the
+on-board LED on GP25) next to the live GPIO table, the ST7789 framebuffer, the
+Ethernet socket log and the USB/UART console. Click the console to give it
+keyboard focus; typed text (and Enter, Backspace, Tab, arrows) is forwarded to
+the firmware's USB CDC OUT endpoint and UART0. Set `RP2350SIM_ETH_KIND=w6300`
+to attach the W6300 model instead of the default W5500. **Open…** loads a firmware image through
 the OS file dialog (native on macOS/Windows, zenity/kdialog on Linux); the path
 field can also be edited and loaded directly. The toolbar also pauses/resumes
 and resets. `--png out.png --run 0.6 firmware.elf` renders a

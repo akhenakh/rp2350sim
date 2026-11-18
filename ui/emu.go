@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +41,8 @@ type MachineState struct {
 	WSColors   []color.RGBA
 	WSFrames   uint64
 	WSEnabled  bool
+	EthKind    string
+	EthLog     []string
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -58,10 +62,16 @@ type Emu struct {
 
 	ws    *devices.WS2812B
 	wsPin int
+
+	ethKind string
+	ethLog  []string
 }
 
 func NewEmu() *Emu {
-	e := &Emu{wsPin: -1}
+	e := &Emu{wsPin: -1, ethKind: "w5500"}
+	if v := os.Getenv("RP2350SIM_ETH_KIND"); v == "w6300" {
+		e.ethKind = "w6300"
+	}
 	if v := os.Getenv("RP2350SIM_WS2812_PIN"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			e.wsPin = n
@@ -79,9 +89,24 @@ func (e *Emu) resetChip() {
 	c := rp2350.New()
 	e.lcd = devices.NewST7789(c, 9, 8, 12)
 	c.OnSPI1 = e.lcd.Transfer
-	eth := devices.NewW5500(c, 17)
-	c.OnSPI0 = eth.Transfer
-	c.CycleHooks = append(c.CycleHooks, eth.Tick)
+	e.ethLog = e.ethLog[:0]
+	logEth := func(format string, args ...any) {
+		e.ethLog = append(e.ethLog, fmt.Sprintf(format, args...))
+		if len(e.ethLog) > 64 {
+			e.ethLog = e.ethLog[len(e.ethLog)-32:]
+		}
+	}
+	if e.ethKind == "w6300" {
+		eth := devices.NewW6300(c, 17)
+		eth.Logf = logEth
+		c.OnSPI0 = eth.Transfer
+		c.CycleHooks = append(c.CycleHooks, eth.Tick)
+	} else {
+		eth := devices.NewW5500(c, 17)
+		eth.Logf = logEth
+		c.OnSPI0 = eth.Transfer
+		c.CycleHooks = append(c.CycleHooks, eth.Tick)
+	}
 
 	e.ws = nil
 	if e.wsPin >= 0 {
@@ -238,12 +263,15 @@ func (e *Emu) Snapshot() MachineState {
 		s.WSColors = e.ws.Colors()
 		s.WSFrames = e.ws.Frames()
 	}
+	s.EthKind = strings.ToUpper(e.ethKind)
+	s.EthLog = append([]string(nil), e.ethLog...)
 	return s
 }
 
-// SendInput forwards host bytes to the device's USB CDC OUT endpoint.
+// SendInput forwards host bytes to the USB CDC OUT endpoint and UART0.
 func (e *Emu) SendInput(data []byte) {
 	e.mu.Lock()
 	e.chip.SendUSBCDC(data)
+	e.chip.SendUART(0, data)
 	e.mu.Unlock()
 }

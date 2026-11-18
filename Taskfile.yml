@@ -97,6 +97,24 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/piotest.elf -seconds 0.3'
 
+  firmware:echo:
+    desc: Build the console echo firmware
+    dir: firmware/echo
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/echo.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/echo.elf .'
+
+  run:echo:
+    desc: Echo injected console input through USB CDC
+    deps: [build, firmware:echo]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/echo.elf -seconds 0.5 -input "$(printf "hello rp2350\r")"'
+
   firmware:cores:
     desc: Build the multicore scheduler test (-scheduler=cores)
     dir: firmware/cores
