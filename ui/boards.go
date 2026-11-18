@@ -13,12 +13,15 @@ var embeddedBoards []byte
 
 // BoardDef describes one selectable board and the devices attached to it.
 type BoardDef struct {
-	ID          string     `yaml:"id"`
-	Name        string     `yaml:"name"`
-	Description string     `yaml:"description"`
-	LCD         *LCDDevice `yaml:"lcd"`
-	Ethernet    *EthDevice `yaml:"ethernet"`
-	WS2812      *LEDDevice `yaml:"ws2812"`
+	ID          string       `yaml:"id"`
+	Name        string       `yaml:"name"`
+	Description string       `yaml:"description"`
+	LCD         *LCDDevice   `yaml:"lcd"`
+	Ethernet    *EthDevice   `yaml:"ethernet"`
+	WS2812      *LEDDevice   `yaml:"ws2812"`
+	Analog      []SignalDef  `yaml:"analog"`
+	Scope       []int        `yaml:"scope"`
+	Logic       *LogicDevice `yaml:"logic"`
 }
 
 type LCDDevice struct {
@@ -38,6 +41,97 @@ type EthDevice struct {
 
 type LEDDevice struct {
 	Pin int `yaml:"pin"`
+}
+
+// SignalDef describes a generated analog waveform on a pin (scope demo).
+type SignalDef struct {
+	Pin       int     `yaml:"pin"`
+	Wave      string  `yaml:"wave"`
+	Hz        float64 `yaml:"hz"`
+	Amplitude float64 `yaml:"amplitude"`
+	Offset    float64 `yaml:"offset"`
+}
+
+// LogicDevice lists the wire protocols the logic analyzer should decode.
+type LogicDevice struct {
+	UART *UARTDevice `yaml:"uart"`
+	I2C  *I2CDevice  `yaml:"i2c"`
+	SPI  *SPIDevice  `yaml:"spi"`
+}
+
+type UARTDevice struct {
+	Bus  int `yaml:"bus"`
+	TX   int `yaml:"tx"`
+	RX   int `yaml:"rx"`
+	Baud int `yaml:"baud"`
+}
+
+type I2CDevice struct {
+	Bus int `yaml:"bus"`
+	SDA int `yaml:"sda"`
+	SCL int `yaml:"scl"`
+}
+
+type SPIDevice struct {
+	Bus  int  `yaml:"bus"`
+	SCK  int  `yaml:"sck"`
+	MOSI int  `yaml:"mosi"`
+	MISO *int `yaml:"miso"`
+	CS   *int `yaml:"cs"`
+}
+
+// MISOPin returns the MISO pin, or -1 when the line is not wired.
+func (d *SPIDevice) MISOPin() int {
+	if d.MISO == nil {
+		return -1
+	}
+	return *d.MISO
+}
+
+// CSPin returns the chip-select pin, or -1 when it is not wired.
+func (d *SPIDevice) CSPin() int {
+	if d.CS == nil {
+		return -1
+	}
+	return *d.CS
+}
+
+// LogicPins returns the unique pins the configured protocols observe.
+func (b *BoardDef) LogicPins() []int {
+	seen := map[int]bool{}
+	var out []int
+	add := func(p int) {
+		if p < 0 || p > 47 || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if l := b.Logic; l != nil {
+		if u := l.UART; u != nil {
+			add(u.TX)
+			add(u.RX)
+		}
+		if d := l.I2C; d != nil {
+			add(d.SDA)
+			add(d.SCL)
+		}
+		if d := l.SPI; d != nil {
+			add(d.SCK)
+			add(d.MOSI)
+			add(d.MISOPin())
+			add(d.CSPin())
+		}
+	}
+	return out
+}
+
+// ScopePins returns the default scope channels.
+func (b *BoardDef) ScopePins() []int {
+	if len(b.Scope) > 0 {
+		return append([]int(nil), b.Scope...)
+	}
+	return []int{0, 1}
 }
 
 type boardFile struct {

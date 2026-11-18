@@ -47,6 +47,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:lcd` | desktop UI on the `geek` board with the ST7789 example |
 | `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
 | `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
+| `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
+| `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
@@ -130,7 +132,8 @@ go run . --board geek ../firmware.elf
 The UI starts with a board picker. The list comes from `ui/boards.yaml` (or
 `RP2350SIM_BOARDS=/path/to/boards.yaml`), and each entry declares its hardware:
 an ST7789 LCD on an SPI bus with its CS/DC/RST pins, a W5500/W6300 controller,
-a WS2812B data pin, or none. `go run . --list-boards` prints the ids.
+a WS2812B data pin, scope channels, generated analog signals, or logic-analyzer
+protocols. `go run . --list-boards` prints the ids.
 
 Selecting a board attaches only those devices to the emulated chip and builds
 the tabs accordingly:
@@ -139,6 +142,16 @@ the tabs accordingly:
 - **LCD**: only when the board has an LCD; shows the framebuffer.
 - **Ethernet**: only for W5500/W6300 boards; shows the socket log.
 - **LEDs**: only for WS2812B boards; shows the last latched colours.
+- **Scope** (always): an oscilloscope with up to 8 pin traces in different
+  colours, 0–3.3 V, a 1 MHz sampler and a ~16 ms window. Click header pins to
+  add or remove traces. `analog:` board entries drive a generated waveform
+  (the `pico2-analog` board puts a 1 kHz sine on GP26).
+- **Logic** (always): a logic analyzer. Board `logic:` blocks declare UART,
+  I2C and SPI pins/baud; hardware transfers are tapped from the peripheral
+  models (so high-speed buses do not need pin-level sampling), and PIO or
+  bit-banged traffic falls back to the pin trace. Decoded UART bytes, I2C
+  address/data/ACK phases and SPI bytes are listed under synthesised
+  waveforms; USB CDC transfers are listed as well.
 - **Console** (always): USB CDC + UART. Click it to give it keyboard focus;
   typed text and Enter/Backspace/Tab/arrows are forwarded to the firmware.
 

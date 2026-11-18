@@ -63,6 +63,48 @@ type Emu struct {
 	ws      *devices.WS2812B
 	ethKind string
 	ethLog  []string
+
+	scopePins  []int
+	scope      *devices.Trace
+	logic      *devices.Trace
+	signals    []*devices.SignalSource
+	usbEvents  []USBEvent
+	uartEvents []UARTEvent
+	spiEvents  []SPIEvent
+	i2cEvents  []I2CEvent
+}
+
+// UARTEvent is one byte written to (or received from) a hardware UART.
+type UARTEvent struct {
+	Bus   int
+	Cycle uint64
+	In    bool // received by the firmware
+	Data  byte
+}
+
+// SPIEvent is one byte clocked through a hardware SPI controller.
+type SPIEvent struct {
+	Bus   int
+	Cycle uint64
+	TX    byte
+	RX    byte
+}
+
+// I2CEvent is one phase of a hardware I2C transfer.
+type I2CEvent struct {
+	Bus   int
+	Cycle uint64
+	Kind  string
+	Addr  uint8
+	Data  byte
+	Ack   bool
+}
+
+// USBEvent is one CDC transfer, host-to-device or device-to-host.
+type USBEvent struct {
+	Cycle uint64
+	In    bool // device -> host
+	Data  []byte
 }
 
 func NewEmu() *Emu {
@@ -80,7 +122,101 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	defer e.mu.Unlock()
 	e.board = b
 	e.errText = ""
+	if b != nil {
+		e.scopePins = b.ScopePins()
+	}
 	e.loadLocked()
+}
+
+// SetScopePins changes the scope channels without resetting the machine.
+func (e *Emu) SetScopePins(pins []int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.scopePins = append([]int(nil), pins...)
+	if e.scope != nil {
+		e.scope.SetPins(pins)
+	}
+}
+
+// ScopeData copies the scope trace for rendering.
+func (e *Emu) ScopeData() ([]int, []devices.TraceSample, uint64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.scope == nil {
+		return nil, nil, 0
+	}
+	pins, samples := e.scope.Snapshot()
+	return pins, samples, e.scope.Interval
+}
+
+// LogicData copies the logic-analyzer trace for rendering and decoding.
+func (e *Emu) LogicData() ([]int, []devices.TraceSample, uint64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.logic == nil {
+		return nil, nil, 0
+	}
+	pins, samples := e.logic.Snapshot()
+	return pins, samples, e.logic.Interval
+}
+
+// USBEvents returns the recent CDC transfers.
+func (e *Emu) USBEvents() []USBEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]USBEvent(nil), e.usbEvents...)
+}
+
+// UARTEvents returns the recent hardware UART bytes.
+func (e *Emu) UARTEvents() []UARTEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]UARTEvent(nil), e.uartEvents...)
+}
+
+// SPIEvents returns the recent hardware SPI bytes.
+func (e *Emu) SPIEvents() []SPIEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]SPIEvent(nil), e.spiEvents...)
+}
+
+// I2CEvents returns the recent hardware I2C phases.
+func (e *Emu) I2CEvents() []I2CEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]I2CEvent(nil), e.i2cEvents...)
+}
+
+func (e *Emu) addUART(bus int, cycle uint64, in bool, b byte) {
+	e.uartEvents = append(e.uartEvents, UARTEvent{Bus: bus, Cycle: cycle, In: in, Data: b})
+	if len(e.uartEvents) > 512 {
+		e.uartEvents = e.uartEvents[len(e.uartEvents)-256:]
+	}
+}
+
+func (e *Emu) addSPI(bus int, cycle uint64, tx, rx byte) {
+	e.spiEvents = append(e.spiEvents, SPIEvent{Bus: bus, Cycle: cycle, TX: tx, RX: rx})
+	if len(e.spiEvents) > 512 {
+		e.spiEvents = e.spiEvents[len(e.spiEvents)-256:]
+	}
+}
+
+func (e *Emu) addI2C(bus int, cycle uint64, kind string, addr uint8, data byte, ack bool) {
+	e.i2cEvents = append(e.i2cEvents, I2CEvent{Bus: bus, Cycle: cycle, Kind: kind, Addr: addr, Data: data, Ack: ack})
+	if len(e.i2cEvents) > 512 {
+		e.i2cEvents = e.i2cEvents[len(e.i2cEvents)-256:]
+	}
+}
+
+func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
+	if len(data) > 64 {
+		data = data[:64]
+	}
+	e.usbEvents = append(e.usbEvents, USBEvent{Cycle: cycle, In: in, Data: append([]byte(nil), data...)})
+	if len(e.usbEvents) > 64 {
+		e.usbEvents = e.usbEvents[len(e.usbEvents)-32:]
+	}
 }
 
 // resetChip builds a fresh machine and attaches the selected board's devices.
@@ -90,6 +226,13 @@ func (e *Emu) resetChip() {
 	e.ws = nil
 	e.ethKind = ""
 	e.ethLog = e.ethLog[:0]
+	e.usbEvents = e.usbEvents[:0]
+	e.uartEvents = e.uartEvents[:0]
+	e.spiEvents = e.spiEvents[:0]
+	e.i2cEvents = e.i2cEvents[:0]
+	e.scope = nil
+	e.logic = nil
+	e.signals = e.signals[:0]
 	logEth := func(format string, args ...any) {
 		e.ethLog = append(e.ethLog, fmt.Sprintf(format, args...))
 		if len(e.ethLog) > 64 {
@@ -98,12 +241,25 @@ func (e *Emu) resetChip() {
 	}
 
 	if b := e.board; b != nil {
+		recordSPI := func(bus int, dev func(byte) byte) func(byte) byte {
+			return func(tx byte) byte {
+				rx := byte(0xFF)
+				if dev != nil {
+					rx = dev(tx)
+				}
+				e.addSPI(bus, c.Cycles, tx, rx)
+				return rx
+			}
+		}
+		var spiAttached [2]bool
 		if d := b.LCD; d != nil {
 			e.lcd = devices.NewST7789(c, d.CS, d.DC, d.RST)
 			if d.SPI == 1 {
-				c.OnSPI1 = e.lcd.Transfer
+				c.OnSPI1 = recordSPI(1, e.lcd.Transfer)
+				spiAttached[1] = true
 			} else {
-				c.OnSPI0 = e.lcd.Transfer
+				c.OnSPI0 = recordSPI(0, e.lcd.Transfer)
+				spiAttached[0] = true
 			}
 		}
 		if d := b.Ethernet; d != nil {
@@ -120,9 +276,11 @@ func (e *Emu) resetChip() {
 				transfer, tick = eth.Transfer, eth.Tick
 			}
 			if d.SPI == 1 {
-				c.OnSPI1 = transfer
+				c.OnSPI1 = recordSPI(1, transfer)
+				spiAttached[1] = true
 			} else {
-				c.OnSPI0 = transfer
+				c.OnSPI0 = recordSPI(0, transfer)
+				spiAttached[0] = true
 			}
 			c.CycleHooks = append(c.CycleHooks, tick)
 		}
@@ -130,9 +288,57 @@ func (e *Emu) resetChip() {
 			e.ws = devices.NewWS2812B(c, d.Pin)
 			c.CycleHooks = append(c.CycleHooks, e.ws.Tick)
 		}
+
+		for _, sd := range b.Analog {
+			wave := devices.WaveSine
+			switch sd.Wave {
+			case "square":
+				wave = devices.WaveSquare
+			case "triangle":
+				wave = devices.WaveTriangle
+			}
+			hz := sd.Hz
+			if hz <= 0 {
+				hz = 1000
+			}
+			amp, off := sd.Amplitude, sd.Offset
+			if amp == 0 && off == 0 {
+				amp, off = 1.65, 1.65
+			}
+			src := devices.NewSignalSource(c, sd.Pin, wave, hz, amp, off)
+			e.signals = append(e.signals, src)
+			c.CycleHooks = append(c.CycleHooks, src.Tick)
+		}
+
+		scopePins := e.scopePins
+		if len(scopePins) == 0 {
+			scopePins = b.ScopePins()
+		}
+		e.scope = devices.NewTrace(c, scopePins, devices.ScopeInterval, devices.ScopeDepth)
+		c.CycleHooks = append(c.CycleHooks, e.scope.Tick)
+
+		if pins := b.LogicPins(); len(pins) > 0 {
+			e.logic = devices.NewTrace(c, pins, devices.LogicInterval, devices.LogicDepth)
+			c.CycleHooks = append(c.CycleHooks, e.logic.Tick)
+		}
+		// A protocol without an attached chip still records bytes clocked
+		// by firmware through that SPI controller.
+		if l := b.Logic; l != nil && l.SPI != nil {
+			bus := l.SPI.Bus
+			if bus >= 0 && bus < 2 && !spiAttached[bus] {
+				if bus == 1 {
+					c.OnSPI1 = recordSPI(1, nil)
+				} else {
+					c.OnSPI0 = recordSPI(0, nil)
+				}
+			}
+		}
+		c.OnI2C = func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool) {
+			e.addI2C(bus, cycles, kind, addr, data, ack)
+		}
 	}
 
-	appendBytes := func(b []byte) {
+	appendConsole := func(b []byte) {
 		e.console = append(e.console, b...)
 		e.consolePos += int64(len(b))
 		// Keep the tail; the UI resets its view when the length drops.
@@ -140,9 +346,18 @@ func (e *Emu) resetChip() {
 			e.console = append([]byte(nil), e.console[len(e.console)-32*1024:]...)
 		}
 	}
-	c.OnUART0 = func(b byte) { appendBytes([]byte{b}) }
-	c.OnUART1 = func(b byte) { appendBytes([]byte{b}) }
-	c.SetUSBCDC(appendBytes)
+	c.OnUART0 = func(b byte) {
+		appendConsole([]byte{b})
+		e.addUART(0, c.Cycles, false, b)
+	}
+	c.OnUART1 = func(b byte) {
+		appendConsole([]byte{b})
+		e.addUART(1, c.Cycles, false, b)
+	}
+	c.SetUSBCDC(func(b []byte) {
+		appendConsole(b)
+		e.addUSBEvent(c.Cycles, true, b)
+	})
 
 	e.chip = c
 	e.lcdGen = 0
@@ -293,5 +508,9 @@ func (e *Emu) SendInput(data []byte) {
 	e.mu.Lock()
 	e.chip.SendUSBCDC(data)
 	e.chip.SendUART(0, data)
+	e.addUSBEvent(e.chip.Cycles, false, data)
+	for _, b := range data {
+		e.addUART(0, e.chip.Cycles, true, b)
+	}
 	e.mu.Unlock()
 }

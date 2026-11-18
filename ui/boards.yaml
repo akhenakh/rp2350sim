@@ -16,10 +16,17 @@ boards:
   - id: pico2
     name: Raspberry Pi Pico 2
     description: RP2350A · USB CDC console · on-board LED on GP25
+    scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
 
   - id: pico2-lcd
     name: RP2350 + ST7789 LCD
     description: 240×135 ST7789 on SPI1 (CS GP9, DC GP8, RST GP12)
+    scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+      spi: { bus: 1, sck: 10, mosi: 11, cs: 9 }
     lcd:
       spi: 1
       cs: 9
@@ -31,12 +38,18 @@ boards:
   - id: pico2-ws2812
     name: RP2350 + WS2812B strip
     description: WS2812B data line on GP0, decoded from the PIO wire protocol
+    scope: [0, 1]
     ws2812:
       pin: 0
 
   - id: geek
     name: Waveshare RP2350-GEEK
     description: 240×135 ST7789 on SPI1, microSD and I2C header
+    scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+      i2c: { sda: 28, scl: 29 }
+      spi: { bus: 1, sck: 10, mosi: 11, cs: 9 }
     lcd:
       spi: 1
       cs: 9
@@ -48,6 +61,9 @@ boards:
   - id: poe-eth
     name: Waveshare RP2350-POE-ETH
     description: W6300 Ethernet on SPI0 (CS GP17) with PoE
+    scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
     ethernet:
       kind: w6300
       spi: 0
@@ -56,7 +72,25 @@ boards:
   - id: pico2-w5500
     name: RP2350 + W5500
     description: Breadboard W5500 Ethernet on SPI0 (CS GP17)
+    scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
     ethernet:
       kind: w5500
       spi: 0
       cs: 17
+
+  - id: pico2-analog
+    name: RP2350 + analog + protocols
+    description: 1 kHz sine on GP26 plus UART/I2C/SPI demo pins for the analyzers
+    scope: [26, 0, 1]
+    analog:
+      - pin: 26
+        wave: sine
+        hz: 1000
+        amplitude: 1.65
+        offset: 1.65
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+      i2c: { sda: 4, scl: 5 }
+      spi: { sck: 18, mosi: 19, miso: 16, cs: 17 }

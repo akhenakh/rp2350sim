@@ -7,7 +7,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/akhenakh/rp2350sim/internal/devices"
 
 	app "go.hasen.dev/shirei/app"
 
@@ -26,6 +29,7 @@ var (
 	selectedBoard      *BoardDef
 	pendingBoardPicker bool
 	activeTab          = tabBoard
+	scopePins          []int
 )
 
 // Tabs. Board and Console always exist; the others appear only when the
@@ -35,6 +39,8 @@ const (
 	tabLCD
 	tabEth
 	tabWS
+	tabScope
+	tabLogic
 	tabConsole
 )
 
@@ -93,6 +99,10 @@ func RootView() {
 				ethPanel(snap)
 			case tabWS:
 				ws2812Panel(snap)
+			case tabScope:
+				scopePanel()
+			case tabLogic:
+				logicPanel()
 			case tabConsole:
 				consolePanel()
 			default:
@@ -145,6 +155,9 @@ func boardBadges(b *BoardDef) []string {
 	if b.WS2812 != nil {
 		out = append(out, "WS2812B")
 	}
+	if len(b.Analog) > 0 {
+		out = append(out, "ANALOG")
+	}
 	if len(out) == 0 {
 		out = append(out, "GPIO")
 	}
@@ -154,6 +167,7 @@ func boardBadges(b *BoardDef) []string {
 func selectBoard(b *BoardDef) {
 	selectedBoard = b
 	activeTab = tabBoard
+	scopePins = b.ScopePins()
 	emu.SetBoard(b)
 	RequestNextFrame()
 }
@@ -183,6 +197,10 @@ func setTab(name string) {
 		if selectedBoard != nil && selectedBoard.WS2812 != nil {
 			activeTab = tabWS
 		}
+	case "scope", "osc":
+		activeTab = tabScope
+	case "logic", "la":
+		activeTab = tabLogic
 	case "console":
 		activeTab = tabConsole
 	}
@@ -204,6 +222,8 @@ func tabsBar() {
 		if selectedBoard.WS2812 != nil {
 			tabButton("LEDs", tabWS)
 		}
+		tabButton("Scope", tabScope)
+		tabButton("Logic", tabLogic)
 		tabButton("Console", tabConsole)
 		Filler(1)
 		if selectedBoard.Description != "" {
@@ -581,6 +601,588 @@ func ethPanel(snap MachineState) {
 	})
 }
 
+// ---- Oscilloscope tab ----
+
+// scopeCandidates are the pins offered as scope channels: the GPIO header
+// pins most demos use plus the four ADC inputs.
+var scopeCandidates = []int{
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+	10, 11, 12, 13, 14, 15, 26, 27, 28, 29,
+}
+
+func scopePanel() {
+	pins, samples, interval := emu.ScopeData()
+	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("Oscilloscope", FontSize(16), FontWeight(700))
+			if interval > 0 {
+				rate := 150e6 / float64(interval)
+				window := float64(len(samples)) / rate * 1000
+				Label(fmt.Sprintf("%.1f MS/s · %.1f ms window · 0–3.3 V", rate/1e6, window), FontSize(12))
+			}
+			Filler(1)
+			Label("click pins to add or remove traces", FontSize(11), TextColor(220, 6, 60, 1))
+		})
+		Container(Attrs(Gap(3)), func() {
+			for row := 0; row < 2; row++ {
+				Container(Attrs(Row, Gap(4)), func() {
+					for col := 0; col < 10; col++ {
+						i := row*10 + col
+						if i < len(scopeCandidates) {
+							scopePinChip(scopeCandidates[i])
+						}
+					}
+				})
+			}
+		})
+		Container(Attrs(Row, Gap(6), Expand), func() {
+			Container(Attrs(FixWidth(38), FixHeight(420)), func() {
+				Label("3.3 V", FontSize(10))
+				Filler(1)
+				Label("0 V", FontSize(10))
+			})
+			Container(Attrs(Grow(1), Expand, Clip), func() {
+				img := scopeImage(pins, samples, 1100, 420)
+				id := UseImage("scope", img)
+				ImageViewAt(id, Vec2{1100, 420})
+			})
+		})
+		Container(Attrs(Row, CrossMid, Gap(16), Pad2(2, 0)), func() {
+			if len(pins) == 0 {
+				Label("no channels selected", FontSize(11), TextColor(220, 5, 55, 1))
+				return
+			}
+			for i, p := range pins {
+				if i >= 8 {
+					break
+				}
+				c := paletteAt(i)
+				h, s, l, a := rgbToHSLA(c)
+				Container(Attrs(FixSize(10, 10), Corners(5), Background(h, s, l, a)), func() {})
+				Label(fmt.Sprintf("GP%d", p), FontSize(12), FontWeight(600))
+				v := float32(0)
+				if len(samples) > 0 {
+					v = samples[len(samples)-1].V[i]
+				}
+				Label(fmt.Sprintf("%.2f V", v), FontSize(11))
+			}
+		})
+	})
+}
+
+func scopePinChip(pin int) {
+	idx := -1
+	for i, p := range scopePins {
+		if p == pin {
+			idx = i
+			break
+		}
+	}
+	ContainerWithKey(fmt.Sprintf("scope-%d", pin), Attrs(Row, CrossMid, Gap(5), Pad2(3, 7), Corners(4),
+		Background(220, 12, 12, 1), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+		st := ProcessButtonEvents(false)
+		if st.Clicked {
+			toggleScopePin(pin)
+		}
+		if st.Hovered {
+			ModAttrs(Background(220, 12, 17, 1))
+		}
+		if idx >= 0 {
+			c := paletteAt(idx)
+			h, s, l, a := rgbToHSLA(c)
+			ModAttrs(Background(220, 10, 19, 1), BorderColor(h, s*0.5, 35, 1))
+			Container(Attrs(FixSize(8, 8), Corners(4), Background(h, s, l, a)), func() {})
+		}
+		Label(fmt.Sprintf("GP%d", pin), FontSize(11))
+	})
+}
+
+func toggleScopePin(pin int) {
+	for i, p := range scopePins {
+		if p == pin {
+			scopePins = append(scopePins[:i], scopePins[i+1:]...)
+			emu.SetScopePins(scopePins)
+			return
+		}
+	}
+	if len(scopePins) >= 8 {
+		return
+	}
+	scopePins = append(scopePins, pin)
+	emu.SetScopePins(scopePins)
+}
+
+// ---- Logic analyzer tab ----
+
+func logicPanel() {
+	pins, samples, interval := emu.LogicData()
+	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("Logic analyzer", FontSize(16), FontWeight(700))
+			if interval > 0 {
+				rate := 150e6 / float64(interval)
+				window := float64(len(samples)) / rate * 1000
+				Label(fmt.Sprintf("%.1f MS/s · %.1f ms window", rate/1e6, window), FontSize(12))
+			}
+			Filler(1)
+			Label("hardware taps + pin traces", FontSize(11), TextColor(220, 6, 60, 1))
+		})
+		Container(Attrs(Grow(1), Expand, Clip, Viewport), func() {
+			ScrollOnInput()
+			ScrollBars()
+			Container(Attrs(Gap(10)), func() {
+				l := selectedBoard.Logic
+				if l == nil {
+					Label("No protocols configured for this board (add a logic: block to ui/boards.yaml).",
+						FontSize(12), TextColor(220, 6, 60, 1))
+				} else {
+					if l.UART != nil {
+						logicUART(pins, samples, interval, l.UART)
+					}
+					if l.I2C != nil {
+						logicI2C(pins, samples, l.I2C)
+					}
+					if l.SPI != nil {
+						logicSPI(pins, samples, l.SPI)
+					}
+				}
+				logicUSB()
+			})
+		})
+	})
+}
+
+func logicUART(pins []int, samples []devices.TraceSample, interval uint64, d *UARTDevice) {
+	lines := []logicLine{{Pin: d.TX, Label: "TX", Color: paletteAt(0)}}
+	if d.RX != d.TX {
+		lines = append(lines, logicLine{Pin: d.RX, Label: "RX", Color: paletteAt(1)})
+	}
+
+	var wavePins []int
+	var waveSamples []devices.TraceSample
+	decoded := ""
+	if events := uartTXEvents(d.Bus); len(events) > 0 {
+		decoded = uartEventText(events)
+		wavePins, waveSamples = uartWave(events, d.Baud)
+		lines = []logicLine{{Pin: d.TX, Label: "TX", Color: paletteAt(0)}}
+	} else {
+		// Fallback for PIO/bit-banged UART: decode the pin trace itself.
+		if ch := channelOf(pins, d.TX); ch >= 0 && interval > 0 {
+			frames := devices.DecodeUART(samples, ch, float64(d.Baud), 150e6/float64(interval))
+			decoded = uartFrameText(frames, samples)
+		}
+		wavePins, waveSamples = pins, samples
+	}
+	logicSection("UART", fmt.Sprintf("%d baud · TX GP%d", d.Baud, d.TX), wavePins, waveSamples, lines, decoded)
+}
+
+func uartTXEvents(bus int) []UARTEvent {
+	all := emu.UARTEvents()
+	var out []UARTEvent
+	for _, ev := range all {
+		if ev.Bus == bus && !ev.In {
+			out = append(out, ev)
+		}
+	}
+	if len(out) > 16 {
+		out = out[len(out)-16:]
+	}
+	return out
+}
+
+func uartEventText(events []UARTEvent) string {
+	if len(events) == 0 {
+		return "no frames"
+	}
+	raw := make([]byte, len(events))
+	for i, ev := range events {
+		raw[i] = ev.Data
+	}
+	return strconv.QuoteToASCII(string(raw))
+}
+
+// uartWave synthesises a TX waveform from captured bytes so the analyzer can
+// show the wire even though the UART model drives the console directly.
+func uartWave(events []UARTEvent, baud int) ([]int, []devices.TraceSample) {
+	const interval = 75 // 2 MHz, matching the logic trace
+	bit := int(math.Round(150e6 / float64(interval) / float64(baud)))
+	if bit < 1 {
+		bit = 1
+	}
+	var samples []devices.TraceSample
+	add := func(volts float32, n int) {
+		for i := 0; i < n; i++ {
+			var s devices.TraceSample
+			s.T = uint64(len(samples)) * interval
+			s.V[0] = volts
+			samples = append(samples, s)
+		}
+	}
+	add(3.3, bit) // idle
+	for _, ev := range events {
+		add(0, bit) // start
+		for b := 0; b < 8; b++ {
+			if ev.Data&(1<<uint(b)) != 0 {
+				add(3.3, bit)
+			} else {
+				add(0, bit)
+			}
+		}
+		add(3.3, bit)     // stop
+		add(3.3, bit/2+1) // idle between bytes
+	}
+	return []int{0}, samples
+}
+
+func logicI2C(pins []int, samples []devices.TraceSample, d *I2CDevice) {
+	lines := []logicLine{
+		{Pin: d.SDA, Label: "SDA", Color: paletteAt(0)},
+		{Pin: d.SCL, Label: "SCL", Color: paletteAt(1)},
+	}
+	var decoded string
+	wavePins, waveSamples := pins, samples
+	if ev := emu.I2CEvents(); len(ev) > 0 {
+		decoded = i2cEventText(ev, d.Bus)
+		wavePins, waveSamples = i2cWave(ev, d.Bus, lines)
+	}
+	if decoded == "" {
+		sda, scl := channelOf(pins, d.SDA), channelOf(pins, d.SCL)
+		if sda >= 0 && scl >= 0 {
+			decoded = i2cText(devices.DecodeI2C(samples, sda, scl))
+		}
+	}
+	logicSection("I2C", fmt.Sprintf("SDA GP%d · SCL GP%d", d.SDA, d.SCL), wavePins, waveSamples, lines, decoded)
+}
+
+// i2cWave synthesises the SDA/SCL waveform from tapped I2C phases.
+func i2cWave(events []I2CEvent, bus int, lines []logicLine) ([]int, []devices.TraceSample) {
+	const half = 25
+	var samples []devices.TraceSample
+	pins := []int{lines[0].Pin, lines[1].Pin}
+	add := func(n int, sda, scl bool) {
+		for i := 0; i < n; i++ {
+			var s devices.TraceSample
+			s.T = uint64(len(samples)) * 75
+			if sda {
+				s.V[0] = 3.3
+			}
+			if scl {
+				s.V[1] = 3.3
+			}
+			samples = append(samples, s)
+		}
+	}
+	phase := func(b byte, nack bool) {
+		for bit := 7; bit >= 0; bit-- {
+			sda := b&(1<<uint(bit)) != 0
+			add(half, sda, false)
+			add(half, sda, true)
+		}
+		add(half, nack, false)
+		add(half, nack, true)
+	}
+	add(half*2, true, true) // idle
+	for _, e := range events {
+		if e.Bus != bus {
+			continue
+		}
+		switch e.Kind {
+		case "addr":
+			add(half, false, true) // START: SDA falls while SCL high
+			phase(e.Addr<<1, false)
+		case "data":
+			phase(e.Data, !e.Ack)
+		case "read":
+			phase(e.Data, false)
+		case "stop":
+			add(half, false, false)
+			add(half, false, true)
+			add(half, true, true) // STOP
+		}
+	}
+	add(half*2, true, true)
+	return pins, samples
+}
+
+func i2cEventText(events []I2CEvent, bus int) string {
+	var tx []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			tx = append(tx, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, e := range events {
+		if e.Bus != bus {
+			continue
+		}
+		switch e.Kind {
+		case "addr":
+			flush()
+			fmt.Fprintf(&cur, "S %02x", e.Addr)
+		case "data":
+			if e.Ack {
+				fmt.Fprintf(&cur, " %02x A", e.Data)
+			} else {
+				fmt.Fprintf(&cur, " %02x N", e.Data)
+			}
+		case "read":
+			fmt.Fprintf(&cur, " %02xR N", e.Data)
+		case "stop":
+			cur.WriteString(" P")
+			flush()
+		}
+	}
+	flush()
+	if len(tx) > 6 {
+		tx = tx[len(tx)-6:]
+	}
+	if len(tx) == 0 {
+		return "no transactions"
+	}
+	return strings.Join(tx, "   ")
+}
+
+func logicSPI(pins []int, samples []devices.TraceSample, d *SPIDevice) {
+	lines := []logicLine{
+		{Pin: d.SCK, Label: "SCK", Color: paletteAt(0)},
+		{Pin: d.MOSI, Label: "MOSI", Color: paletteAt(1)},
+	}
+	if miso := d.MISOPin(); miso >= 0 {
+		lines = append(lines, logicLine{Pin: miso, Label: "MISO", Color: paletteAt(2)})
+	}
+	if cs := d.CSPin(); cs >= 0 {
+		lines = append(lines, logicLine{Pin: cs, Label: "CS", Color: paletteAt(3)})
+	}
+	var decoded string
+	var waveSamples []devices.TraceSample
+	var wavePins []int
+	events := spiBusEvents(d.Bus)
+	if len(events) > 0 {
+		decoded = spiEventText(events)
+		wavePins, waveSamples = spiWave(events, lines)
+	} else {
+		sck, mosi := channelOf(pins, d.SCK), channelOf(pins, d.MOSI)
+		if sck >= 0 && mosi >= 0 {
+			frames := devices.DecodeSPI(samples, sck, mosi, channelOf(pins, d.MISOPin()), channelOf(pins, d.CSPin()))
+			decoded = spiText(frames)
+		}
+		wavePins, waveSamples = pins, samples
+	}
+	logicSection("SPI", fmt.Sprintf("SCK GP%d · MOSI GP%d", d.SCK, d.MOSI), wavePins, waveSamples, lines, decoded)
+}
+
+func spiBusEvents(bus int) []SPIEvent {
+	all := emu.SPIEvents()
+	var out []SPIEvent
+	for _, ev := range all {
+		if ev.Bus == bus {
+			out = append(out, ev)
+		}
+	}
+	if len(out) > 8 {
+		out = out[len(out)-8:]
+	}
+	return out
+}
+
+func spiEventText(events []SPIEvent) string {
+	if len(events) == 0 {
+		return "no frames"
+	}
+	var b strings.Builder
+	for _, ev := range events {
+		fmt.Fprintf(&b, "MOSI %02x MISO %02x  ", ev.TX, ev.RX)
+	}
+	return b.String()
+}
+
+// spiWave synthesises a mode-0 SPI transfer for the captured bytes.
+func spiWave(events []SPIEvent, lines []logicLine) ([]int, []devices.TraceSample) {
+	const interval = 75
+	var samples []devices.TraceSample
+	ch := map[string]int{}
+	pins := make([]int, len(lines))
+	for i, line := range lines {
+		ch[line.Label] = i
+		pins[i] = line.Pin
+	}
+	add := func(n int, f func(s *devices.TraceSample)) {
+		for i := 0; i < n; i++ {
+			var s devices.TraceSample
+			s.T = uint64(len(samples)) * interval
+			f(&s)
+			samples = append(samples, s)
+		}
+	}
+	if c, ok := ch["CS"]; ok {
+		add(30, func(s *devices.TraceSample) { s.V[c] = 3.3 })
+	}
+	for _, ev := range events {
+		if c, ok := ch["CS"]; ok {
+			add(30, func(s *devices.TraceSample) { s.V[c] = 0 })
+		}
+		for bit := 7; bit >= 0; bit-- {
+			mo := ev.TX&(1<<uint(bit)) != 0
+			mi := ev.RX&(1<<uint(bit)) != 0
+			add(30, func(s *devices.TraceSample) {
+				if v, ok := ch["MOSI"]; ok && mo {
+					s.V[v] = 3.3
+				}
+				if v, ok := ch["MISO"]; ok && mi {
+					s.V[v] = 3.3
+				}
+			})
+			add(30, func(s *devices.TraceSample) {
+				if v, ok := ch["SCK"]; ok {
+					s.V[v] = 3.3
+				}
+				if v, ok := ch["MOSI"]; ok && mo {
+					s.V[v] = 3.3
+				}
+				if v, ok := ch["MISO"]; ok && mi {
+					s.V[v] = 3.3
+				}
+			})
+		}
+		if c, ok := ch["CS"]; ok {
+			add(30, func(s *devices.TraceSample) { s.V[c] = 3.3 })
+		}
+	}
+	return pins, samples
+}
+
+func logicSection(name, subtitle string, pins []int, samples []devices.TraceSample, lines []logicLine, decoded string) {
+	Container(Attrs(Gap(3)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label(name, FontSize(13), FontWeight(700))
+			Label(subtitle, FontSize(11))
+			Filler(1)
+			for _, line := range lines {
+				h, s, l, a := rgbToHSLA(line.Color)
+				Container(Attrs(FixSize(8, 8), Corners(4), Background(h, s, l, a)), func() {})
+				Label(fmt.Sprintf("%s GP%d", line.Label, line.Pin), FontSize(10))
+			}
+		})
+		h := 18*len(lines) + 8
+		Container(Attrs(Clip), func() {
+			img := logicImage(pins, samples, lines, 1100, h)
+			id := UseImage("logic-"+name, img)
+			ImageViewAt(id, Vec2{1100, float32(h)})
+		})
+		Container(Attrs(Clip), func() {
+			Label(decoded, Fonts(Monospace...), FontSize(11), TextColor(140, 12, 80, 1))
+		})
+	})
+}
+
+func uartFrameText(frames []devices.UARTFrame, samples []devices.TraceSample) string {
+	if len(frames) == 0 {
+		return "no frames"
+	}
+	base := samples[0].T
+	start := len(frames) - 16
+	if start < 0 {
+		start = 0
+	}
+	var b strings.Builder
+	for _, f := range frames[start:] {
+		if f.Data >= 0x20 && f.Data < 0x7f {
+			fmt.Fprintf(&b, "%.2fms %q  ", float64(f.T-base)/150e3, string(rune(f.Data)))
+		} else {
+			fmt.Fprintf(&b, "%.2fms %02x  ", float64(f.T-base)/150e3, f.Data)
+		}
+	}
+	return b.String()
+}
+
+func i2cText(events []devices.I2CEvent) string {
+	if len(events) == 0 {
+		return "no transactions"
+	}
+	var tx []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			tx = append(tx, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, e := range events {
+		switch e.Kind {
+		case devices.I2CStart:
+			flush()
+			cur.WriteString("S")
+		case devices.I2CAddr:
+			rw := "W"
+			if e.Read {
+				rw = "R"
+			}
+			fmt.Fprintf(&cur, " %02x%s", e.Byte>>1, rw)
+		case devices.I2CData:
+			fmt.Fprintf(&cur, " %02x", e.Byte)
+		case devices.I2CAck:
+			if e.Ack {
+				cur.WriteString(" A")
+			} else {
+				cur.WriteString(" N")
+			}
+		case devices.I2CStop:
+			cur.WriteString(" P")
+			flush()
+		}
+	}
+	flush()
+	if len(tx) > 6 {
+		tx = tx[len(tx)-6:]
+	}
+	return strings.Join(tx, "   ")
+}
+
+func spiText(frames []devices.SPIFrame) string {
+	if len(frames) == 0 {
+		return "no frames"
+	}
+	start := len(frames) - 12
+	if start < 0 {
+		start = 0
+	}
+	var b strings.Builder
+	for _, f := range frames[start:] {
+		fmt.Fprintf(&b, "MOSI %02x MISO %02x  ", f.MOSI, f.MISO)
+	}
+	return b.String()
+}
+
+func logicUSB() {
+	events := emu.USBEvents()
+	Container(Attrs(Gap(3)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("USB CDC", FontSize(13), FontWeight(700))
+			Filler(1)
+			Label(fmt.Sprintf("%d transfers", len(events)), FontSize(11))
+		})
+		if len(events) == 0 {
+			Label("no CDC traffic", FontSize(11), TextColor(220, 5, 55, 1))
+			return
+		}
+		base := events[0].Cycle
+		start := len(events) - 10
+		if start < 0 {
+			start = 0
+		}
+		for _, ev := range events[start:] {
+			dir := "IN "
+			if !ev.In {
+				dir = "OUT"
+			}
+			Label(fmt.Sprintf("%7.2fms %s %q", float64(ev.Cycle-base)/150e3, dir, string(ev.Data)),
+				Fonts(Monospace...), FontSize(11), TextColor(140, 12, 80, 1))
+		}
+	})
+}
+
 func consolePanel() {
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		FocusOnClick()
@@ -667,7 +1269,7 @@ func main() {
 	png := flag.String("png", "", "render one settled frame to PATH and exit")
 	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time before rendering")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth, ws, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth, ws, scope, logic, console")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
 	flag.Parse()
 

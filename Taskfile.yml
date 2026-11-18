@@ -41,6 +41,7 @@ tasks:
       - firmware:cores
       - firmware:echo
       - firmware:w6300
+      - firmware:protocols
     cmds:
       - go vet ./...
       - go test ./...
@@ -133,6 +134,30 @@ tasks:
     deps: [build, firmware:echo]
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/echo.elf -seconds 0.5 -input "$(printf "hello rp2350\r")"'
+
+  firmware:uart:
+    desc: Build the UART logic-analyzer demo
+    dir: firmware/uart
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/uart.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/uart.elf .'
+
+  firmware:protocols:
+    desc: Build the UART/I2C/SPI logic-analyzer demo
+    dir: firmware/protocols
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/protocols.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/protocols.elf .'
 
   firmware:cores:
     desc: Build the multicore scheduler test (-scheduler=cores)
@@ -231,6 +256,19 @@ tasks:
     dir: ui
     cmds:
       - go run . --board pico2-ws2812 '../{{.BUILD}}/ws2812.elf'
+
+  ui:scope:
+    desc: Run the UI oscilloscope demo (1 kHz sine on GP26)
+    dir: ui
+    cmds:
+      - go run . --board pico2-analog --tab scope
+
+  ui:logic:
+    desc: Run the UI logic analyzer with the UART/I2C/SPI demo
+    deps: [firmware:protocols]
+    dir: ui
+    cmds:
+      - go run . --board pico2-analog --tab logic '../{{.BUILD}}/protocols.elf'
 
   ui:w6300:
     desc: Run the UI with the W6300 example on the POE-ETH board
