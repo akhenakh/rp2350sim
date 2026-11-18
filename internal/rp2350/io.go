@@ -12,6 +12,12 @@ type PinState struct {
 	ExtLevel uint64
 	ExtValid uint64
 
+	// Analog holds externally applied voltages (0..3.3 V) per pin;
+	// AnalogValid marks them. A valid analog source overrides the digital
+	// level when the chip is not driving the pin.
+	Analog      [48]float32
+	AnalogValid [48]bool
+
 	// OnChange is called when a pin's resolved level changes.
 	OnChange func(pin int, level bool)
 }
@@ -27,6 +33,7 @@ func (p *PinState) reset() {
 	p.OE = 0
 	p.ExtLevel = 0
 	p.ExtValid = 0
+	p.AnalogValid = [48]bool{}
 	p.PullUp = [48]bool{}
 	p.PullDown = [48]bool{}
 	for i := range p.Func {
@@ -47,6 +54,51 @@ func (p *PinState) Level(pin int) bool {
 		return p.ExtLevel&bit != 0
 	}
 	return p.PullUp[pin]
+}
+
+// Voltage returns the pin voltage for the scope: the chip's driven level when
+// it owns the pin, otherwise the external analog value, otherwise the resolved
+// digital level as 0 or 3.3 V.
+func (p *PinState) Voltage(pin int) float32 {
+	if pin < 0 || pin > 47 {
+		return 0
+	}
+	bit := uint64(1) << uint(pin)
+	if p.OE&bit != 0 {
+		if p.Out&bit != 0 {
+			return 3.3
+		}
+		return 0
+	}
+	if p.AnalogValid[pin] {
+		return p.Analog[pin]
+	}
+	if p.Level(pin) {
+		return 3.3
+	}
+	return 0
+}
+
+// SetAnalog applies an external voltage to a pin (0..3.3 V).
+func (p *PinState) SetAnalog(pin int, volts float32) {
+	if pin < 0 || pin > 47 {
+		return
+	}
+	if volts < 0 {
+		volts = 0
+	}
+	if volts > 3.3 {
+		volts = 3.3
+	}
+	p.Analog[pin] = volts
+	p.AnalogValid[pin] = true
+}
+
+// ClearAnalog removes an external analog source.
+func (p *PinState) ClearAnalog(pin int) {
+	if pin >= 0 && pin < 48 {
+		p.AnalogValid[pin] = false
+	}
 }
 
 // SetExternal drives a pin from the board model.

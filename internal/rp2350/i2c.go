@@ -112,6 +112,9 @@ func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 		case i2cTAR:
 			i.addr = uint8(v & 0x7F)
 			i.write = i.write[:0]
+			if c.OnI2C != nil {
+				c.OnI2C(i.id, c.Cycles, "addr", i.addr, 0, true)
+			}
 		case i2cDATA:
 			i.dataCmd(v)
 		case i2cINTRMASK:
@@ -159,23 +162,35 @@ func (i *i2cBlock) dataCmd(v uint32) {
 	read := v&(1<<8) != 0
 	stop := v&(1<<9) != 0
 	if read {
-		i.rx = append(i.rx, i.readByte())
+		b := i.readByte()
+		i.rx = append(i.rx, b)
+		if i.chip.OnI2C != nil {
+			i.chip.OnI2C(i.id, i.chip.Cycles, "read", i.addr, b, true)
+		}
 		if len(i.rx) >= 16 {
 			i.raw |= 1 << 5 // RX_FULL
 		}
 	} else {
 		b := byte(v)
-		if dev, ok := i.devices[i.addr]; ok {
+		ok := true
+		if dev, found := i.devices[i.addr]; found {
 			dev.Write(b)
 		} else {
 			// NACK: no target.
+			ok = false
 			i.block.regs[i2cTXABRTSRC/4] = 1 << 3 // ABRT_7B_ADDR_NOACK
 			i.raw |= i2cTXAbrt
+		}
+		if i.chip.OnI2C != nil {
+			i.chip.OnI2C(i.id, i.chip.Cycles, "data", i.addr, b, ok)
 		}
 	}
 	i.raw |= i2cTXEmpty
 	if stop {
 		i.raw |= i2cStopDet
+		if i.chip.OnI2C != nil {
+			i.chip.OnI2C(i.id, i.chip.Cycles, "stop", i.addr, 0, true)
+		}
 	}
 }
 

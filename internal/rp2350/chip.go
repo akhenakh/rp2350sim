@@ -71,6 +71,10 @@ type Chip struct {
 	// OnDMA reports DMA transfers (diagnostics).
 	OnDMA func(ch int, readAddr, writeAddr, count, ctrl uint32)
 
+	// OnI2C reports hardware I2C phases for the logic analyzer. kind is
+	// "addr", "data", "read", "stop" or "nack".
+	OnI2C func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool)
+
 	// OnSPI0 and OnSPI1 are called for every byte clocked out; they return the
 	// byte clocked in on MISO.
 	OnSPI0 func(tx byte) byte

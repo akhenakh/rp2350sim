@@ -24,6 +24,13 @@ func newADC(c *Chip) *adcBlock {
 			return a.block.regs[0] | adcCSReady, true
 		case 0x04: // RESULT
 			ch := (a.block.regs[0] >> adcCSAinsel) & 7
+			// ADC0-3 are GP26-29; an attached analog source (the signal
+			// generator or a board model) takes precedence over the static
+			// channel value.
+			if ch < 4 && c.Pins.AnalogValid[26+int(ch)] {
+				v := c.Pins.Voltage(26 + int(ch))
+				return uint32(float32(0x0FFF) * v / 3.3), true
+			}
 			return uint32(a.values[ch]), true
 		}
 		return 0, false
