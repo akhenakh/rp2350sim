@@ -30,7 +30,12 @@ var (
 	pendingBoardPicker bool
 	activeTab          = tabBoard
 	scopePins          []int
+	scopeZoom          = 1.0
+	scopeRangeIdx      = 4
 )
+
+// Scope voltage ranges in volts (full scale, from 0).
+var scopeRanges = []float32{0.5, 1, 1.65, 2, 3.3, 5}
 
 // Tabs. Board and Console always exist; the others appear only when the
 // selected board defines the device.
@@ -54,6 +59,13 @@ func funcName(f uint8) string {
 		return "—"
 	}
 	return fmt.Sprintf("F%d", f)
+}
+
+func abs(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func levelName(high bool) string {
@@ -612,16 +624,49 @@ var scopeCandidates = []int{
 
 func scopePanel() {
 	pins, samples, interval := emu.ScopeData()
+	vmax := scopeRanges[scopeRangeIdx]
+	visible := samples
+	if scopeZoom > 1 && len(samples) > 0 {
+		n := len(samples) / int(scopeZoom)
+		if n < 4 {
+			n = 4
+		}
+		visible = samples[len(samples)-n:]
+	}
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label("Oscilloscope", FontSize(16), FontWeight(700))
 			if interval > 0 {
 				rate := 150e6 / float64(interval)
-				window := float64(len(samples)) / rate * 1000
-				Label(fmt.Sprintf("%.1f MS/s · %.1f ms window · 0–3.3 V", rate/1e6, window), FontSize(12))
+				window := float64(len(visible)) / rate * 1000
+				Label(fmt.Sprintf("%.1f MS/s · %.2f ms window", rate/1e6, window), FontSize(12))
 			}
 			Filler(1)
 			Label("click pins to add or remove traces", FontSize(11), TextColor(220, 6, 60, 1))
+		})
+		Container(Attrs(Row, CrossMid, Gap(6)), func() {
+			Label("Time", FontSize(11), FontWeight(600))
+			if Button(NoIcon, "Zoom −") && scopeZoom > 1 {
+				scopeZoom /= 2
+			}
+			if Button(NoIcon, "Zoom +") && scopeZoom < 64 {
+				scopeZoom *= 2
+			}
+			Label(fmt.Sprintf("%.0f×", scopeZoom), FontSize(11))
+			Container(Attrs(FixWidth(14)), func() {})
+			if Button(NoIcon, "Range −") && scopeRangeIdx > 0 {
+				scopeRangeIdx--
+			}
+			Label(fmt.Sprintf("0–%s V", strconv.FormatFloat(float64(vmax), 'g', 3, 32)), FontSize(11))
+			if Button(NoIcon, "Range +") && scopeRangeIdx < len(scopeRanges)-1 {
+				scopeRangeIdx++
+			}
+			if scopeZoom != 1 || scopeRangeIdx != 4 {
+				if Button(NoIcon, "Reset") {
+					scopeZoom = 1
+					scopeRangeIdx = 4
+				}
+			}
 		})
 		Container(Attrs(Gap(3)), func() {
 			for row := 0; row < 2; row++ {
@@ -637,14 +682,18 @@ func scopePanel() {
 		})
 		Container(Attrs(Row, Gap(6), Expand), func() {
 			Container(Attrs(FixWidth(38), FixHeight(420)), func() {
-				Label("3.3 V", FontSize(10))
+				Label(fmt.Sprintf("%s V", strconv.FormatFloat(float64(vmax), 'g', 3, 32)), FontSize(10))
 				Filler(1)
 				Label("0 V", FontSize(10))
 			})
 			Container(Attrs(Grow(1), Expand, Clip), func() {
-				img := scopeImage(pins, samples, 1100, 420)
+				w := GetContentWidth()
+				if w < 200 {
+					w = 1100 // first frame, before layout has resolved
+				}
+				img := scopeImage(pins, visible, int(w), 420, vmax)
 				id := UseImage("scope", img)
-				ImageViewAt(id, Vec2{1100, 420})
+				ImageViewAt(id, Vec2{w, 420})
 			})
 		})
 		Container(Attrs(Row, CrossMid, Gap(16), Pad2(2, 0)), func() {
@@ -661,8 +710,8 @@ func scopePanel() {
 				Container(Attrs(FixSize(10, 10), Corners(5), Background(h, s, l, a)), func() {})
 				Label(fmt.Sprintf("GP%d", p), FontSize(12), FontWeight(600))
 				v := float32(0)
-				if len(samples) > 0 {
-					v = samples[len(samples)-1].V[i]
+				if len(visible) > 0 {
+					v = visible[len(visible)-1].V[i]
 				}
 				Label(fmt.Sprintf("%.2f V", v), FontSize(11))
 			}
@@ -730,7 +779,7 @@ func logicPanel() {
 		Container(Attrs(Grow(1), Expand, Clip, Viewport), func() {
 			ScrollOnInput()
 			ScrollBars()
-			Container(Attrs(Gap(10)), func() {
+			Container(Attrs(Gap(10), Expand), func() {
 				l := selectedBoard.Logic
 				if l == nil {
 					Label("No protocols configured for this board (add a logic: block to ui/boards.yaml).",
@@ -1054,7 +1103,7 @@ func spiWave(events []SPIEvent, lines []logicLine) ([]int, []devices.TraceSample
 }
 
 func logicSection(name, subtitle string, pins []int, samples []devices.TraceSample, lines []logicLine, decoded string) {
-	Container(Attrs(Gap(3)), func() {
+	Container(Attrs(Gap(3), Expand), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label(name, FontSize(13), FontWeight(700))
 			Label(subtitle, FontSize(11))
@@ -1066,10 +1115,14 @@ func logicSection(name, subtitle string, pins []int, samples []devices.TraceSamp
 			}
 		})
 		h := 18*len(lines) + 8
-		Container(Attrs(Clip), func() {
-			img := logicImage(pins, samples, lines, 1100, h)
+		Container(Attrs(Clip, Expand), func() {
+			w := GetContentWidth()
+			if w < 200 {
+				w = 1100 // first frame, before layout has resolved
+			}
+			img := logicImage(pins, samples, lines, int(w), h)
 			id := UseImage("logic-"+name, img)
-			ImageViewAt(id, Vec2{1100, float32(h)})
+			ImageViewAt(id, Vec2{w, float32(h)})
 		})
 		Container(Attrs(Clip), func() {
 			Label(decoded, Fonts(Monospace...), FontSize(11), TextColor(140, 12, 80, 1))
@@ -1268,6 +1321,10 @@ func updateConsole(snap MachineState) {
 func main() {
 	png := flag.String("png", "", "render one settled frame to PATH and exit")
 	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time before rendering")
+	winW := flag.Int("width", 1280, "window width in points")
+	winH := flag.Int("height", 820, "window height in points")
+	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
+	rFlag := flag.Float64("scope-range", 3.3, "initial scope voltage range in volts")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth, ws, scope, logic, console")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
@@ -1300,6 +1357,16 @@ func main() {
 		emu.Load(fwPath)
 	}
 	setTab(*tabName)
+	if *zFlag >= 1 {
+		scopeZoom = *zFlag
+	}
+	best := 0
+	for i, v := range scopeRanges {
+		if abs(float64(v)-*rFlag) < abs(float64(scopeRanges[best])-*rFlag) {
+			best = i
+		}
+	}
+	scopeRangeIdx = best
 
 	if *runTo > 0 {
 		emu.SetRunning(false)
@@ -1310,12 +1377,12 @@ func main() {
 		// The system font scan runs in the background; wait so headless text
 		// is not missing from the snapshot.
 		WaitForSystemFontScan()
-		if err := RenderToPNG(*png, 1280, 820, RootView); err != nil {
+		if err := RenderToPNG(*png, *winW, *winH, RootView); err != nil {
 			fmt.Println("render failed:", err)
 		}
 		return
 	}
 
-	app.SetupWindow("rp2350sim", 1280, 820)
+	app.SetupWindow("rp2350sim", *winW, *winH)
 	app.Run(RootView)
 }

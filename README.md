@@ -143,9 +143,12 @@ the tabs accordingly:
 - **Ethernet**: only for W5500/W6300 boards; shows the socket log.
 - **LEDs**: only for WS2812B boards; shows the last latched colours.
 - **Scope** (always): an oscilloscope with up to 8 pin traces in different
-  colours, 0–3.3 V, a 1 MHz sampler and a ~16 ms window. Click header pins to
-  add or remove traces. `analog:` board entries drive a generated waveform
-  (the `pico2-analog` board puts a 1 kHz sine on GP26).
+  colours, a 1 MHz sampler and a ~16 ms window. Click header pins to add or
+  remove traces. **Zoom −/+** changes the time base from 1× to 64×;
+  **Range −/+** selects the full-scale voltage (0.5, 1, 1.65, 2, 3.3 or 5 V);
+  **Reset** restores 1× and 3.3 V. The view grows with the window width.
+  `analog:` board entries drive a generated waveform (the `pico2-analog` board
+  puts a 1 kHz sine on GP26).
 - **Logic** (always): a logic analyzer. Board `logic:` blocks declare UART,
   I2C and SPI pins/baud; hardware transfers are tapped from the peripheral
   models (so high-speed buses do not need pin-level sampling), and PIO or
@@ -157,9 +160,11 @@ the tabs accordingly:
 
 The toolbar shows the selected board, a **Board…** button to return to the
 picker, the firmware path field, **Open…** (OS dialog), run/pause and reset.
-`--board ID` skips the picker, and `--tab board|lcd|eth|ws|console` chooses the
-initial tab. `--png out.png --run 0.6 firmware.elf` renders a headless
-snapshot after advancing virtual time.
+`--board ID` skips the picker, `--tab board|lcd|eth|ws|scope|logic|console`
+chooses the initial tab, and `--width`/`--height` set the window size. For
+headless scope snapshots, `--scope-zoom` and `--scope-range` set the initial
+time base and voltage range. `--png out.png --run 0.6 firmware.elf` renders a
+headless snapshot after advancing virtual time.
 
 ## Tests
 
