@@ -116,6 +116,33 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/ws2812.elf -seconds 1.7 -ws2812 0'
 
+  firmware:w6300:
+    desc: Build the W6300 Ethernet example (RP2350-POE-ETH wiring)
+    dir: firmware/w6300
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/w6300.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/w6300.elf .'
+
+  run:w6300:
+    desc: Run the W6300 example against a host TCP echo/UDP sink and TCP server
+    deps: [build, firmware:w6300]
+    cmds:
+      - |
+        go build -o {{.BUILD}}/ethhost ./tools/ethhost
+        {{.BUILD}}/ethhost > {{.BUILD}}/ethhost.log 2>&1 &
+        HOST=$!
+        trap 'kill $HOST 2>/dev/null' EXIT
+        sleep 0.5
+        {{.EMU}} -fw {{.BUILD}}/w6300.elf -seconds 4 -w6300
+        kill $HOST 2>/dev/null || true
+        cat {{.BUILD}}/ethhost.log
+
   run:lcd:
     desc: Run the ST7789 example in the emulator (LCD attached, backlight traced)
     deps: [build, firmware:lcd]

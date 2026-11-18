@@ -6,8 +6,8 @@ A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodif
 Status: runs real TinyGo programs end to end — package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
 DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), an ST7789 display and
-W5500 Ethernet. The Cortex-M33 interpreter is checked against QEMU instruction by
-instruction.
+W5500 Ethernet, plus a W6300 driver for the PoE board. The Cortex-M33
+interpreter is checked against QEMU instruction by instruction.
 
 ## Layout
 
@@ -17,10 +17,11 @@ ui/                 Shirei desktop UI (separate module)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
                     UART, SPI, DMA, PWM, ADC, I2C
-internal/devices/   external chips (ST7789 display, W5500 Ethernet)
+internal/devices/   external chips (ST7789 display, W5500/W6300 Ethernet)
 internal/firmware/  UF2 / ELF / raw image loaders
-firmware/           example TinyGo programs (blinky, lcd)
-tools/              corpus generator
+drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
+firmware/           example TinyGo programs (blinky, lcd, piotest, ws2812, w6300)
+tools/              corpus generator, host Ethernet test server
 Taskfile.yml        build/run/test tasks
 ```
 
@@ -38,6 +39,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
+| `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
 | `task ui:blinky` (`ui`) | desktop UI with the blinky firmware loaded |
 | `task ui:lcd` | desktop UI with the ST7789 example loaded |
@@ -66,6 +68,8 @@ Useful flags:
 | `-steps` | cycle budget instead of `-seconds` |
 | `-trace-pins 25,15` | log GPIO level changes |
 | `-lcd` | attach an ST7789 on SPI1 (RP2350-GEEK wiring) |
+| `-eth` | attach a W5500 on SPI0 CS GP17 (stock TinyGo driver) |
+| `-w6300` | attach a W6300 on SPI0 CS GP17 (PoE board) |
 | `-lcd-png path.png` | write the LCD framebuffer at exit |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | print a summary of unmapped accesses at exit |
@@ -80,7 +84,8 @@ Useful flags:
 | `-cpuprofile PATH` | write a CPU profile |
 
 Diagnostics environment variables: `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`,
-`RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`.
+`RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`,
+`RP2350SIM_W6300_LOG`.
 
 ## Ethernet
 
@@ -96,7 +101,19 @@ implemented in this TinyGo build; construct the address explicitly:
 conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.IP{127,0,0,1}, Port: 8080})
 ```
 
-See `.operator/specs/hardware.md` for the W6300 difference and the roadmap.
+`-w6300` attaches the W6300 instead, the controller actually fitted to the
+RP2350-POE-ETH. Its TinyGo driver lives in `drivers/w6300` (a separate module so
+the firmware build pulls only the driver), and `firmware/w6300` exercises a TCP
+client, a UDP datagram and a TCP server. `task run:w6300` starts
+`tools/ethhost` (echo, UDP sink, server check) and runs the firmware against it.
+
+The W6300 frame is `instruction, address hi, address lo, dummy, data`; its
+register map and status/interrupt registers differ from the W5500, and it has
+32 KB of TX and RX buffer per direction. UDP firmware must call the driver's
+`Socket`/`Bind`/`Connect`/`Send` directly: TinyGo's `net.DialUDP` loses the
+destination address on its second netdev call in this build (TCP is fine).
+
+See `.operator/specs/hardware.md` for the board wiring and the remaining gaps.
 
 ## Desktop UI
 
@@ -133,8 +150,7 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 
 - The emulated CPU is the Cortex-M33 (thumbv8m.main); there is no RISC-V path.
   TinyGo `-target=pico2` emits Arm, and that is the contract.
-- Missing peripherals: W6300 Ethernet (the PoE board's controller), USB host,
-  PSRAM.
+- Missing peripherals: USB host, PSRAM.
 - The TinyGo build under test does not launch core 1, so the emulator runs
   single-core in practice.
 - Time is virtual and one instruction is one cycle; throughput is about 160M

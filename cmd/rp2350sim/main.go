@@ -38,6 +38,7 @@ func main() {
 		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
 		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
@@ -88,7 +89,22 @@ func main() {
 			fmt.Fprintf(os.Stderr, "dma ch=%d read=%#08x write=%#08x count=%d ctrl=%#08x\n", ch, ra, wa, count, ctrl)
 		}
 	}
+	if *ethFlag && *w6300Flag {
+		fmt.Fprintln(os.Stderr, "-eth and -w6300 are mutually exclusive")
+		os.Exit(2)
+	}
+
 	var w5500 *devices.W5500
+	var w6300 *devices.W6300
+	if *w6300Flag {
+		w6300 = devices.NewW6300(c, 17)
+		c.CycleHooks = append(c.CycleHooks, w6300.Tick)
+		if os.Getenv("RP2350SIM_W6300_LOG") != "" {
+			w6300.Logf = func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}
+		}
+	}
 	if *ethFlag {
 		w5500 = devices.NewW5500(c, 17)
 		c.CycleHooks = append(c.CycleHooks, w5500.Tick)
@@ -109,6 +125,9 @@ func main() {
 
 	spiLog := os.Getenv("RP2350SIM_SPI_LOG") != ""
 	c.OnSPI0 = func(tx byte) byte {
+		if w6300 != nil {
+			return w6300.Transfer(tx)
+		}
 		if w5500 != nil {
 			return w5500.Transfer(tx)
 		}

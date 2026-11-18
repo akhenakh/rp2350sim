@@ -23,7 +23,7 @@ type W6300 struct {
 	mu sync.Mutex
 
 	common  [0x4210]byte
-	sockReg [8][0x230]byte
+	sockReg [8][0x400]byte
 	txMem   [8][]byte
 	rxMem   [8][]byte
 	socks   [8]*w6sock
@@ -51,6 +51,7 @@ type w6sock struct {
 	txReadPtr  uint16
 	txWritePtr uint16
 	rxReadPtr  uint16
+	rxReadAck  uint16
 	rxWritePtr uint16
 	rxPending  int
 
@@ -275,12 +276,11 @@ func (w *W6300) writeCommon(off uint16, b byte) {
 		w.common[w6IR] &^= b
 		return
 	case w6SYCR0:
+		// RST is active low: 0 resets the chip, 1 returns to normal
+		// operation.
 		w.common[w6SYCR0] = b
-		if b&0x80 != 0 {
-			// Software reset.
-			for i := range w.socks {
-				w.closeSocket(i)
-			}
+		if b&0x80 == 0 {
+			w.softwareReset()
 		}
 		return
 	}
@@ -423,9 +423,17 @@ func (w *W6300) command(n int, cmd byte) {
 	case w6CmdSend:
 		w.send(n)
 	case w6CmdRecv:
-		s.rxPending = 0
-		s.rxReadPtr = s.rxWritePtr
-		s.irq &^= w6IrRecv
+		// Only the bytes the host actually consumed (by advancing
+		// Sn_RX_RD) leave the RX buffer.
+		consumed := int(s.rxReadPtr - s.rxReadAck)
+		if consumed > s.rxPending {
+			consumed = s.rxPending
+		}
+		s.rxPending -= consumed
+		s.rxReadAck = s.rxReadPtr
+		if s.rxPending == 0 {
+			s.irq &^= w6IrRecv
+		}
 	}
 }
 
@@ -502,6 +510,10 @@ func (w *W6300) listen(n int) {
 	w.logf("w6300: sock%d listen %s", n, addr)
 	go func() {
 		conn, err := ln.Accept()
+		// The host listener owns the port while waiting; the accepted
+		// connection no longer needs it, and the driver typically
+		// re-listens on another hardware socket right away.
+		ln.Close()
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if s.gen != gen {
@@ -513,6 +525,7 @@ func (w *W6300) listen(n int) {
 		if err != nil {
 			return
 		}
+		s.listener = nil
 		s.conn = conn
 		s.status = w6StatusEstablished
 		s.irq |= w6IrCon
@@ -656,6 +669,18 @@ func (w *W6300) closeSocket(n int) {
 	s.status = w6StatusClosed
 	s.irq = 0
 	s.txReadPtr, s.txWritePtr = 0, 0
-	s.rxReadPtr, s.rxWritePtr = 0, 0
+	s.rxReadPtr, s.rxReadAck, s.rxWritePtr = 0, 0, 0
 	s.rxPending = 0
+}
+
+// softwareReset restores the register defaults after SYCR0[RST] is driven low.
+func (w *W6300) softwareReset() {
+	for i := range w.socks {
+		w.closeSocket(i)
+		w.sockReg[i] = [0x400]byte{}
+		w.sockReg[i][w6SnTXBSR] = 4
+		w.sockReg[i][w6SnRXBSR] = 4
+	}
+	w.common[w6SYCR0] = 0
+	w.common[w6SYCR1] = 0x80
 }
