@@ -304,12 +304,16 @@ func (d *CH9120) Tick() {
 		data := d.txBuf
 		d.txBuf = nil
 		if d.udp != nil && d.udpPeer != nil {
-			if _, err := d.udp.WriteToUDP(data, d.udpPeer); err != nil {
+			if n, err := d.udp.WriteToUDP(data, d.udpPeer); err != nil {
 				d.logf("ch9120: udp send: %v", err)
+			} else {
+				d.logf("ch9120: tx udp %d bytes", n)
 			}
 		} else if d.conn != nil {
-			if _, err := d.conn.Write(data); err != nil {
+			if n, err := d.conn.Write(data); err != nil {
 				d.logf("ch9120: tcp send: %v", err)
+			} else {
+				d.logf("ch9120: tx tcp %d bytes", n)
 			}
 		}
 	} else if len(d.txBuf) > 64*1024 {
@@ -408,6 +412,7 @@ func (d *CH9120) readTCP(gen uint64, conn net.Conn) {
 			d.mu.Lock()
 			if d.gen == gen {
 				d.send(append([]byte(nil), buf[:n]...))
+				d.logf("ch9120: rx tcp %d bytes", n)
 			}
 			d.mu.Unlock()
 		}
@@ -452,6 +457,7 @@ func (d *CH9120) serveUDP(gen uint64, port uint16) {
 			if d.gen == gen {
 				d.udpPeer = peer
 				d.send(append([]byte(nil), buf[:n]...))
+				d.logf("ch9120: rx udp %d bytes", n)
 			}
 			d.mu.Unlock()
 		}
@@ -489,6 +495,7 @@ func (d *CH9120) dialUDP(gen uint64, addr string) {
 			d.mu.Lock()
 			if d.gen == gen {
 				d.send(append([]byte(nil), buf[:n]...))
+				d.logf("ch9120: rx udp %d bytes", n)
 			}
 			d.mu.Unlock()
 		}

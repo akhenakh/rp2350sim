@@ -168,7 +168,7 @@ resets in the UI but the headless runner is one process.
 |---|---|
 | `RP2350SIM_ETH_LOG` | W5500 socket activity on stderr |
 | `RP2350SIM_W6300_LOG` | W6300 socket activity on stderr |
-| `RP2350SIM_CH9120_LOG` | CH9120 configuration/socket activity on stderr |
+| `RP2350SIM_CH9120_LOG` | CH9120 configuration and socket transfers (tx/rx sizes) on stderr |
 | `RP2350SIM_SPI_LOG` | log every SPI byte |
 | `RP2350SIM_DMA_LOG` | log DMA transfers |
 | `RP2350SIM_LCD_LOG` | ST7789 command decoding |
