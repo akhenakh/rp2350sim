@@ -69,6 +69,19 @@ boards:
       spi: 0
       cs: 17
 
+  - id: rp2350-eth
+    name: Waveshare RP2350-ETH (CH9120)
+    description: CH9120 UART-to-Ethernet on UART1 GP20/21 · CFG0 GP18 · RST GP19 · TCPCS GP17
+    scope: [20, 21]
+    logic:
+      uart: { bus: 1, tx: 21, rx: 20, baud: 115200 }
+    ethernet:
+      kind: ch9120
+      uart: 1
+      cfg0: 18
+      rst: 19
+      tcpcs: 17
+
   - id: pico2-w5500
     name: RP2350 + W5500
     description: Breadboard W5500 Ethernet on SPI0 (CS GP17)
@@ -88,6 +101,18 @@ boards:
       - uart: 1
     logic:
       uart: { bus: 1, tx: 4, rx: 5, baud: 115200 }
+
+  - id: pico2w
+    name: Raspberry Pi Pico 2 W (virtual Wi-Fi)
+    description: Host-backed virtual Wi-Fi netdev · CYW43439 and Bluetooth are not emulated
+    scope: [20, 21]
+    wifi:
+      uart: 1
+      cfg0: 18
+      rst: 19
+      tcpcs: 17
+    logic:
+      uart: { bus: 1, tx: 21, rx: 20, baud: 115200 }
 
   - id: pico2-analog
     name: RP2350 + analog + protocols

@@ -39,6 +39,7 @@ func main() {
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
 		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
 		inputStr   = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
 		serialTCP  = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
@@ -150,6 +151,16 @@ func main() {
 	c.OnUART0 = func(b byte) { os.Stdout.Write([]byte{b}) }
 	c.OnUART1 = func(b byte) { os.Stdout.Write([]byte{b}) }
 	c.SetUSBCDC(func(b []byte) { os.Stdout.Write(b) })
+
+	if *ch9120Flag {
+		ch := devices.NewCH9120(c, 1, 18, 19, 17)
+		if os.Getenv("RP2350SIM_CH9120_LOG") != "" {
+			ch.Logf = func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}
+		}
+		ch.Attach()
+	}
 
 	var bridges []*devices.UARTBridge
 	if *serialTCP != "" {

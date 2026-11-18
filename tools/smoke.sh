@@ -72,6 +72,26 @@ contains "W6300 TCP server" 'server check 1: reply "pong\n"' "$log"
 contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
 
 # --- UI headless snapshot ---------------------------------------------------
+# --- CH9120 UART-to-Ethernet ----------------------------------------------
+if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
+	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
+	exit 1
+fi
+"$BUILD/ethhost" >"$BUILD/ethhost-ch9120.log" 2>&1 &
+chhost=$!
+sleep 0.5
+out=$("$EMU" -fw "$BUILD/ch9120.elf" -seconds 1.5 -ch9120 2>&1)
+kill "$chhost" 2>/dev/null || true
+contains "CH9120 TCP echo" "echo: hello ch9120" "$out"
+
+# --- virtual Wi-Fi netdev --------------------------------------------------
+"$BUILD/ethhost" >"$BUILD/ethhost-wifi.log" 2>&1 &
+wifihost=$!
+sleep 0.5
+out=$("$EMU" -fw "$BUILD/wifi.elf" -seconds 3 -ch9120 2>&1)
+kill "$wifihost" 2>/dev/null || true
+contains "virtual Wi-Fi netdev" "wifi echo: hello wifi" "$out"
+
 # --- UART over TCP ----------------------------------------------------------
 "$EMU" -fw "$BUILD/serialbridge.elf" -seconds 4 -serial-tcp 1:127.0.0.1:0 \
 	>"$BUILD/serial.log" 2>&1 &

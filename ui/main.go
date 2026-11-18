@@ -175,6 +175,9 @@ func boardBadges(b *BoardDef) []string {
 	if len(b.Serial) > 0 {
 		out = append(out, "TCP SERIAL")
 	}
+	if b.Wifi != nil {
+		out = append(out, "WIFI (VIRTUAL)")
+	}
 	if len(out) == 0 {
 		out = append(out, "GPIO")
 	}
@@ -206,8 +209,8 @@ func setTab(name string) {
 		if selectedBoard != nil && selectedBoard.LCD != nil {
 			activeTab = tabLCD
 		}
-	case "eth", "ethernet":
-		if selectedBoard != nil && selectedBoard.Ethernet != nil {
+	case "eth", "ethernet", "wifi", "wi-fi":
+		if selectedBoard != nil && (selectedBoard.Ethernet != nil || selectedBoard.Wifi != nil) {
 			activeTab = tabEth
 		}
 	case "ws", "leds", "ws2812":
@@ -235,6 +238,9 @@ func tabsBar() {
 		}
 		if selectedBoard.Ethernet != nil {
 			tabButton("Ethernet", tabEth)
+		}
+		if selectedBoard.Wifi != nil {
+			tabButton("Wi-Fi", tabEth)
 		}
 		if selectedBoard.WS2812 != nil {
 			tabButton("LEDs", tabWS)
@@ -594,13 +600,27 @@ func rgbToHSLA(c color.RGBA) (float32, float32, float32, float32) {
 func ethPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
-			Label("Ethernet", FontSize(16), FontWeight(700))
-			if d := selectedBoard.Ethernet; d != nil {
-				Label(fmt.Sprintf("%s · SPI%d · CS GP%d", strings.ToUpper(d.Kind), d.SPI, d.CS), FontSize(12))
+			title := "Ethernet"
+			if selectedBoard.Wifi != nil {
+				title = "Wi-Fi"
+			}
+			Label(title, FontSize(16), FontWeight(700))
+			if w := selectedBoard.Wifi; w != nil {
+				Label(fmt.Sprintf("Wi-Fi (virtual) · UART%d · host-backed serial netdev", w.UART), FontSize(12))
+			} else if d := selectedBoard.Ethernet; d != nil {
+				if d.Kind == "ch9120" {
+					Label(fmt.Sprintf("CH9120 · UART%d · CFG0 GP%d · RST GP%d · TCPCS GP%d",
+						d.UART, d.CFG0, d.RST, d.TCPCS), FontSize(12))
+				} else {
+					Label(fmt.Sprintf("%s · SPI%d · CS GP%d", strings.ToUpper(d.Kind), d.SPI, d.CS), FontSize(12))
+				}
 			}
 			Filler(1)
 			Label(fmt.Sprintf("%d events", len(snap.EthLog)), FontSize(11))
 		})
+		if snap.EthStatus != "" {
+			Label(snap.EthStatus, FontSize(11), TextColor(140, 40, 65, 1))
+		}
 		Container(Attrs(Grow(1), Expand, Gap(2), Pad(10), Corners(6), Clip,
 			Background(220, 12, 8, 1), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
 			if len(snap.EthLog) == 0 {
@@ -1376,7 +1396,7 @@ func main() {
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth, ws, scope, logic, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, scope, logic, console")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
 	flag.Parse()
 

@@ -41,6 +41,7 @@ type MachineState struct {
 	WSFrames   uint64
 	WSEnabled  bool
 	EthKind    string
+	EthStatus  string
 	EthLog     []string
 	Serial     []string
 }
@@ -65,6 +66,7 @@ type Emu struct {
 	ws      *devices.WS2812B
 	ethKind string
 	ethLog  []string
+	ch9120  *devices.CH9120
 
 	scopePins  []int
 	scope      *devices.Trace
@@ -320,6 +322,7 @@ func (e *Emu) resetChip() {
 	c := rp2350.New()
 	e.lcd = nil
 	e.ws = nil
+	e.ch9120 = nil
 	e.ethKind = ""
 	e.ethLog = e.ethLog[:0]
 	e.frozen = frozenLogic{}
@@ -359,27 +362,46 @@ func (e *Emu) resetChip() {
 				spiAttached[0] = true
 			}
 		}
+		if w := b.Wifi; w != nil {
+			ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)
+			ch.Logf = logEth
+			ch.OnByte = func(v byte) {
+				e.addUART(w.UART, c.Cycles, false, v)
+			}
+			ch.Attach()
+			e.ch9120 = ch
+			e.ethKind = "wifi"
+		}
 		if d := b.Ethernet; d != nil {
 			e.ethKind = d.Kind
-			var transfer func(byte) byte
-			var tick func()
-			if d.Kind == "w6300" {
-				eth := devices.NewW6300(c, d.CS)
-				eth.Logf = logEth
-				transfer, tick = eth.Transfer, eth.Tick
+			if d.Kind == "ch9120" {
+				ch := devices.NewCH9120(c, d.UART, d.CFG0, d.RST, d.TCPCS)
+				ch.Logf = logEth
+				ch.OnByte = func(v byte) {
+					e.addUART(d.UART, c.Cycles, false, v)
+				}
+				e.ch9120 = ch
 			} else {
-				eth := devices.NewW5500(c, d.CS)
-				eth.Logf = logEth
-				transfer, tick = eth.Transfer, eth.Tick
+				var transfer func(byte) byte
+				var tick func()
+				if d.Kind == "w6300" {
+					eth := devices.NewW6300(c, d.CS)
+					eth.Logf = logEth
+					transfer, tick = eth.Transfer, eth.Tick
+				} else {
+					eth := devices.NewW5500(c, d.CS)
+					eth.Logf = logEth
+					transfer, tick = eth.Transfer, eth.Tick
+				}
+				if d.SPI == 1 {
+					c.OnSPI1 = recordSPI(1, transfer)
+					spiAttached[1] = true
+				} else {
+					c.OnSPI0 = recordSPI(0, transfer)
+					spiAttached[0] = true
+				}
+				c.CycleHooks = append(c.CycleHooks, tick)
 			}
-			if d.SPI == 1 {
-				c.OnSPI1 = recordSPI(1, transfer)
-				spiAttached[1] = true
-			} else {
-				c.OnSPI0 = recordSPI(0, transfer)
-				spiAttached[0] = true
-			}
-			c.CycleHooks = append(c.CycleHooks, tick)
 		}
 		if d := b.WS2812; d != nil {
 			e.ws = devices.NewWS2812B(c, d.Pin)
@@ -455,6 +477,12 @@ func (e *Emu) resetChip() {
 		appendConsole(b)
 		e.addUSBEvent(c.Cycles, true, b)
 	})
+
+	// The module owns UART1, so it must install its hook after the console
+	// callbacks above.
+	if e.ch9120 != nil {
+		e.ch9120.Attach()
+	}
 
 	e.attachSerial(c, e.board)
 
@@ -660,6 +688,9 @@ func (e *Emu) Snapshot() MachineState {
 		s.WSFrames = e.ws.Frames()
 	}
 	s.EthKind = strings.ToUpper(e.ethKind)
+	if e.ch9120 != nil {
+		s.EthStatus = e.ch9120.Status()
+	}
 	s.EthLog = append([]string(nil), e.ethLog...)
 	s.Serial = append([]string(nil), e.bridgeErrs...)
 	for _, br := range e.bridges {

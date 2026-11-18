@@ -47,6 +47,10 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:lcd` | desktop UI on the `geek` board with the ST7789 example |
 | `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
 | `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
+| `task run:ch9120` | CH9120 UART-to-Ethernet example against the host echo |
+| `task ui:ch9120` | desktop UI on the `rp2350-eth` board with the CH9120 example |
+| `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
+| `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
 | `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
@@ -77,6 +81,7 @@ Useful flags:
 | `-lcd` | attach an ST7789 on SPI1 (RP2350-GEEK wiring) |
 | `-eth` | attach a W5500 on SPI0 CS GP17 (stock TinyGo driver) |
 | `-w6300` | attach a W6300 on SPI0 CS GP17 (PoE board) |
+| `-ch9120` | attach a CH9120 on UART1 GP20/21 (RP2350-ETH board) |
 | `-lcd-png path.png` | write the LCD framebuffer at exit |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | print a summary of unmapped accesses at exit |
@@ -114,6 +119,31 @@ RP2350-POE-ETH. Its TinyGo driver lives in `drivers/w6300` (a separate module so
 the firmware build pulls only the driver), and `firmware/w6300` exercises a TCP
 client, a UDP datagram and a TCP server. `task run:w6300` starts
 `tools/ethhost` (echo, UDP sink, server check) and runs the firmware against it.
+
+The non-PoE **RP2350-ETH** uses a CH9120 UART-to-Ethernet module instead:
+UART1 on GP21 (TX) / GP20 (RX), CFG0 GP18, RST GP19 and TCPCS GP17. It is a
+transparent serial bridge configured with the CH9120 command set; the
+`drivers/ch9120` module configures TCP/UDP client/server mode and then
+`Read`/`Write` exchange raw socket bytes. `task run:ch9120` connects to the host
+echo server, and the UI's Ethernet tab shows its state and events.
+
+### Pico 2 W (virtual Wi-Fi)
+
+The Pico 2 W's Infineon CYW43439 is **not** modelled: its gSPI protocol,
+firmware download and Bluetooth stack are out of the emulator's scope. Instead
+the `pico2w` board exposes a **virtual Wi-Fi netdev** backed by the host
+network stack, reusing the CH9120 serial-module model. Firmware uses
+`drivers/ch9120`'s `NetDevice` (a one-socket `netdev`) and calls
+`netdev.UseNetdev`, so TinyGo's `net` package works normally:
+
+```go
+nd := ch9120.NewNetDevice(dev, base)
+netdev.UseNetdev(nd)
+conn, _ := net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.IPv4(127,0,0,1), Port: 9000})
+```
+
+`task run:wifi` shows `wifi echo: hello wifi`; the UI's Wi-Fi tab shows the
+module state. Bluetooth is not emulated; see `.operator/specs/hardware.md`.
 
 The W6300 frame is `instruction, address hi, address lo, dummy, data`; its
 register map and status/interrupt registers differ from the W5500, and it has

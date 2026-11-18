@@ -23,12 +23,22 @@ type BoardDef struct {
 	Scope       []int          `yaml:"scope"`
 	Logic       *LogicDevice   `yaml:"logic"`
 	Serial      []SerialDevice `yaml:"serial"`
+	Wifi        *WifiDevice    `yaml:"wifi"`
 }
 
 // SerialDevice exposes a hardware UART over TCP.
 type SerialDevice struct {
 	UART   int    `yaml:"uart"`
 	Listen string `yaml:"listen"`
+}
+
+// WifiDevice is the virtual Wi-Fi transport: a host-backed serial netdev.
+// The CYW43439 radio itself is not emulated.
+type WifiDevice struct {
+	UART  int `yaml:"uart"`
+	CFG0  int `yaml:"cfg0"`
+	RST   int `yaml:"rst"`
+	TCPCS int `yaml:"tcpcs"`
 }
 
 type LCDDevice struct {
@@ -41,9 +51,15 @@ type LCDDevice struct {
 }
 
 type EthDevice struct {
-	Kind string `yaml:"kind"` // "w5500" or "w6300"
+	Kind string `yaml:"kind"` // "w5500", "w6300" or "ch9120"
 	SPI  int    `yaml:"spi"`
 	CS   int    `yaml:"cs"`
+
+	// CH9120 wiring.
+	UART  int `yaml:"uart"`
+	CFG0  int `yaml:"cfg0"`
+	RST   int `yaml:"rst"`
+	TCPCS int `yaml:"tcpcs"`
 }
 
 type LEDDevice struct {
@@ -190,11 +206,15 @@ func LoadBoards() ([]BoardDef, error) {
 			case "":
 				d.Kind = "w5500"
 			case "w5500", "w6300":
+				if err := validSPI(spi, d.SPI, "ethernet"); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+			case "ch9120":
+				if d.UART < 0 || d.UART > 1 {
+					return nil, fmt.Errorf("boards: %s: ch9120 uart must be 0 or 1", b.ID)
+				}
 			default:
 				return nil, fmt.Errorf("boards: %s: unknown ethernet kind %q", b.ID, d.Kind)
-			}
-			if err := validSPI(spi, d.SPI, "ethernet"); err != nil {
-				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
 		for _, sd := range b.Serial {
@@ -202,6 +222,11 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: serial uart must be 0 or 1", b.ID)
 			}
 			// An empty listen address means 127.0.0.1:0 (kernel-chosen port).
+		}
+		if w := b.Wifi; w != nil {
+			if w.UART < 0 || w.UART > 1 {
+				return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
+			}
 		}
 	}
 	return file.Boards, nil

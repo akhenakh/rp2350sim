@@ -43,6 +43,8 @@ tasks:
       - firmware:w6300
       - firmware:protocols
       - firmware:serialbridge
+      - firmware:ch9120
+      - firmware:wifi
     cmds:
       - go vet ./...
       - go test ./...
@@ -148,6 +150,58 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/uart.elf .'
+
+  firmware:ch9120:
+    desc: Build the CH9120 UART-Ethernet example
+    dir: firmware/ch9120
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/ch9120.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/ch9120.elf .'
+
+  run:ch9120:
+    desc: Run the CH9120 example against the host TCP echo
+    deps: [build, firmware:ch9120]
+    cmds:
+      - |
+        go build -o {{.BUILD}}/ethhost ./tools/ethhost
+        {{.BUILD}}/ethhost > {{.BUILD}}/ethhost-ch9120.log 2>&1 &
+        HOST=$!
+        trap 'kill $HOST 2>/dev/null' EXIT
+        sleep 0.5
+        {{.EMU}} -fw {{.BUILD}}/ch9120.elf -seconds 1.5 -ch9120
+        kill $HOST 2>/dev/null || true
+
+  firmware:wifi:
+    desc: Build the virtual Wi-Fi netdev example
+    dir: firmware/wifi
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/wifi.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/wifi.elf .'
+
+  run:wifi:
+    desc: Run the virtual Wi-Fi example against the host TCP echo
+    deps: [build, firmware:wifi]
+    cmds:
+      - |
+        go build -o {{.BUILD}}/ethhost ./tools/ethhost
+        {{.BUILD}}/ethhost > {{.BUILD}}/ethhost-wifi.log 2>&1 &
+        HOST=$!
+        trap 'kill $HOST 2>/dev/null' EXIT
+        sleep 0.5
+        {{.EMU}} -fw {{.BUILD}}/wifi.elf -seconds 3 -ch9120
+        kill $HOST 2>/dev/null || true
 
   firmware:serialbridge:
     desc: Build the UART1 TCP echo demo
@@ -283,6 +337,20 @@ tasks:
     dir: ui
     cmds:
       - go run . --board pico2-analog --tab logic '../{{.BUILD}}/protocols.elf'
+
+  ui:wifi:
+    desc: Run the UI on the Pico 2 W (virtual Wi-Fi) with the netdev example
+    deps: [firmware:wifi]
+    dir: ui
+    cmds:
+      - go run . --board pico2w '../{{.BUILD}}/wifi.elf'
+
+  ui:ch9120:
+    desc: Run the UI on the RP2350-ETH (CH9120) board with the echo example
+    deps: [firmware:ch9120]
+    dir: ui
+    cmds:
+      - go run . --board rp2350-eth '../{{.BUILD}}/ch9120.elf'
 
   ui:serial:
     desc: Run the UI with UART1 bridged to an automatic TCP port (see Console)
