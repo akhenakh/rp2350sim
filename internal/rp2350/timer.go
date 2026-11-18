@@ -77,10 +77,14 @@ func (t *timerBlock) write(c *Chip, off, v uint32) {
 	case off == 0x04, off == 0x08: // TIMELW / TIMEHR: ignore time writes
 	case off == 0x0C: // TIMELR read alias
 	case off >= 0x10 && off < 0x20:
-		t.alarm[(off-0x10)/4] = v
+		// Writing an alarm value arms it.
+		i := (off - 0x10) / 4
+		t.alarm[i] = v
+		t.armed |= 1 << i
 		t.block.regs[off/4] = v
-	case off == 0x20: // ARMED: write 1 to arm
-		t.armed |= v & 0xF
+		t.block.regs[0x20/4] = t.armed
+	case off == 0x20: // ARMED: write 1 to disarm
+		t.armed &^= v & 0xF
 		t.block.regs[off/4] = t.armed
 	case off == 0x2C:
 		t.dbgPause = v

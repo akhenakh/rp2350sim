@@ -611,7 +611,7 @@ func (c *CPU) exec32System(hw1, hw2 uint16) {
 		case 0x2:
 			c.monitorValid = false
 		}
-	case hw1&0xFFF0 == 0xF360: // BFI
+	case hw1&0xFFF0 == 0xF360 && hw1&0xF != 0xF: // BFI (0xF36F is BFC)
 		rn := uint32(hw1 & 0xF)
 		rd := uint32(hw2 >> 8 & 0xF)
 		lsb := uint32(hw2>>12&7)<<2 | uint32(hw2>>6&3)
@@ -621,7 +621,7 @@ func (c *CPU) exec32System(hw1, hw2 uint16) {
 			mask := uint32((uint64(1) << width) - 1)
 			c.R[rd] = (c.R[rd] &^ (mask << lsb)) | ((c.R[rn] & mask) << lsb)
 		}
-	case hw1&0xFFF0 == 0xF36F: // BFC
+	case hw1 == 0xF36F: // BFC
 		rd := uint32(hw2 >> 8 & 0xF)
 		lsb := uint32(hw2>>12&7)<<2 | uint32(hw2>>6&3)
 		msb := uint32(hw2 & 0x1F)
@@ -710,27 +710,30 @@ func (c *CPU) writeSpecialReg(sysm, v uint32) {
 func (c *CPU) exec32Unary(hw1, hw2 uint16) {
 	op := uint32(hw2>>4) & 0xF
 	rd := uint32(hw2 >> 8 & 0xF)
-	rm := uint32(hw1 & 0xF)
+	rm := uint32(hw2 & 0xF)
 
 	// Register-shift forms (LSL/LSR/ASR/ROR) have zero in hw2[7:4].
+	// hw1[7:5] selects the shift type, hw1[4] is the S bit.
 	if op == 0x0 && hw1&0x00F0 != 0xF0 {
-		rn := uint32(hw2 & 0xF)
-		shiftType := uint32(hw1>>4) & 0xF
-		v := c.R[rn]
-		n := c.R[rm] & 0xFF
+		valueReg := uint32(hw1 & 0xF)
+		shiftReg := uint32(hw2 & 0xF)
+		shiftType := uint32(hw1>>5) & 3
+		setFlags := hw1&0x0010 != 0
+		v := c.R[valueReg]
+		n := c.R[shiftReg] & 0xFF
 		switch shiftType {
-		case 0x0: // LSL
-			c.R[rd] = shiftLSL(c, v, n, n != 0)
-		case 0x2: // LSR
-			c.R[rd] = shiftLSR(c, v, n, n != 0)
-		case 0x4: // ASR
-			c.R[rd] = shiftASR(c, v, n, n != 0)
-		case 0x6: // ROR
-			c.R[rd] = shiftROR(c, v, n, n != 0)
-		default:
-			c.Halt("unimplemented register shift")
+		case 0: // LSL
+			c.R[rd] = shiftLSL(c, v, n, setFlags && n != 0)
+		case 1: // LSR
+			c.R[rd] = shiftLSR(c, v, n, setFlags && n != 0)
+		case 2: // ASR
+			c.R[rd] = shiftASR(c, v, n, setFlags && n != 0)
+		case 3: // ROR
+			c.R[rd] = shiftROR(c, v, n, setFlags && n != 0)
 		}
-		c.setNZ(c.R[rd])
+		if setFlags {
+			c.setNZ(c.R[rd])
+		}
 		return
 	}
 

@@ -244,7 +244,7 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 
 func (c *CPU) exec16Misc(hw uint16) {
 	switch {
-	case hw&0xFF80 == 0xB000: // ADD/SUB SP, immediate
+	case hw&0xFF00 == 0xB000: // ADD/SUB SP, immediate (bit7 is the sign)
 		imm := uint32(hw&0x7F) << 2
 		if hw&0x0080 != 0 {
 			c.R[13] -= imm

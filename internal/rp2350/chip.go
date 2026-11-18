@@ -57,6 +57,9 @@ type Chip struct {
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
 
+	// IRQCount counts delivered exceptions (diagnostics).
+	IRQCount uint64
+
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
 	// OnUnhandled is called for each unmapped access (may be nil).
@@ -126,6 +129,9 @@ func (c *Chip) Step() {
 	c.Cycles++
 
 	c.tickPeripherals()
+	if c.NVIC.NextPending() != 0 {
+		c.IRQCount++
+	}
 
 	if !c.Paused {
 		c.stepCore(c.CPU0)

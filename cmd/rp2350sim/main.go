@@ -31,6 +31,10 @@ func main() {
 		bp2Str     = flag.String("bp2", "", "secondary trace address (hex)")
 		pokeStr    = flag.String("poke", "", "comma separated addr=val pokes (hex) after boot")
 		sampleN    = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
+		msgFlag    = flag.Bool("msg", false, "at a breakpoint, decode r1 as a runtime message string")
+		valStr     = flag.String("watch-val", "", "log writes of this value (hex)")
+		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
+		regStr     = flag.String("watch-reg", "", "log every change of this register")
 	)
 	flag.Parse()
 	if *path == "" {
@@ -73,13 +77,24 @@ func main() {
 
 	if *traceN > 0 {
 		n := 0
+		var from uint64
+		if *fromStr != "" {
+			from, _ = strconv.ParseUint(strings.TrimPrefix(*fromStr, "0x"), 16, 32)
+		}
+		started := from == 0
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
+			if !started {
+				if uint64(pc) != from {
+					return
+				}
+				started = true
+			}
 			if n >= *traceN {
 				return
 			}
 			n++
-			fmt.Printf("%08x %04x r0=%08x r1=%08x r2=%08x r3=%08x sp=%08x lr=%08x\n",
-				pc, hw1, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[13], cpu.R[14])
+			fmt.Printf("%08x %04x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r7=%08x r10=%08x sp=%08x lr=%08x\n",
+				pc, hw1, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[7], cpu.R[10], cpu.R[13], cpu.R[14])
 		}
 	}
 
@@ -95,11 +110,31 @@ func main() {
 	zeros := 0
 	bpHits := 0
 	if *traceLast {
+		watchReg := -1
+		lastReg := uint32(0)
+		if *regStr != "" {
+			n, _ := strconv.Atoi(*regStr)
+			watchReg = n
+		}
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
+			if watchReg >= 0 {
+				if v := cpu.R[watchReg]; v != lastReg {
+					fmt.Printf("r%d: %#08x -> %#08x at pc=%#08x (hw=%04x)\n", watchReg, lastReg, v, pc, hw1)
+					lastReg = v
+				}
+			}
 			if bp2 != 0 && uint64(pc) == bp2 {
 				fmt.Printf("hit2 %#08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r8=%08x sp=%08x lr=%08x\n", pc, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[5], cpu.R[8], cpu.R[13], cpu.R[14])
 			}
 			if bp != 0 && uint64(pc) == bp {
+				if *msgFlag {
+					p, n := c.Read32(cpu.R[1]), c.Read32(cpu.R[1]+4)
+					b := make([]byte, 0, n)
+					for i := uint32(0); i < n && i < 200; i++ {
+						b = append(b, c.Read8(p+i))
+					}
+					fmt.Printf("message: %q\n", string(b))
+				}
 				fmt.Printf("break at %#08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x r8=%08x r9=%08x r10=%08x r11=%08x sp=%08x lr=%08x\n", pc, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[5], cpu.R[6], cpu.R[7], cpu.R[8], cpu.R[9], cpu.R[10], cpu.R[11], cpu.R[13], cpu.R[14])
 				bpHits++
 				if bpHits >= 200 {
@@ -161,6 +196,15 @@ func main() {
 		c.Write32(uint32(a), uint32(v))
 	}
 
+	if *valStr != "" {
+		wv, _ := strconv.ParseUint(strings.TrimPrefix(*valStr, "0x"), 16, 32)
+		c.OnWrite = func(addr uint32, val uint32, size int) {
+			if val == uint32(wv) {
+				fmt.Printf("write %#08x of %#08x size %d pc=%#08x lr=%#08x\n", addr, val, size, c.CPU0.R[15], c.CPU0.R[14])
+			}
+		}
+	}
+
 	if *watchStr != "" {
 		wa, _ := strconv.ParseUint(strings.TrimPrefix(*watchStr, "0x"), 16, 32)
 		c.OnWrite = func(addr uint32, val uint32, size int) {
@@ -203,6 +247,7 @@ func main() {
 	fmt.Printf("cycles=%d (%.3fs virtual) wall=%s\n", c.Cycles, float64(c.Cycles)/150e6, wall)
 	fmt.Printf("core0 pc=%#08x sp=%#08x lr=%#08x\n", c.CPU0.R[15], c.CPU0.R[13], c.CPU0.R[14])
 	fmt.Printf("core1 pc=%#08x sp=%#08x lr=%#08x parked=%v\n", c.CPU1.R[15], c.CPU1.R[13], c.CPU1.R[14], c.CPU1.Parked)
+	fmt.Printf("irq delivered (pending samples): %d\n", c.IRQCount)
 	fmt.Printf("runqueue head=%#08x tail=%#08x sleepQueue=%#08x currentTask=%#08x mainExited=%d\n",
 		c.Read32(0x200017c0), c.Read32(0x200017c4), c.Read32(0x2000179c), c.Read32(0x2000175c), c.Read32(0x20001758))
 	if c.CPU0.Halted {

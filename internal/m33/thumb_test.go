@@ -3,28 +3,74 @@ package m33
 import "testing"
 
 type testBus struct {
-	mem []byte
+	base uint32
+	mem  []byte
 }
 
-func newTestBus() *testBus { return &testBus{mem: make([]byte, 1<<16)} }
+func newTestBus() *testBus { return newTestBusAt(0, 1<<16) }
 
-func (b *testBus) Read8(a uint32) uint8 { return b.mem[a] }
+func newTestBusAt(base uint32, size int) *testBus {
+	return &testBus{base: base, mem: make([]byte, size)}
+}
+
+func (b *testBus) offset(a uint32) (int, bool) {
+	o := int(a - b.base)
+	if o < 0 || o >= len(b.mem) {
+		return 0, false
+	}
+	return o, true
+}
+
+func (b *testBus) Read8(a uint32) uint8 {
+	o, ok := b.offset(a)
+	if !ok {
+		return 0
+	}
+	return b.mem[o]
+}
 func (b *testBus) Read16(a uint32) uint16 {
-	return uint16(b.mem[a]) | uint16(b.mem[a+1])<<8
+	o, ok := b.offset(a)
+	if !ok || o+1 >= len(b.mem) {
+		return 0
+	}
+	return uint16(b.mem[o]) | uint16(b.mem[o+1])<<8
 }
 func (b *testBus) Read32(a uint32) uint32 {
-	return uint32(b.mem[a]) | uint32(b.mem[a+1])<<8 | uint32(b.mem[a+2])<<16 | uint32(b.mem[a+3])<<24
+	o, ok := b.offset(a)
+	if !ok || o+3 >= len(b.mem) {
+		return 0
+	}
+	return uint32(b.mem[o]) | uint32(b.mem[o+1])<<8 | uint32(b.mem[o+2])<<16 | uint32(b.mem[o+3])<<24
 }
-func (b *testBus) Write8(a uint32, v uint8) { b.mem[a] = v }
+func (b *testBus) Write8(a uint32, v uint8) {
+	if o, ok := b.offset(a); ok {
+		b.mem[o] = v
+	}
+}
 func (b *testBus) Write16(a uint32, v uint16) {
-	b.mem[a] = byte(v)
-	b.mem[a+1] = byte(v >> 8)
+	if o, ok := b.offset(a); ok && o+1 < len(b.mem) {
+		b.mem[o] = byte(v)
+		b.mem[o+1] = byte(v >> 8)
+	}
 }
 func (b *testBus) Write32(a uint32, v uint32) {
-	b.mem[a] = byte(v)
-	b.mem[a+1] = byte(v >> 8)
-	b.mem[a+2] = byte(v >> 16)
-	b.mem[a+3] = byte(v >> 24)
+	if o, ok := b.offset(a); ok && o+3 < len(b.mem) {
+		b.mem[o] = byte(v)
+		b.mem[o+1] = byte(v >> 8)
+		b.mem[o+2] = byte(v >> 16)
+		b.mem[o+3] = byte(v >> 24)
+	}
+}
+
+// load copies the program and scratch data for a differential case.
+func (b *testBus) load(c diffCase) {
+	data := c.bytes()
+	for i, v := range data {
+		b.Write8(qemuCodeBase+uint32(i), v)
+	}
+	for addr, v := range c.mem {
+		b.Write32(addr, v)
+	}
 }
 
 // run16 executes one 16-bit instruction and returns the CPU.
