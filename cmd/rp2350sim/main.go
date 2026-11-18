@@ -174,7 +174,7 @@ func main() {
 				}
 			}
 			if bp2 != 0 && uint64(pc) == bp2 {
-				fmt.Printf("hit2 %#08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r8=%08x sp=%08x lr=%08x\n", pc, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[5], cpu.R[8], cpu.R[13], cpu.R[14])
+				fmt.Printf("hit2 %#08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x r8=%08x r9=%08x r10=%08x r11=%08x sp=%08x lr=%08x\n", pc, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[5], cpu.R[6], cpu.R[7], cpu.R[8], cpu.R[9], cpu.R[10], cpu.R[11], cpu.R[13], cpu.R[14])
 			}
 			if bp != 0 && uint64(pc) == bp {
 				if *msgFlag {
@@ -193,18 +193,6 @@ func main() {
 				} else {
 					return
 				}
-			}
-			if pc >= 0x100028a4 || pc < 0x10000010 {
-				fmt.Printf("LEFT IMAGE pc=%#08x lr=%#08x sp=%#08x\n", pc, cpu.R[14], cpu.R[13])
-				start := 0
-				if len(ring) > 40 {
-					start = len(ring) - 40
-				}
-				for _, l := range ring[start:] {
-					fmt.Println("  ", l)
-				}
-				c.Halted = true
-				os.Exit(1)
 			}
 			if hw1 == 0 {
 				zeros++

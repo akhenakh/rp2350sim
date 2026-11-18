@@ -849,23 +849,22 @@ func (c *CPU) smulDSP(hw1, hw2 uint16) {
 		}
 		return int32(int16(v >> 16))
 	}
-	op := uint32(hw1>>4) & 0xF
+	// hw2[5:4] selects the byte pair: BB, BT, TB, TT. Ra == 0b1111 means
+	// "no accumulate" (SMULxy); otherwise the product is added to Ra (SMLAxy).
+	op := uint32(hw2>>4) & 3
 	var a, b int32
 	switch op {
-	case 0x1: // SMULBB
+	case 0: // SMULBB
 		a, b = pick(n, 0), pick(m, 0)
-	case 0x2: // SMULBT
+	case 1: // SMULBT
 		a, b = pick(n, 0), pick(m, 1)
-	case 0x3: // SMULTB
+	case 2: // SMULTB
 		a, b = pick(n, 1), pick(m, 0)
-	case 0x4: // SMULTT
+	case 3: // SMULTT
 		a, b = pick(n, 1), pick(m, 1)
-	default:
-		c.Halt("unimplemented DSP multiply")
-		return
 	}
 	r := a * b
-	if hw2&0xF000 != 0 {
+	if hw2>>12 != 0xF {
 		r += int32(c.R[ra])
 	}
 	c.R[rd] = uint32(r)

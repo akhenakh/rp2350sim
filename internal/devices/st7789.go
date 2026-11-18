@@ -12,16 +12,23 @@ import (
 )
 
 // ST7789 models an ST7789-family SPI TFT controller. It decodes the command
-// stream produced by TinyGo's st7789 driver and keeps a framebuffer.
+// stream produced by TinyGo's st7789 driver and keeps the GRAM contents.
+//
+// The GRAM is addressed the way the controller sees it: CASET selects the
+// column and RASET the row of each pixel. The driver applies rotation through
+// MADCTL rather than by transforming pixel data, so rendering in address order
+// reproduces the logical image the driver intended (MX/MY/MV then only decide
+// how the panel itself scans that memory).
 type ST7789 struct {
 	Chip *rp2350.Chip
 
 	// Wiring: chip-select, data/command and reset pins.
 	CS, DC, RST int
 
+	// GRAM addressable size.
 	Width, Height int
 
-	gram   []uint16 // controller GRAM, Width x Height in logical order
+	gram   []uint16
 	casetX [2]int
 	casetY [2]int
 	x, y   int
@@ -35,8 +42,10 @@ type ST7789 struct {
 	inverted bool
 	on       bool
 	pixels   int
+	// Used window, for rendering.
+	minX, minY, maxX, maxY int
 
-	// Debug prints command and data bytes to stderr.
+	// Debug prints commands (and a few data bytes) to stderr.
 	Debug bool
 	logN  int
 }
@@ -45,32 +54,11 @@ type ST7789 struct {
 func NewST7789(chip *rp2350.Chip, cs, dc, rst int) *ST7789 {
 	d := &ST7789{Chip: chip, CS: cs, DC: dc, RST: rst, Width: 240, Height: 320}
 	d.gram = make([]uint16, d.Width*d.Height)
-	d.casetX = [2]int{0, d.Width - 1}
-	d.casetY = [2]int{0, d.Height - 1}
+	d.reset()
 	return d
 }
 
-// Transfer feeds one byte clocked over SPI and returns the MISO byte.
-func (d *ST7789) Transfer(tx byte) byte {
-	if d.Chip.Pins.Level(d.RST) == false {
-		d.reset()
-		return 0x00
-	}
-	if d.Chip.Pins.Level(d.CS) {
-		return 0x00
-	}
-	if d.Debug && d.logN < 200 {
-		fmt.Fprintf(os.Stderr, "lcd cs=%v dc=%v rst=%v tx=%02x\n", d.Chip.Pins.Level(d.CS), d.Chip.Pins.Level(d.DC), d.Chip.Pins.Level(d.RST), tx)
-		d.logN++
-	}
-	if d.Chip.Pins.Level(d.DC) {
-		d.data(tx)
-	} else {
-		d.command(tx)
-	}
-	return 0x00
-}
-
+// reset restores the post-reset controller state.
 func (d *ST7789) reset() {
 	d.cmd = 0
 	d.params = d.params[:0]
@@ -84,6 +72,33 @@ func (d *ST7789) reset() {
 	}
 	d.casetX = [2]int{0, d.Width - 1}
 	d.casetY = [2]int{0, d.Height - 1}
+	d.minX, d.minY, d.maxX, d.maxY = -1, -1, -1, -1
+}
+
+// Transfer feeds one byte clocked over SPI and returns the MISO byte.
+func (d *ST7789) Transfer(tx byte) byte {
+	if !d.Chip.Pins.Level(d.RST) {
+		d.reset()
+		return 0x00
+	}
+	if d.Chip.Pins.Level(d.CS) {
+		return 0x00
+	}
+	command := !d.Chip.Pins.Level(d.DC)
+	if d.Debug {
+		if command {
+			fmt.Fprintf(os.Stderr, "lcd cmd %02x\n", tx)
+		} else if d.logN < 24 {
+			fmt.Fprintf(os.Stderr, "lcd data %02x\n", tx)
+			d.logN++
+		}
+	}
+	if command {
+		d.command(tx)
+	} else {
+		d.data(tx)
+	}
+	return 0x00
 }
 
 func (d *ST7789) command(c byte) {
@@ -95,8 +110,19 @@ func (d *ST7789) command(c byte) {
 		d.inData = true
 		d.x = d.casetX[0]
 		d.y = d.casetY[0]
+	case 0x2A, 0x2B: // CASET / RASET: data follows
+		d.inData = false
 	case 0x01: // SWRESET
 		d.reset()
+		d.cmd = c
+	case 0x28: // DISPOFF
+		d.on = false
+	case 0x29: // DISPON
+		d.on = true
+	case 0x20: // INVOFF
+		d.inverted = false
+	case 0x21: // INVON
+		d.inverted = true
 	}
 }
 
@@ -109,21 +135,7 @@ func (d *ST7789) data(b byte) {
 		}
 		px := uint16(d.hi)<<8 | uint16(b)
 		d.haveHi = false
-		if d.Debug && (d.pixels < 6 || d.pixels%20000 == 0) {
-			fmt.Fprintf(os.Stderr, "lcd pixel %#04x at %d,%d\n", px, d.x, d.y)
-		}
-		if d.x >= 0 && d.x < d.Width && d.y >= 0 && d.y < d.Height {
-			d.gram[d.y*d.Width+d.x] = px
-			d.pixels++
-		}
-		d.x++
-		if d.x > d.casetX[1] {
-			d.x = d.casetX[0]
-			d.y++
-			if d.y > d.casetY[1] {
-				d.y = d.casetY[0]
-			}
-		}
+		d.putPixel(px)
 		return
 	}
 	d.params = append(d.params, b)
@@ -140,14 +152,34 @@ func (d *ST7789) data(b byte) {
 		}
 	case 0x36: // MADCTL
 		d.madctl = b
-	case 0x21:
-		d.inverted = true
-	case 0x20:
-		d.inverted = false
-	case 0x28:
-		d.on = false
-	case 0x29:
-		d.on = true
+	}
+}
+
+func (d *ST7789) putPixel(px uint16) {
+	x, y := d.x, d.y
+	if x >= 0 && x < d.Width && y >= 0 && y < d.Height {
+		d.gram[y*d.Width+x] = px
+		d.pixels++
+		if d.minX < 0 || x < d.minX {
+			d.minX = x
+		}
+		if d.maxX < x {
+			d.maxX = x
+		}
+		if d.minY < 0 || y < d.minY {
+			d.minY = y
+		}
+		if d.maxY < y {
+			d.maxY = y
+		}
+	}
+	d.x++
+	if d.x > d.casetX[1] {
+		d.x = d.casetX[0]
+		d.y++
+		if d.y > d.casetY[1] {
+			d.y = d.casetY[0]
+		}
 	}
 }
 
@@ -157,16 +189,16 @@ func (d *ST7789) PixelsWritten() int { return d.pixels }
 // On reports whether the display is enabled.
 func (d *ST7789) On() bool { return d.on }
 
-// Framebuffer renders the display contents as RGBA, honouring the MADCTL
-// mirror bits and RGB/BGR order.
+// Framebuffer renders the written window as RGBA, in driver (address) order.
 func (d *ST7789) Framebuffer() *image.RGBA {
-	w, h := d.Width, d.Height
-	if d.madctl&0x20 == 0 { // MV: row/column exchange
-		w, h = h, w
+	if d.minX < 0 {
+		return image.NewRGBA(image.Rect(0, 0, 1, 1))
 	}
+	w := d.maxX - d.minX + 1
+	h := d.maxY - d.minY + 1
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < d.Height; y++ {
-		for x := 0; x < d.Width; x++ {
+	for y := d.minY; y <= d.maxY; y++ {
+		for x := d.minX; x <= d.maxX; x++ {
 			px := d.gram[y*d.Width+x]
 			r := uint8(px>>11) << 3
 			g := uint8(px>>5) << 2
@@ -174,22 +206,10 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 			if d.madctl&0x08 != 0 { // BGR
 				r, b = b, r
 			}
-			if d.inverted {
-				r, g, b = ^r, ^g, ^b
-			}
-			sx, sy := x, y
-			if d.madctl&0x40 != 0 { // MX
-				sx = d.Width - 1 - x
-			}
-			if d.madctl&0x80 != 0 { // MY
-				sy = d.Height - 1 - y
-			}
-			if d.madctl&0x20 == 0 {
-				sx, sy = sy, sx
-				img.SetRGBA(sx, sy, color.RGBA{R: r, G: g, B: b, A: 255})
-			} else {
-				img.SetRGBA(sx, sy, color.RGBA{R: r, G: g, B: b, A: 255})
-			}
+			// INVOFF/INVON compensate for panel polarity; the driver writes
+			// the intended colour into GRAM, so the exported image keeps it
+			// as written.
+			img.SetRGBA(x-d.minX, y-d.minY, color.RGBA{R: r, G: g, B: b, A: 255})
 		}
 	}
 	return img
