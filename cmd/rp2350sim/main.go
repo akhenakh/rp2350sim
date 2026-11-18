@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime/pprof"
 	"strconv"
@@ -15,9 +16,22 @@ import (
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
+	"github.com/akhenakh/rp2350sim/internal/logging"
 	"github.com/akhenakh/rp2350sim/internal/m33"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
+
+// hex renders an address or register value for a log attribute.
+func hex(v uint32) string { return fmt.Sprintf("%#08x", v) }
+
+// regAttrs describes a core's register set for break and trace records.
+func regAttrs(cpu *m33.CPU) []any {
+	attrs := make([]any, 0, 16)
+	for i := range 13 {
+		attrs = append(attrs, slog.String(fmt.Sprintf("r%d", i), hex(cpu.R[i])))
+	}
+	return append(attrs, slog.String("sp", hex(cpu.R[13])), slog.String("lr", hex(cpu.R[14])))
+}
 
 // stringList collects repeatable string flags such as -expect.
 type stringList []string
@@ -47,7 +61,9 @@ func (e *expectSet) add(w string) {
 }
 
 func (e *expectSet) console(b []byte) {
-	os.Stdout.Write(b)
+	// A broken stdout (closed pipe) must not stop the run: the firmware keeps
+	// executing and the exit code still reports the emulator's own verdict.
+	_, _ = os.Stdout.Write(b)
 	if e.all || len(e.wants) == 0 {
 		return
 	}
@@ -116,17 +132,44 @@ func main() {
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
+		logFormat  = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
+		logLevel   = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
 	)
 	var expectFlag stringList
 	flag.Var(&expectFlag, "expect", "fail unless this console output appears (repeatable)")
 	flag.Parse()
+
+	format, err := logging.ParseFormat(*logFormat)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	level, err := logging.ParseLevel(*logLevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	log := logging.New(os.Stderr, format, level)
+	// The legacy RP2350SIM_*_LOG switches select one diagnostic stream. They
+	// predate -log-level, so each enabled stream gets a debug-level logger
+	// instead of raising the level for every component.
+	debugLog := func() *slog.Logger {
+		if level <= slog.LevelDebug {
+			return log
+		}
+		return logging.New(os.Stderr, format, slog.LevelDebug)
+	}
+
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			log.Error("cpu profile", slog.String("path", *cpuProfile), slog.Any("err", err))
 			os.Exit(1)
 		}
-		pprof.StartCPUProfile(f)
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Error("cpu profile", slog.Any("err", err))
+			os.Exit(1)
+		}
 		defer pprof.StopCPUProfile()
 	}
 	if *path == "" {
@@ -136,14 +179,23 @@ func main() {
 
 	img, err := firmware.Load(*path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "load:", err)
+		log.Error("firmware load failed", slog.String("path", *path), slog.Any("err", err))
 		os.Exit(1)
 	}
 	if !*quiet {
-		fmt.Fprintf(os.Stderr, "firmware: %s, %d segment(s), %d bytes, entry=%#08x\n", img.Format, len(img.Segments), img.Size(), img.Entry)
+		log.Info("firmware loaded",
+			slog.String("path", *path),
+			slog.String("format", img.Format),
+			slog.Int("segments", len(img.Segments)),
+			slog.Int("bytes", img.Size()),
+			slog.String("entry", hex(img.Entry)))
 	}
 
 	c := rp2350.New()
+	c.Logger = log
+	if os.Getenv("RP2350SIM_USB_LOG") != "" || os.Getenv("RP2350SIM_PIO_LOG") != "" {
+		c.Logger = debugLog()
+	}
 	for _, seg := range img.Segments {
 		c.LoadSegment(seg.Addr, seg.Data)
 	}
@@ -155,16 +207,24 @@ func main() {
 	var lcd *devices.ST7789
 	if *lcdFlag || *lcdPNG != "" {
 		lcd = devices.NewST7789(c, 9, 8, 12)
-		lcd.Debug = os.Getenv("RP2350SIM_LCD_LOG") != ""
+		if os.Getenv("RP2350SIM_LCD_LOG") != "" {
+			lcd.Logger = debugLog()
+		}
 	}
 
 	if os.Getenv("RP2350SIM_DMA_LOG") != "" {
+		dmaLog := debugLog()
 		c.OnDMA = func(ch int, ra, wa, count, ctrl uint32) {
-			fmt.Fprintf(os.Stderr, "dma ch=%d read=%#08x write=%#08x count=%d ctrl=%#08x\n", ch, ra, wa, count, ctrl)
+			dmaLog.Debug("dma transfer",
+				slog.Int("channel", ch),
+				slog.String("read", hex(ra)),
+				slog.String("write", hex(wa)),
+				slog.Int("count", int(count)),
+				slog.String("ctrl", hex(ctrl)))
 		}
 	}
 	if *ethFlag && *w6300Flag {
-		fmt.Fprintln(os.Stderr, "-eth and -w6300 are mutually exclusive")
+		log.Error("-eth and -w6300 are mutually exclusive")
 		os.Exit(2)
 	}
 
@@ -174,30 +234,28 @@ func main() {
 		w6300 = devices.NewW6300(c, 17)
 		c.CycleHooks = append(c.CycleHooks, w6300.Tick)
 		if os.Getenv("RP2350SIM_W6300_LOG") != "" {
-			w6300.Logf = func(format string, args ...any) {
-				fmt.Fprintf(os.Stderr, format+"\n", args...)
-			}
+			w6300.Logger = debugLog()
 		}
 	}
 	if *ethFlag {
 		w5500 = devices.NewW5500(c, 17)
 		c.CycleHooks = append(c.CycleHooks, w5500.Tick)
 		if os.Getenv("RP2350SIM_ETH_LOG") != "" {
-			w5500.Logf = func(format string, args ...any) {
-				fmt.Fprintf(os.Stderr, format+"\n", args...)
-			}
+			w5500.Logger = debugLog()
 		}
 	}
 
 	if *wsPin >= 0 {
 		ws := devices.NewWS2812B(c, *wsPin)
-		ws.Logf = func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, "ws2812: "+format+"\n", args...)
-		}
+		ws.Logger = log
 		c.CycleHooks = append(c.CycleHooks, ws.Tick)
 	}
 
 	spiLog := os.Getenv("RP2350SIM_SPI_LOG") != ""
+	spiLogger := log
+	if spiLog {
+		spiLogger = debugLog()
+	}
 	c.OnSPI0 = func(tx byte) byte {
 		if w6300 != nil {
 			return w6300.Transfer(tx)
@@ -206,7 +264,7 @@ func main() {
 			return w5500.Transfer(tx)
 		}
 		if spiLog {
-			fmt.Fprintf(os.Stderr, "spi0 tx %02x\n", tx)
+			spiLogger.Debug("spi tx", slog.Int("bus", 0), slog.String("byte", fmt.Sprintf("%02x", tx)))
 		}
 		return 0xFF
 	}
@@ -215,7 +273,7 @@ func main() {
 			return lcd.Transfer(tx)
 		}
 		if spiLog {
-			fmt.Fprintf(os.Stderr, "spi1 tx %02x\n", tx)
+			spiLogger.Debug("spi tx", slog.Int("bus", 1), slog.String("byte", fmt.Sprintf("%02x", tx)))
 		}
 		return 0xFF
 	}
@@ -230,32 +288,28 @@ func main() {
 	if *ch9120Flag {
 		ch := devices.NewCH9120(c, 1, 18, 19, 17)
 		if os.Getenv("RP2350SIM_CH9120_LOG") != "" {
-			ch.Logf = func(format string, args ...any) {
-				fmt.Fprintf(os.Stderr, format+"\n", args...)
-			}
+			ch.Logger = debugLog()
 		}
 		ch.Attach()
 	}
 
 	var bridges []*devices.UARTBridge
 	if *serialTCP != "" {
-		for _, spec := range strings.Split(*serialTCP, ",") {
+		for spec := range strings.SplitSeq(*serialTCP, ",") {
 			uartStr, addr, ok := strings.Cut(spec, ":")
 			if !ok || addr == "" {
-				fmt.Fprintf(os.Stderr, "serial-tcp: bad spec %q (want uart:host:port)\n", spec)
+				log.Warn("serial-tcp: bad spec", slog.String("spec", spec), slog.String("want", "uart:host:port"))
 				continue
 			}
 			idx, err := strconv.Atoi(uartStr)
 			if err != nil || idx < 0 || idx > 1 {
-				fmt.Fprintf(os.Stderr, "serial-tcp: bad UART %q\n", uartStr)
+				log.Warn("serial-tcp: bad UART", slog.String("uart", uartStr))
 				continue
 			}
 			br := devices.NewUARTBridge(c, idx, addr)
-			br.Logf = func(format string, args ...any) {
-				fmt.Fprintf(os.Stderr, format+"\n", args...)
-			}
+			br.Logger = log
 			if err := br.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "serial-tcp: uart%d: %v\n", idx, err)
+				log.Warn("serial-tcp: bridge failed", slog.Int("uart", idx), slog.Any("err", err))
 				continue
 			}
 			bridges = append(bridges, br)
@@ -283,13 +337,9 @@ func main() {
 			}
 		}()
 	}
-	if os.Getenv("RP2350SIM_USB_LOG") != "" {
-		c.USBLog = os.Stderr
-	}
-
 	if *tracePins != "" {
 		wanted := map[int]bool{}
-		for _, s := range strings.Split(*tracePins, ",") {
+		for s := range strings.SplitSeq(*tracePins, ",") {
 			n, err := strconv.Atoi(strings.TrimSpace(s))
 			if err == nil {
 				wanted[n] = true
@@ -297,7 +347,9 @@ func main() {
 		}
 		c.Pins.OnChange = func(pin int, level bool) {
 			if wanted[pin] {
-				fmt.Fprintf(os.Stderr, "%10.3fms gp%d=%v\n", float64(c.NowMicros())/1000, pin, level)
+				log.Info("pin change",
+					slog.Int("pin", pin), slog.Bool("level", level),
+					slog.Float64("ms", float64(c.NowMicros())/1000))
 			}
 		}
 	}
@@ -320,8 +372,11 @@ func main() {
 				return
 			}
 			n++
-			fmt.Fprintf(os.Stderr, "%08x %04x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r7=%08x r10=%08x sp=%08x lr=%08x\n",
-				pc, hw1, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[7], cpu.R[10], cpu.R[13], cpu.R[14])
+			attrs := append([]any{
+				slog.String("pc", hex(pc)),
+				slog.String("opcode", fmt.Sprintf("%04x", hw1)),
+			}, regAttrs(cpu)...)
+			log.Info("trace", attrs...)
 		}
 	}
 
@@ -346,25 +401,32 @@ func main() {
 		maxAddr := img.MaxAddr()
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
 			if pc >= maxAddr && pc < 0x10400000 {
-				fmt.Fprintf(os.Stderr, "OUTSIDE IMAGE pc=%#08x lr=%#08x sp=%#08x\n", pc, cpu.R[14], cpu.R[13])
+				log.Error("pc outside image",
+					slog.String("pc", hex(pc)), slog.String("lr", hex(cpu.R[14])), slog.String("sp", hex(cpu.R[13])))
 				start := 0
 				if len(ring) > 40 {
 					start = len(ring) - 40
 				}
 				for _, l := range ring[start:] {
-					fmt.Fprintln(os.Stderr, "  ", l)
+					log.Info("trace back", slog.String("line", l))
 				}
 				c.Halted = true
 				os.Exit(1)
 			}
 			if watchReg >= 0 {
 				if v := cpu.R[watchReg]; v != lastReg {
-					fmt.Fprintf(os.Stderr, "r%d: %#08x -> %#08x at pc=%#08x (hw=%04x)\n", watchReg, lastReg, v, pc, hw1)
+					log.Info("register change",
+						slog.Int("reg", watchReg),
+						slog.String("from", hex(lastReg)),
+						slog.String("to", hex(v)),
+						slog.String("pc", hex(pc)),
+						slog.String("opcode", fmt.Sprintf("%04x", hw1)))
 					lastReg = v
 				}
 			}
 			if bp2 != 0 && uint64(pc) == bp2 {
-				fmt.Fprintf(os.Stderr, "hit2 %#08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x r8=%08x r9=%08x r10=%08x r11=%08x sp=%08x lr=%08x\n", pc, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[5], cpu.R[6], cpu.R[7], cpu.R[8], cpu.R[9], cpu.R[10], cpu.R[11], cpu.R[13], cpu.R[14])
+				attrs := append([]any{slog.String("pc", hex(pc))}, regAttrs(cpu)...)
+				log.Info("breakpoint", attrs...)
 			}
 			if bp != 0 && uint64(pc) == bp {
 				if *msgFlag {
@@ -373,9 +435,10 @@ func main() {
 					for i := uint32(0); i < n && i < 200; i++ {
 						b = append(b, c.Read8(p+i))
 					}
-					fmt.Fprintf(os.Stderr, "message: %q\n", string(b))
+					log.Info("runtime message", slog.String("text", string(b)))
 				}
-				fmt.Fprintf(os.Stderr, "break at %#08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x r8=%08x r9=%08x r10=%08x r11=%08x sp=%08x lr=%08x\n", pc, cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3], cpu.R[4], cpu.R[5], cpu.R[6], cpu.R[7], cpu.R[8], cpu.R[9], cpu.R[10], cpu.R[11], cpu.R[13], cpu.R[14])
+				attrs := append([]any{slog.String("pc", hex(pc))}, regAttrs(cpu)...)
+				log.Info("break", attrs...)
 				bpHits++
 				if bpHits >= 200 {
 					c.Halted = true
@@ -402,7 +465,7 @@ func main() {
 					start = len(ring) - 60
 				}
 				for _, l := range ring[start:] {
-					fmt.Fprintln(os.Stderr, "  ", l)
+					log.Info("trace back", slog.String("line", l))
 				}
 				c.Halted = true
 				os.Exit(1)
@@ -410,7 +473,7 @@ func main() {
 		}
 	}
 
-	for _, kv := range strings.Split(*pokeStr, ",") {
+	for kv := range strings.SplitSeq(*pokeStr, ",") {
 		kv = strings.TrimSpace(kv)
 		if kv == "" {
 			continue
@@ -428,7 +491,10 @@ func main() {
 		wv, _ := strconv.ParseUint(strings.TrimPrefix(*valStr, "0x"), 16, 32)
 		c.OnWrite = func(addr uint32, val uint32, size int) {
 			if val == uint32(wv) {
-				fmt.Fprintf(os.Stderr, "write %#08x of %#08x size %d pc=%#08x lr=%#08x\n", addr, val, size, c.CPU0.R[15], c.CPU0.R[14])
+				log.Info("write value match",
+					slog.String("addr", hex(addr)), slog.String("value", hex(val)),
+					slog.Int("size", size),
+					slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])))
 			}
 		}
 	}
@@ -437,7 +503,10 @@ func main() {
 		wa, _ := strconv.ParseUint(strings.TrimPrefix(*watchStr, "0x"), 16, 32)
 		c.OnWrite = func(addr uint32, val uint32, size int) {
 			if uint64(addr) == wa {
-				fmt.Fprintf(os.Stderr, "write %#08x = %#08x (size %d) pc=%#08x lr=%#08x\n", addr, val, size, c.CPU0.R[15], c.CPU0.R[14])
+				log.Info("watched write",
+					slog.String("addr", hex(addr)), slog.String("value", hex(val)),
+					slog.Int("size", size),
+					slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])))
 			}
 		}
 	}
@@ -449,9 +518,11 @@ func main() {
 				op = "write"
 			}
 			c.Halted = true
-			fmt.Fprintf(os.Stderr, "unmapped %s at %#08x val=%#08x pc=%#08x\n", op, addr, val, c.CPU0.R[15])
+			log.Error("unmapped access",
+				slog.String("op", op), slog.String("addr", hex(addr)),
+				slog.String("value", hex(val)), slog.String("pc", hex(c.CPU0.R[15])))
 			for _, l := range ring {
-				fmt.Fprintln(os.Stderr, "  ", l)
+				log.Info("trace back", slog.String("line", l))
 			}
 		}
 	}
@@ -461,10 +532,7 @@ func main() {
 	var usbPending []byte
 	flushUSB := func() {
 		for len(usbPending) > 0 && c.USBCDCReady() {
-			n := len(usbPending)
-			if n > 64 {
-				n = 64
-			}
+			n := min(len(usbPending), 64)
 			c.SendUSBCDC(usbPending[:n])
 			usbPending = usbPending[n:]
 		}
@@ -505,10 +573,7 @@ func main() {
 	}
 	drainStdin := func() {
 		stdinMu.Lock()
-		n := len(stdinBuf)
-		if n > 64 {
-			n = 64
-		}
+		n := min(len(stdinBuf), 64)
 		var chunk []byte
 		if n > 0 {
 			chunk = append([]byte(nil), stdinBuf[:n]...)
@@ -524,7 +589,7 @@ func main() {
 	if *inputFile != "" {
 		b, err := os.ReadFile(*inputFile)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "input-file:", err)
+			log.Error("input file", slog.String("path", *inputFile), slog.Any("err", err))
 			os.Exit(1)
 		}
 		inputData = append(inputData, b...)
@@ -542,10 +607,7 @@ func main() {
 			runCycles = uint64(*secs * 150_000_000)
 		}
 		if len(inputData) > 0 {
-			warm := inputCycles
-			if warm > runCycles {
-				warm = runCycles
-			}
+			warm := min(inputCycles, runCycles)
 			if warm > 0 {
 				c.Run(warm)
 				runCycles -= warm
@@ -568,10 +630,7 @@ func main() {
 				timedOut = true
 				break
 			}
-			n := runCycles
-			if n > chunk {
-				n = chunk
-			}
+			n := min(runCycles, chunk)
 			c.Run(n)
 			runCycles -= n
 			flushUSB()
@@ -583,7 +642,11 @@ func main() {
 	} else {
 		for i := 0; i < *sampleN; i++ {
 			c.Run(10_000_000)
-			fmt.Fprintf(os.Stderr, "sample %d: pc=%#08x lr=%#08x sp=%#08x r0=%#08x r1=%#08x\n", i, c.CPU0.R[15], c.CPU0.R[14], c.CPU0.R[13], c.CPU0.R[0], c.CPU0.R[1])
+			log.Info("sample",
+				slog.Int("index", i),
+				slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])),
+				slog.String("sp", hex(c.CPU0.R[13])),
+				slog.String("r0", hex(c.CPU0.R[0])), slog.String("r1", hex(c.CPU0.R[1])))
 			if c.CPU0.Halted || c.Halted {
 				break
 			}
@@ -603,44 +666,59 @@ func main() {
 		exitCode = 3
 	}
 	if timedOut {
-		fmt.Fprintf(os.Stderr, "wall timeout after %s\n", *wallLimit)
+		log.Error("wall timeout", slog.Duration("after", *wallLimit))
 	}
 	if len(missing) > 0 {
-		fmt.Fprintf(os.Stderr, "missing expected output: %q\n", missing)
+		log.Error("missing expected output", slog.Any("missing", missing))
 	}
 
 	if !*quiet {
-		fmt.Fprintf(os.Stderr, "cycles=%d (%.3fs virtual) wall=%s\n", c.Cycles, float64(c.Cycles)/150e6, wall)
-		fmt.Fprintf(os.Stderr, "core0 pc=%#08x sp=%#08x lr=%#08x\n", c.CPU0.R[15], c.CPU0.R[13], c.CPU0.R[14])
-		fmt.Fprintf(os.Stderr, "core1 pc=%#08x sp=%#08x lr=%#08x parked=%v\n", c.CPU1.R[15], c.CPU1.R[13], c.CPU1.R[14], c.CPU1.Parked)
-		fmt.Fprintf(os.Stderr, "irq delivered: %d\n", c.IRQCount)
-		fmt.Fprintf(os.Stderr, "sio pushes=%d core1 launches=%d\n", c.SIOPushes(), c.Core1Launches())
-		fmt.Fprintf(os.Stderr, "runqueue head=%#08x tail=%#08x sleepQueue=%#08x currentTask=%#08x mainExited=%d\n",
-			c.Read32(0x200017c0), c.Read32(0x200017c4), c.Read32(0x2000179c), c.Read32(0x2000175c), c.Read32(0x20001758))
+		log.Info("run finished",
+			slog.Uint64("cycles", c.Cycles),
+			slog.Float64("virtual_seconds", float64(c.Cycles)/150e6),
+			slog.Float64("wall_seconds", wall.Seconds()))
+		log.Info("core0",
+			slog.String("pc", hex(c.CPU0.R[15])), slog.String("sp", hex(c.CPU0.R[13])), slog.String("lr", hex(c.CPU0.R[14])))
+		log.Info("core1",
+			slog.String("pc", hex(c.CPU1.R[15])), slog.String("sp", hex(c.CPU1.R[13])),
+			slog.String("lr", hex(c.CPU1.R[14])), slog.Bool("parked", c.CPU1.Parked))
+		log.Info("runtime",
+			slog.Uint64("irqs", c.IRQCount),
+			slog.Uint64("sio_pushes", c.SIOPushes()),
+			slog.Uint64("core1_launches", c.Core1Launches()))
+		log.Info("runqueue",
+			slog.String("head", hex(c.Read32(0x200017c0))),
+			slog.String("tail", hex(c.Read32(0x200017c4))),
+			slog.String("sleep", hex(c.Read32(0x2000179c))),
+			slog.String("current", hex(c.Read32(0x2000175c))),
+			slog.Uint64("main_exited", uint64(c.Read32(0x20001758))))
 	}
 	if c.CPU0.Halted {
-		fmt.Fprintf(os.Stderr, "core0 halted: %s pc=%#08x lr=%#08x sp=%#08x\n", c.CPU0.HaltReason, c.CPU0.R[15], c.CPU0.R[14], c.CPU0.R[13])
+		log.Error("core0 halted",
+			slog.String("reason", c.CPU0.HaltReason),
+			slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])), slog.String("sp", hex(c.CPU0.R[13])))
 	}
 	if c.CPU1.Halted {
-		fmt.Fprintf(os.Stderr, "core1 halted: %s pc=%#08x lr=%#08x sp=%#08x\n", c.CPU1.HaltReason, c.CPU1.R[15], c.CPU1.R[14], c.CPU1.R[13])
+		log.Error("core1 halted",
+			slog.String("reason", c.CPU1.HaltReason),
+			slog.String("pc", hex(c.CPU1.R[15])), slog.String("lr", hex(c.CPU1.R[14])), slog.String("sp", hex(c.CPU1.R[13])))
 	}
 	if lcd != nil && !*quiet {
-		fmt.Fprintf(os.Stderr, "lcd: pixels=%d on=%v\n", lcd.PixelsWritten(), lcd.On())
+		log.Info("lcd", slog.Int("pixels", lcd.PixelsWritten()), slog.Bool("on", lcd.On()))
 	}
 	if lcd != nil && *lcdPNG != "" {
 		if err := lcd.WritePNG(*lcdPNG); err != nil {
-			fmt.Fprintf(os.Stderr, "lcd png: %v\n", err)
+			log.Error("lcd png", slog.String("path", *lcdPNG), slog.Any("err", err))
 		}
 	}
 
 	if *peekStr != "" {
 		a, _ := strconv.ParseUint(strings.TrimPrefix(*peekStr, "0x"), 16, 32)
-		fmt.Fprintf(os.Stderr, "mem[%#08x] = %#08x\n", uint32(a), c.Read32(uint32(a)))
+		log.Info("memory", slog.String("addr", hex(uint32(a))), slog.String("value", hex(c.Read32(uint32(a)))))
 	}
 
 	if *unhandled {
-		fmt.Fprintln(os.Stderr, "unmapped accesses:")
-		fmt.Fprint(os.Stderr, c.DescribeUnhandled())
+		log.Info("unmapped accesses", slog.String("report", c.DescribeUnhandled()))
 	}
 
 	if *summaryOut != "" {
@@ -690,7 +768,7 @@ func main() {
 		b, _ := json.MarshalIndent(sum, "", "  ")
 		b = append(b, '\n')
 		if err := os.WriteFile(*summaryOut, b, 0o644); err != nil {
-			fmt.Fprintln(os.Stderr, "summary-file:", err)
+			log.Error("summary file", slog.String("path", *summaryOut), slog.Any("err", err))
 			if exitCode == 0 {
 				exitCode = 1
 			}

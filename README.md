@@ -96,19 +96,21 @@ Useful flags:
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
-
 | `-input-file FILE`, `-input-at D`, `-stdin` | scripted console input |
 | `-expect TEXT` (repeatable), `-stop-on-expect` | assert console output and fail the run |
 | `-wall-timeout D`, `-summary-file PATH` | bound real time / write a JSON summary |
-| `-allow-halt`, `-quiet` | tolerate a halted core / suppress the summary |
+| `-allow-halt`, `-quiet` | tolerate a halted core / suppress the informational summary |
+| `-log-format auto\|text\|json`, `-log-level LEVEL` | diagnostic logging (default: JSON when piped or `CI`, text on a terminal) |
 
 **Output contract:** firmware console goes to **stdout**, all emulator
-diagnostics go to **stderr**. Exit codes: 0 success, 1 load error, 2 usage,
-3 halt/fault, 4 missing expectation, 5 wall timeout.
+diagnostics go to **stderr** as structured `slog` records. Exit codes: 0
+success, 1 load error, 2 usage, 3 halt/fault, 4 missing expectation, 5 wall
+timeout.
 
-Diagnostics environment variables: `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`,
-`RP2350SIM_LCD_LOG`, `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`,
-`RP2350SIM_W6300_LOG`, `RP2350SIM_CH9120_LOG`, `RP2350SIM_PIO_LOG`.
+Per-stream debug switches (JSON is the default for a piped run):
+`RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`, `RP2350SIM_LCD_LOG`,
+`RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`, `RP2350SIM_W6300_LOG`,
+`RP2350SIM_CH9120_LOG`, `RP2350SIM_PIO_LOG`.
 
 ## Ethernet
 

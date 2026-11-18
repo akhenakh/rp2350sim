@@ -1,13 +1,9 @@
 package rp2350
 
 import (
-	"fmt"
+	"log/slog"
 	"math/bits"
-	"os"
 )
-
-var pioDebug = os.Getenv("RP2350SIM_PIO_LOG") != ""
-var pioDebugN int
 
 // pioBlock models one RP2350 PIO block: 32 shared instruction words, four state
 // machines with their own config, scratch registers and FIFOs, and eight shared
@@ -172,14 +168,15 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 		case 0x08: // SHIFTCTRL; changing a FIFO join flushes both FIFOs
 			old := s.shiftctrl
 			s.shiftctrl = v
-			if pioDebug {
-				fmt.Fprintf(os.Stderr, "c=%d shiftctrl pio%d.%d %08x -> %08x\n", p.chip.Cycles, p.id, i, old, v)
-			}
+			p.chip.Logger.Debug("pio shiftctrl",
+				slog.Uint64("cycle", p.chip.Cycles),
+				slog.Int("block", p.id), slog.Int("sm", int(i)),
+				slog.String("from", fmtHex(old)), slog.String("to", fmtHex(v)))
 			if (old^v)&(1<<30|1<<31) != 0 {
 				s.txN, s.rxN = 0, 0
-				if pioDebug {
-					fmt.Fprintf(os.Stderr, "  flush\n")
-				}
+				p.chip.Logger.Debug("pio fifo flush",
+					slog.Uint64("cycle", p.chip.Cycles),
+					slog.Int("block", p.id), slog.Int("sm", int(i)))
 			}
 		case 0x0C: // ADDR
 			s.pc = uint8(v & 0x1F)
@@ -268,9 +265,10 @@ func (s *pioSM) txFull() bool { return s.txN >= s.txCap() }
 func (s *pioSM) rxFull() bool { return s.rxN >= s.rxCap() }
 
 func (s *pioSM) pushTx(v uint32) {
-	if pioDebug {
-		fmt.Fprintf(os.Stderr, "c=%d tx pio%d.%d <- %08x\n", s.p.chip.Cycles, s.p.id, s.idx, v)
-	}
+	s.p.chip.Logger.Debug("pio tx push",
+		slog.Uint64("cycle", s.p.chip.Cycles),
+		slog.Int("block", s.p.id), slog.Int("sm", s.idx),
+		slog.String("value", fmtHex(v)))
 	if s.txFull() {
 		s.p.fdebug |= 1 << uint(16+s.idx) // TXOVER
 		return
@@ -280,9 +278,10 @@ func (s *pioSM) pushTx(v uint32) {
 }
 
 func (s *pioSM) popTx() (uint32, bool) {
-	if pioDebug {
-		fmt.Fprintf(os.Stderr, "c=%d popTx pio%d.%d txN=%d\n", s.p.chip.Cycles, s.p.id, s.idx, s.txN)
-	}
+	s.p.chip.Logger.Debug("pio tx pop",
+		slog.Uint64("cycle", s.p.chip.Cycles),
+		slog.Int("block", s.p.id), slog.Int("sm", s.idx),
+		slog.Int("depth", s.txN))
 	if s.txN == 0 {
 		return 0, false
 	}
@@ -336,10 +335,7 @@ func (s *pioSM) tick() {
 		return
 	}
 	// The SM clock is sysclk / (INT + FRAC/256); never faster than sysclk.
-	thr := (s.clkdiv>>16)<<8 | (s.clkdiv>>8)&0xFF
-	if thr < 256 {
-		thr = 256
-	}
+	thr := max((s.clkdiv>>16)<<8|(s.clkdiv>>8)&0xFF, 256)
 	s.acc += 256
 	if s.acc < thr {
 		return
@@ -372,10 +368,18 @@ func (s *pioSM) tryPush() bool {
 
 func (s *pioSM) step() {
 	instr := s.p.mem[s.pc]
-	if pioDebug && pioDebugN < 120 {
-		pioDebugN++
-		fmt.Fprintf(os.Stderr, "c=%d pio%d.%d pc=%d instr=%04x out=%d y=%08x osr=%08x tx=%d pin=%v\n",
-			s.p.chip.Cycles, s.p.id, s.idx, s.pc, instr, s.outCount, s.y, s.osr, s.txN, s.p.chip.Pins.Level(0))
+	if s.p.chip.pioLogN < 120 {
+		s.p.chip.pioLogN++
+		s.p.chip.Logger.Debug("pio step",
+			slog.Uint64("cycle", s.p.chip.Cycles),
+			slog.Int("block", s.p.id), slog.Int("sm", s.idx),
+			slog.Int("pc", int(s.pc)),
+			slog.String("instr", fmtHex(uint32(instr))),
+			slog.Int("out", s.outCount),
+			slog.String("y", fmtHex(s.y)),
+			slog.String("osr", fmtHex(s.osr)),
+			slog.Int("tx", s.txN),
+			slog.Bool("pin0", s.p.chip.Pins.Level(0)))
 	}
 	delay := s.applySide(instr)
 	s.pcSet = false
@@ -391,15 +395,21 @@ func (s *pioSM) step() {
 // execNow runs an instruction written to SMx_INSTR: it takes effect
 // immediately and does not normally advance the program counter.
 func (s *pioSM) execNow(instr uint16) {
-	if pioDebug {
-		fmt.Fprintf(os.Stderr, "c=%d exec pio%d.%d instr=%04x x=%08x osr=%08x out=%d tx=%d rx=%d\n",
-			s.p.chip.Cycles, s.p.id, s.idx, instr, s.x, s.osr, s.outCount, s.txN, s.rxN)
-	}
+	s.p.chip.Logger.Debug("pio exec",
+		slog.Uint64("cycle", s.p.chip.Cycles),
+		slog.Int("block", s.p.id), slog.Int("sm", s.idx),
+		slog.String("instr", fmtHex(uint32(instr))),
+		slog.String("x", fmtHex(s.x)),
+		slog.String("osr", fmtHex(s.osr)),
+		slog.Int("out", s.outCount), slog.Int("tx", s.txN), slog.Int("rx", s.rxN))
 	s.pcSet = false
 	s.execute(instr)
-	if pioDebug {
-		fmt.Fprintf(os.Stderr, "  -> x=%08x osr=%08x out=%d tx=%d rx=%d\n", s.x, s.osr, s.outCount, s.txN, s.rxN)
-	}
+	s.p.chip.Logger.Debug("pio exec result",
+		slog.Uint64("cycle", s.p.chip.Cycles),
+		slog.Int("block", s.p.id), slog.Int("sm", s.idx),
+		slog.String("x", fmtHex(s.x)),
+		slog.String("osr", fmtHex(s.osr)),
+		slog.Int("out", s.outCount), slog.Int("tx", s.txN), slog.Int("rx", s.rxN))
 }
 
 func (s *pioSM) advance() {
@@ -445,7 +455,7 @@ func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 	if count <= 0 {
 		return
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		pin := (base + i) & 31
 		bit := uint32(1) << uint(pin)
 		val := v&(1<<uint(i)) != 0
@@ -475,7 +485,7 @@ func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 
 func (s *pioSM) readPins(base int) uint32 {
 	var v uint32
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if s.p.chip.Pins.Level((base + i) & 31) {
 			v |= 1 << uint(i)
 		}
@@ -739,10 +749,7 @@ func (s *pioSM) execPushPull(instr uint16) bool {
 		}
 		if s.rxFull() {
 			s.p.fdebug |= 1 << uint(s.idx) // RXSTALL
-			if block {
-				return false
-			}
-			return true
+			return !block
 		}
 		s.pushRx(s.isr)
 		s.isr = 0

@@ -13,11 +13,40 @@ bootrom is needed.
 | stream | contents |
 |---|---|
 | **stdout** | only the firmware console (USB CDC, UART0/UART1) |
-| **stderr** | emulator diagnostics: header, traces, peripheral logs, summary, errors |
+| **stderr** | emulator diagnostics as `slog` records: header, traces, peripheral logs, summary, errors |
 
 So `rp2350sim -fw fw.elf -seconds 2 > firmware.log` produces a clean firmware
-log. `-quiet` additionally suppresses the header and the final summary; errors
-and halt reasons still go to stderr.
+log. `-quiet` suppresses the informational records (header and final summary);
+warnings, errors and halt reasons are still written.
+
+## Logging
+
+Diagnostics are structured `slog` records. The format is chosen by
+`-log-format`:
+
+| flag | meaning |
+|---|---|
+| `-log-format auto` | JSON when stderr is not a terminal or `CI` is set, text otherwise (default) |
+| `-log-format json` | one JSON object per line, for CI and log collectors |
+| `-log-format text` | `key=value` lines, for a person in a terminal |
+| `-log-level LEVEL` | `debug`, `info` (default), `warn` or `error` |
+
+A piped or CI run is JSON without any extra flags:
+
+```sh
+rp2350sim -fw fw.elf -seconds 2 2> emulator.jsonl > firmware.log
+jq -r 'select(.msg=="run finished") | .cycles' emulator.jsonl
+```
+
+```json
+{"time":"2026-11-18T14:57:16Z","level":"INFO","msg":"firmware loaded","path":"fw.elf","format":"elf","segments":3,"bytes":10780,"entry":"0x10001a81"}
+{"time":"2026-11-18T14:57:18Z","level":"INFO","msg":"run finished","cycles":30000000,"virtual_seconds":0.2,"wall_seconds":0.99}
+{"time":"2026-11-18T14:57:18Z","level":"INFO","msg":"core0","pc":"0x10000dec","sp":"0x20003850","lr":"0x10001f95"}
+```
+
+Addresses and register values are hex strings; counts and durations are
+numbers (`wall_seconds` is a float). `-log-level debug` adds instruction
+traces, PIO state-machine steps, USB enumeration and network socket activity.
 
 ## Exit codes
 
@@ -42,7 +71,7 @@ core).
 | `-steps N` | cycle budget (default 50,000,000) |
 | `-core1` | start core 1 (default true; parked if false) |
 | `-wall-timeout D` | fail with code 5 after this much real time (0 = unlimited) |
-| `-quiet` | suppress the firmware header and final summary |
+| `-quiet` | suppress the informational header and final summary records |
 | `-allow-halt` | exit 0 even when a core halts |
 | `-summary-file PATH` | write a JSON run summary |
 
@@ -166,11 +195,16 @@ resets in the UI but the headless runner is one process.
 
 | variable | effect |
 |---|---|
-| `RP2350SIM_ETH_LOG` | W5500 socket activity on stderr |
-| `RP2350SIM_W6300_LOG` | W6300 socket activity on stderr |
-| `RP2350SIM_CH9120_LOG` | CH9120 configuration and socket transfers (tx/rx sizes) on stderr |
-| `RP2350SIM_SPI_LOG` | log every SPI byte |
-| `RP2350SIM_DMA_LOG` | log DMA transfers |
+Each legacy variable below enables one debug stream without changing the level
+of the others. Setting `-log-level debug` enables all of them.
+
+| variable | effect |
+|---|---|
+| `RP2350SIM_ETH_LOG` | W5500 socket activity |
+| `RP2350SIM_W6300_LOG` | W6300 socket activity |
+| `RP2350SIM_CH9120_LOG` | CH9120 configuration and socket transfers (tx/rx sizes) |
+| `RP2350SIM_SPI_LOG` | every SPI byte |
+| `RP2350SIM_DMA_LOG` | DMA transfers |
 | `RP2350SIM_LCD_LOG` | ST7789 command decoding |
 | `RP2350SIM_USB_LOG` | USB host/device state |
 | `RP2350SIM_PIO_LOG` | PIO state machine execution |
@@ -195,6 +229,10 @@ rp2350sim -fw firmware.elf -seconds 3 -trace-pins 25
 
 # Export the LCD framebuffer
 rp2350sim -fw firmware.elf -seconds 3 -lcd -lcd-png lcd.png
+
+# Human-readable logs in a terminal, machine-readable in a pipe
+rp2350sim -fw firmware.elf -seconds 3 -log-format text
+rp2350sim -fw firmware.elf -seconds 3 -log-format json 2> run.jsonl
 ```
 
 See [ci.md](ci.md) for CI recipes and [tinygo.md](tinygo.md) for build

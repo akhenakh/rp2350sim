@@ -18,13 +18,15 @@ rp2350sim -fw firmware.elf -seconds 3 -quiet \
   > firmware.log
 ```
 
-- `-quiet` keeps the emulator header and summary out of the way (they are on
-  stderr anyway).
+- `-quiet` keeps the informational header and summary records out of the way
+  (they are on stderr anyway).
 - `-expect` fails with exit code **4** if the string never appears.
 - `-stop-on-expect` ends the run as soon as all expectations match, so a fast
   firmware does not wait for the whole virtual budget.
 - `firmware.log` contains only what the firmware printed.
 - `summary.json` records cycles, PC/SP, halt state and the exit code.
+- stderr is JSON (one `slog` object per line) because a CI run is not a
+  terminal; `-log-format text` opts back into `key=value` for a person.
 
 ## Interacting with the firmware
 
@@ -50,12 +52,15 @@ For a serial protocol (or a firmware whose console is UART1), use a TCP bridge:
 
 ```sh
 rp2350sim -fw firmware.elf -seconds 10 -serial-tcp 1:127.0.0.1:0 \
-  2> emulator.log > firmware.log &
+  2> emulator.jsonl > firmware.log &
 EMU_PID=$!
-PORT=$(sed -n 's/.*uart1 listening on [^:]*:\([0-9]*\).*/\1/p' emulator.log | head -1)
-printf 'PING\n' | nc 127.0.0.1 "$PORT"
+ADDR=$(sed -n 's/.*"msg":"uart bridge listening".*"addr":"\([^"]*\)".*/\1/p' emulator.jsonl | head -1)
+printf 'PING\n' | nc "${ADDR%:*}" "${ADDR##*:}"
 wait $EMU_PID
 ```
+
+`jq -r 'select(.msg=="uart bridge listening") | .addr' emulator.jsonl` is the
+equivalent when `jq` is available.
 
 This is also how you drive the CH9120 / W5500 / W6300 / virtual Wi-Fi demos:
 their sockets are backed by the host's network stack, so start the server the
@@ -156,6 +161,19 @@ If the project lives in the same repository as the emulator, `go install
 provides `pico2-build`, `pico2-run` and `pico2-ci` for Make users. See
 [tinygo.md](tinygo.md).
 
+## Logs as an artifact
+
+The JSON log is the record of what the machine did, not just a side channel:
+
+```sh
+jq -r 'select(.level=="ERROR") | .msg' emulator.jsonl        # what failed
+jq -r 'select(.msg=="run finished") | .cycles' emulator.jsonl # work done
+jq -r 'select(.msg=="trace") | .pc' emulator.jsonl | head    # decoder work
+```
+
+`-log-level debug` adds the per-instruction trace, PIO, USB and socket
+streams; the legacy `RP2350SIM_*_LOG` variables enable a single stream.
+
 ## Pitfalls
 
 - **Expectations match the firmware console only.** Peripheral/emulator logs
@@ -163,8 +181,9 @@ provides `pico2-build`, `pico2-run` and `pico2-ci` for Make users. See
 - **USB input needs enumeration.** `-input-at` defaults to 200 ms; raise it if
   the firmware has a long boot. `-stdin` bytes wait in a queue and are flushed
   once USB is ready.
-- **Random ports:** `-serial-tcp 1:127.0.0.1:0` prints the assigned address on
-  stderr; parse it rather than hardcoding a port.
+- **Random ports:** `-serial-tcp 1:127.0.0.1:0` logs the assigned address as the
+  `addr` of the `uart bridge listening` record; parse it rather than
+  hardcoding a port.
 - **Network timings are wall-clock.** DHCP-less emulated modules connect
   immediately, but host servers must be listening first. A TCP dial failure is
   reported in the device log on stderr, not as a process failure unless you

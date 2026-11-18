@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log/slog"
 	"os"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -45,9 +46,9 @@ type ST7789 struct {
 	// Used window, for rendering.
 	minX, minY, maxX, maxY int
 
-	// Debug prints commands (and a few data bytes) to stderr.
-	Debug bool
-	logN  int
+	// Logger, when non-nil, records commands and a few data bytes.
+	Logger *slog.Logger
+	logN   int
 }
 
 // NewST7789 creates a display attached to the chip, wired to the given pins.
@@ -85,13 +86,11 @@ func (d *ST7789) Transfer(tx byte) byte {
 		return 0x00
 	}
 	command := !d.Chip.Pins.Level(d.DC)
-	if d.Debug {
-		if command {
-			fmt.Fprintf(os.Stderr, "lcd cmd %02x\n", tx)
-		} else if d.logN < 24 {
-			fmt.Fprintf(os.Stderr, "lcd data %02x\n", tx)
-			d.logN++
-		}
+	if command {
+		loggerOr(d.Logger).Debug("lcd command", slog.String("byte", fmt.Sprintf("%02x", tx)))
+	} else if d.logN < 24 {
+		loggerOr(d.Logger).Debug("lcd data", slog.String("byte", fmt.Sprintf("%02x", tx)))
+		d.logN++
 	}
 	if command {
 		d.command(tx)
@@ -221,6 +220,9 @@ func (d *ST7789) WritePNG(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return png.Encode(f, d.Framebuffer())
+	if err := png.Encode(f, d.Framebuffer()); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }

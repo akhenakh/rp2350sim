@@ -65,7 +65,7 @@ func (n *NVIC) ClearPending(irq int) {
 
 func (n *NVIC) wake() {
 	// Any enabled pending interrupt takes the cores out of WFE/WFI.
-	for irq := 0; irq < 64; irq++ {
+	for irq := range 64 {
 		if n.pending[irq/32]&(1<<uint(irq%32)) != 0 && n.enabled[irq/32]&(1<<uint(irq%32)) != 0 {
 			n.chip.CPU0.Sleeping = false
 			n.chip.CPU0.SleepOnEvent = false
@@ -106,7 +106,7 @@ func (n *NVIC) bestPending(clear bool) int {
 	}
 	best := -1
 	bestPrio := 256
-	for irq := 0; irq < 64; irq++ {
+	for irq := range 64 {
 		if n.pending[irq/32]&(1<<uint(irq%32)) == 0 {
 			continue
 		}
@@ -154,7 +154,7 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off >= 0x400 && off < 0x400+64:
 		i := (off - 0x400) / 4
 		var v uint32
-		for k := 0; k < 4; k++ {
+		for k := range 4 {
 			if int(i)*4+k < len(n.prio) {
 				v |= uint32(n.prio[int(i)*4+k]) << (8 * uint(k))
 			}
@@ -176,7 +176,7 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off >= 0xD18 && off < 0xD24:
 		i := (off - 0xD18) / 4
 		var v uint32
-		for k := 0; k < 4; k++ {
+		for k := range 4 {
 			v |= uint32(n.shpr[int(i)*4+k]) << (8 * uint(k))
 		}
 		return v
@@ -216,14 +216,14 @@ func (n *NVIC) write(off, v uint32) {
 		n.pending[(off-0x280)/4] &^= v
 	case off >= 0x400 && off < 0x400+64: // IPR
 		i := (off - 0x400) / 4
-		for k := 0; k < 4; k++ {
+		for k := range 4 {
 			if int(i)*4+k < len(n.prio) {
 				n.prio[int(i)*4+k] = byte(v >> (8 * uint(k)))
 			}
 		}
 	case off == 0xD04: // ICSR
 		if v&(1<<28) != 0 { // PENDSVSET
-			// not modelled
+			n.chip.Logger.Debug("ppb: PENDSVSET ignored")
 		}
 	case off == 0xD08: // VTOR
 		n.vtor = v
@@ -242,7 +242,7 @@ func (n *NVIC) write(off, v uint32) {
 		n.ccr = v
 	case off >= 0xD18 && off < 0xD24:
 		i := (off - 0xD18) / 4
-		for k := 0; k < 4; k++ {
+		for k := range 4 {
 			n.shpr[int(i)*4+k] = byte(v >> (8 * uint(k)))
 		}
 	case off == 0xD24:

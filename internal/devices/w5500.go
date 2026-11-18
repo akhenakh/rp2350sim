@@ -2,6 +2,7 @@ package devices
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -24,8 +25,8 @@ type W5500 struct {
 	Chip *rp2350.Chip
 	CS   int
 
-	// Logf, when non-nil, receives transaction and socket diagnostics.
-	Logf func(format string, args ...any)
+	// Logger, when non-nil, receives socket diagnostics.
+	Logger *slog.Logger
 
 	mu sync.Mutex
 
@@ -42,8 +43,6 @@ type W5500 struct {
 	writing bool
 	bsb     uint8
 	addr    uint16
-
-	closed bool
 }
 
 type w5sock struct {
@@ -131,12 +130,6 @@ func NewW5500(chip *rp2350.Chip, cs int) *W5500 {
 		w.rxMem[i] = make([]byte, 16*1024)
 	}
 	return w
-}
-
-func (w *W5500) logf(format string, args ...any) {
-	if w.Logf != nil {
-		w.Logf(format, args...)
-	}
 }
 
 // Tick samples chip select between SPI bytes, ending a transaction when the
@@ -313,7 +306,9 @@ func (w *W5500) writeSockReg(n int, off uint16, b byte) {
 		s.destPort = uint16(b)<<8 | uint16(w.sockReg[n][w5SockDestPort+1])
 	case w5SockDestPort + 1:
 		s.destPort = uint16(w.sockReg[n][w5SockDestPort])<<8 | uint16(b)
-		w.logf("w5500: sock%d dest %d.%d.%d.%d:%d", n, s.destIP[0], s.destIP[1], s.destIP[2], s.destIP[3], s.destPort)
+		loggerOr(w.Logger).Debug("w5500 dest",
+			slog.Int("sock", n),
+			slog.String("addr", net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))))
 	case w5SockTXWritePtr:
 		s.txWritePtr = uint16(b)<<8 | uint16(w.sockReg[n][w5SockTXWritePtr+1])
 	case w5SockTXWritePtr + 1:
@@ -353,7 +348,7 @@ func (w *W5500) resetAll() {
 		w.closeSocket(i)
 		w.sockReg[i] = [0x30]byte{}
 	}
-	w.logf("w5500: reset")
+	loggerOr(w.Logger).Debug("w5500 reset")
 }
 
 func (w *W5500) command(n int, cmd byte) {
@@ -377,7 +372,7 @@ func (w *W5500) command(n int, cmd byte) {
 		default:
 			s.status = w5StatusClosed
 		}
-		w.logf("w5500: sock%d open proto=%d port=%d", n, s.proto, s.srcPort)
+		loggerOr(w.Logger).Debug("w5500 open", slog.Int("sock", n), slog.Int("proto", int(s.proto)), slog.Int("port", int(s.srcPort)))
 	case w5CmdClose:
 		w.closeSocket(n)
 	case w5CmdConnect:
@@ -400,7 +395,7 @@ func (w *W5500) connect(n int) {
 	s := w.socks[n]
 	gen := s.gen
 	dst := net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))
-	w.logf("w5500: sock%d connect %s", n, dst)
+	loggerOr(w.Logger).Debug("w5500 connect", slog.Int("sock", n), slog.String("target", dst))
 	if s.proto == 2 {
 		// UDP: bind a local socket and connect it to the destination.
 		conn, err := net.Dial("udp", dst)
@@ -425,14 +420,14 @@ func (w *W5500) connect(n int) {
 		defer w.mu.Unlock()
 		if s.gen != gen {
 			if conn != nil {
-				conn.Close()
+				_ = conn.Close()
 			}
 			return
 		}
 		if err != nil {
 			s.status = w5StatusClosed
 			s.ints |= w5IntTimeout
-			w.logf("w5500: sock%d connect failed: %v", n, err)
+			loggerOr(w.Logger).Debug("w5500 connect failed", slog.Int("sock", n), slog.Any("err", err))
 			return
 		}
 		s.conn = conn
@@ -449,7 +444,7 @@ func (w *W5500) connect(n int) {
 			s.pendingTx = nil
 		}
 		go w.tcpReader(n, gen, conn)
-		w.logf("w5500: sock%d established", n)
+		loggerOr(w.Logger).Debug("w5500 established", slog.Int("sock", n))
 	}()
 }
 
@@ -464,19 +459,19 @@ func (w *W5500) listen(n int) {
 	if err != nil {
 		s.status = w5StatusClosed
 		s.ints |= w5IntTimeout
-		w.logf("w5500: sock%d listen %s failed: %v", n, addr, err)
+		loggerOr(w.Logger).Debug("w5500 listen failed", slog.Int("sock", n), slog.String("addr", addr), slog.Any("err", err))
 		return
 	}
 	s.listener = ln
 	s.status = w5StatusListen
-	w.logf("w5500: sock%d listen %s", n, addr)
+	loggerOr(w.Logger).Debug("w5500 listen", slog.Int("sock", n), slog.String("addr", addr))
 	go func() {
 		conn, err := ln.Accept()
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if s.gen != gen {
 			if conn != nil {
-				conn.Close()
+				_ = conn.Close()
 			}
 			return
 		}
@@ -497,19 +492,16 @@ func (w *W5500) listen(n int) {
 			w.sockReg[n][w5SockDestPort+1] = byte(s.destPort)
 		}
 		go w.tcpReader(n, gen, conn)
-		w.logf("w5500: sock%d accepted %s", n, conn.RemoteAddr())
+		loggerOr(w.Logger).Debug("w5500 accepted", slog.Int("sock", n), slog.String("remote", conn.RemoteAddr().String()))
 	}()
 }
 
 func (w *W5500) send(n int) {
 	s := w.socks[n]
 	size := uint16(w.sockTXSize(n))
-	count := s.txWritePtr - s.txReadPtr
-	if count > size {
-		count = size
-	}
+	count := min(s.txWritePtr-s.txReadPtr, size)
 	data := make([]byte, 0, count)
-	for i := uint16(0); i < count; i++ {
+	for i := range count {
 		data = append(data, w.txMem[n][(s.txReadPtr+i)%size])
 	}
 	s.txReadPtr = s.txWritePtr
@@ -527,7 +519,7 @@ func (w *W5500) send(n int) {
 			local = ":" + strconv.Itoa(int(s.srcPort))
 		}
 		var conn *net.UDPConn
-		w.logf("w5500: sock%d lazy udp dial %s", n, dst)
+		loggerOr(w.Logger).Debug("w5500 udp dial", slog.Int("sock", n), slog.String("target", dst))
 		conn, err = net.DialUDP("udp", nil, resolveUDP(dst))
 		if err == nil {
 			s.udp = conn
@@ -544,11 +536,11 @@ func (w *W5500) send(n int) {
 	}
 	if err != nil {
 		s.ints |= w5IntTimeout
-		w.logf("w5500: sock%d send %d bytes failed: %v", n, len(data), err)
+		loggerOr(w.Logger).Debug("w5500 send failed", slog.Int("sock", n), slog.Int("bytes", len(data)), slog.Any("err", err))
 		return
 	}
 	s.ints |= w5IntSendOK
-	w.logf("w5500: sock%d send %d bytes", n, len(data))
+	loggerOr(w.Logger).Debug("w5500 send", slog.Int("sock", n), slog.Int("bytes", len(data)))
 }
 
 func (w *W5500) tcpReader(n int, gen uint64, conn net.Conn) {
@@ -621,11 +613,11 @@ func (w *W5500) closeSocket(n int) {
 	s := w.socks[n]
 	s.gen++
 	if s.conn != nil {
-		s.conn.Close()
+		_ = s.conn.Close()
 		s.conn = nil
 	}
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 		s.listener = nil
 	}
 	s.udp = nil

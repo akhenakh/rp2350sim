@@ -2,6 +2,7 @@ package devices
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -18,7 +19,8 @@ type W6300 struct {
 	Chip *rp2350.Chip
 	CS   int
 
-	Logf func(format string, args ...any)
+	// Logger, when non-nil, reports socket events.
+	Logger *slog.Logger
 
 	mu sync.Mutex
 
@@ -161,12 +163,6 @@ func NewW6300(chip *rp2350.Chip, cs int) *W6300 {
 	w.common[w6SYCR0] = 0x80
 	w.common[w6SYCR1] = 0x80
 	return w
-}
-
-func (w *W6300) logf(format string, args ...any) {
-	if w.Logf != nil {
-		w.Logf(format, args...)
-	}
 }
 
 // Tick samples chip select between SPI bytes, ending a frame when CS is raised.
@@ -410,7 +406,7 @@ func (w *W6300) command(n int, cmd byte) {
 		default:
 			s.status = w6StatusClosed
 		}
-		w.logf("w6300: sock%d open proto=%d port=%d", n, s.proto, s.srcPort)
+		loggerOr(w.Logger).Debug("w6300 open", slog.Int("sock", n), slog.Int("proto", int(s.proto)), slog.Int("port", int(s.srcPort)))
 	case w6CmdClose:
 		w.closeSocket(n)
 	case w6CmdDiscon:
@@ -425,10 +421,7 @@ func (w *W6300) command(n int, cmd byte) {
 	case w6CmdRecv:
 		// Only the bytes the host actually consumed (by advancing
 		// Sn_RX_RD) leave the RX buffer.
-		consumed := int(s.rxReadPtr - s.rxReadAck)
-		if consumed > s.rxPending {
-			consumed = s.rxPending
-		}
+		consumed := min(int(s.rxReadPtr-s.rxReadAck), s.rxPending)
 		s.rxPending -= consumed
 		s.rxReadAck = s.rxReadPtr
 		if s.rxPending == 0 {
@@ -441,7 +434,7 @@ func (w *W6300) connect(n int) {
 	s := w.socks[n]
 	gen := s.gen
 	dst := net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))
-	w.logf("w6300: sock%d connect %s", n, dst)
+	loggerOr(w.Logger).Debug("w6300 connect", slog.Int("sock", n), slog.String("target", dst))
 	if s.proto == 2 {
 		conn, err := net.Dial("udp", dst)
 		if err != nil {
@@ -465,14 +458,14 @@ func (w *W6300) connect(n int) {
 		defer w.mu.Unlock()
 		if s.gen != gen {
 			if conn != nil {
-				conn.Close()
+				_ = conn.Close()
 			}
 			return
 		}
 		if err != nil {
 			s.status = w6StatusClosed
 			s.irq |= w6IrTimeout
-			w.logf("w6300: sock%d connect failed: %v", n, err)
+			loggerOr(w.Logger).Debug("w6300 connect failed", slog.Int("sock", n), slog.Any("err", err))
 			return
 		}
 		s.conn = conn
@@ -487,7 +480,7 @@ func (w *W6300) connect(n int) {
 			s.pendingTx = nil
 		}
 		go w.tcpReader(n, gen, conn)
-		w.logf("w6300: sock%d established", n)
+		loggerOr(w.Logger).Debug("w6300 established", slog.Int("sock", n))
 	}()
 }
 
@@ -502,23 +495,23 @@ func (w *W6300) listen(n int) {
 	if err != nil {
 		s.status = w6StatusClosed
 		s.irq |= w6IrTimeout
-		w.logf("w6300: sock%d listen %s failed: %v", n, addr, err)
+		loggerOr(w.Logger).Debug("w6300 listen failed", slog.Int("sock", n), slog.String("addr", addr), slog.Any("err", err))
 		return
 	}
 	s.listener = ln
 	s.status = w6StatusListen
-	w.logf("w6300: sock%d listen %s", n, addr)
+	loggerOr(w.Logger).Debug("w6300 listen", slog.Int("sock", n), slog.String("addr", addr))
 	go func() {
 		conn, err := ln.Accept()
 		// The host listener owns the port while waiting; the accepted
 		// connection no longer needs it, and the driver typically
 		// re-listens on another hardware socket right away.
-		ln.Close()
+		_ = ln.Close()
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if s.gen != gen {
 			if conn != nil {
-				conn.Close()
+				_ = conn.Close()
 			}
 			return
 		}
@@ -540,19 +533,16 @@ func (w *W6300) listen(n int) {
 			w.sockReg[n][w6SnDPORTR+1] = byte(s.destPort)
 		}
 		go w.tcpReader(n, gen, conn)
-		w.logf("w6300: sock%d accepted %s", n, conn.RemoteAddr())
+		loggerOr(w.Logger).Debug("w6300 accepted", slog.Int("sock", n), slog.String("remote", conn.RemoteAddr().String()))
 	}()
 }
 
 func (w *W6300) send(n int) {
 	s := w.socks[n]
 	size := uint16(w.sockTXSize(n))
-	count := s.txWritePtr - s.txReadPtr
-	if count > size {
-		count = size
-	}
+	count := min(s.txWritePtr-s.txReadPtr, size)
 	data := make([]byte, 0, count)
-	for i := uint16(0); i < count; i++ {
+	for i := range count {
 		data = append(data, w.txMem[n][(s.txReadPtr+i)%size])
 	}
 	s.txReadPtr = s.txWritePtr
@@ -581,11 +571,11 @@ func (w *W6300) send(n int) {
 	}
 	if err != nil {
 		s.irq |= w6IrTimeout
-		w.logf("w6300: sock%d send %d bytes failed: %v", n, len(data), err)
+		loggerOr(w.Logger).Debug("w6300 send failed", slog.Int("sock", n), slog.Int("bytes", len(data)), slog.Any("err", err))
 		return
 	}
 	s.irq |= w6IrSendOK
-	w.logf("w6300: sock%d send %d bytes", n, len(data))
+	loggerOr(w.Logger).Debug("w6300 send", slog.Int("sock", n), slog.Int("bytes", len(data)))
 }
 
 func resolveUDPAddr(addr string) *net.UDPAddr {
@@ -658,11 +648,11 @@ func (w *W6300) closeSocket(n int) {
 	s := w.socks[n]
 	s.gen++
 	if s.conn != nil {
-		s.conn.Close()
+		_ = s.conn.Close()
 		s.conn = nil
 	}
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 		s.listener = nil
 	}
 	s.udp = nil

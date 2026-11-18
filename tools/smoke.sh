@@ -25,7 +25,7 @@ contains() {
 
 # --- blinky: GP25 toggles at least four times in one virtual second ---------
 out=$("$EMU" -fw "$BUILD/blinky.elf" -seconds 1 -trace-pins 25 2>&1)
-n=$(grep -c "gp25=" <<<"$out")
+n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
 if [ "$n" -ge 4 ]; then ok "blinky toggles GP25 ($n edges)"; else bad "blinky GP25" "$out"; fi
 
 # --- console input over USB CDC --------------------------------------------
@@ -59,7 +59,7 @@ contains "WS2812B colours" "#ff0000 #00ff00 #0000ff" "$out"
 # --- multicore scheduler ----------------------------------------------------
 out=$("$EMU" -fw "$BUILD/cores.elf" -seconds 1.5 2>&1)
 contains "core 1 runs tasks" "cores: done" "$out"
-contains "core 1 launched" "core1 launches=1" "$out"
+contains "core 1 launched" '"core1_launches":1' "$out"
 
 # --- ST7789 framebuffer export ---------------------------------------------
 out=$("$EMU" -fw "$BUILD/lcd.elf" -seconds 3 -lcd -lcd-png "$BUILD/lcd-smoke.png" 2>&1)
@@ -114,7 +114,8 @@ contains "virtual Wi-Fi netdev" "wifi echo: hello wifi" "$out"
 serialpid=$!
 serialaddr=""
 for i in $(seq 1 50); do
-	serialaddr=$(sed -n 's/.*uart1 listening on \([^ ]*\).*/\1/p' "$BUILD/serial.log" | head -1)
+	serialaddr=$(grep '"msg":"uart bridge listening"' "$BUILD/serial.log" |
+		sed -n 's/.*"addr":"\([^"]*\)".*/\1/p' | head -1)
 	if [ -n "$serialaddr" ]; then
 		break
 	fi

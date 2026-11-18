@@ -3,6 +3,8 @@ package devices
 import (
 	"fmt"
 	"image/color"
+	"log/slog"
+	"strings"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
@@ -19,8 +21,8 @@ type WS2812B struct {
 	Chip *rp2350.Chip
 	Pin  int
 
-	// Logf, when non-nil, is called for every latched frame.
-	Logf func(format string, args ...any)
+	// Logger, when non-nil, records every latched frame.
+	Logger *slog.Logger
 
 	lastLevel bool
 	riseCycle uint64
@@ -70,16 +72,16 @@ func (w *WS2812B) Tick() {
 func (w *WS2812B) latch() {
 	n := len(w.bits) / 24
 	colors := make([]color.RGBA, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var g, r, b uint8
 		base := i * 24
-		for k := 0; k < 8; k++ {
+		for k := range 8 {
 			g = g<<1 | w.bits[base+k]
 		}
-		for k := 0; k < 8; k++ {
+		for k := range 8 {
 			r = r<<1 | w.bits[base+8+k]
 		}
-		for k := 0; k < 8; k++ {
+		for k := range 8 {
 			b = b<<1 | w.bits[base+16+k]
 		}
 		colors = append(colors, color.RGBA{R: r, G: g, B: b, A: 255})
@@ -87,16 +89,12 @@ func (w *WS2812B) latch() {
 	w.colors = colors
 	w.frames++
 	w.bits = w.bits[:0]
-	if w.Logf != nil {
-		desc := ""
-		for i, c := range colors {
-			if i > 0 {
-				desc += " "
-			}
-			desc += fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
-		}
-		w.Logf("frame %d: %d LEDs: %s", w.frames, len(colors), desc)
+	desc := make([]string, len(colors))
+	for i, c := range colors {
+		desc[i] = fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
 	}
+	loggerOr(w.Logger).Info("ws2812 frame",
+		slog.Uint64("frame", w.frames), slog.Int("leds", len(colors)), slog.String("colors", strings.Join(desc, " ")))
 }
 
 // Colors returns the most recently latched frame.

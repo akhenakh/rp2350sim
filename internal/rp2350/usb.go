@@ -1,6 +1,9 @@
 package rp2350
 
-import "fmt"
+import (
+	"fmt"
+	"log/slog"
+)
 
 // usbBlock models the RP2350 USB device controller together with enough of the
 // host side of USB to enumerate the device. TinyGo's default console is USB CDC,
@@ -188,7 +191,7 @@ func (u *usbBlock) writeBytes(off uint32, b []byte) {
 
 func (u *usbBlock) readBytes(off uint32, n int) []byte {
 	b := make([]byte, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a := off + uint32(i)
 		b[i] = byte(u.block.regs[a/4] >> ((a & 3) * 8))
 	}
@@ -202,12 +205,6 @@ func (u *usbBlock) raiseBuff(bits uint32) {
 
 func (u *usbBlock) setSIEStatus(bits uint32) {
 	u.sieStatus |= bits
-}
-
-func (u *usbBlock) logf(format string, args ...any) {
-	if u.chip.USBLog != nil {
-		fmt.Fprintf(u.chip.USBLog, format, args...)
-	}
 }
 
 // setupRequest is one control transfer the emulated host performs.
@@ -282,7 +279,7 @@ func (u *usbBlock) tick(c *Chip) {
 func (u *usbBlock) beginStep() {
 	if u.step >= len(hostEnumeration) {
 		u.state = usbHostRunning
-		u.logf("usb: enumeration complete\n")
+		u.chip.Logger.Debug("usb enumeration complete")
 		return
 	}
 	req := hostEnumeration[u.step]
@@ -293,8 +290,12 @@ func (u *usbBlock) beginStep() {
 	u.outSent = false
 	u.collected = u.collected[:0]
 	u.state = usbHostControl
-	u.logf("usb: setup %02x %02x value=%04x index=%d len=%d\n",
-		req.reqType, req.request, req.value, req.index, req.length)
+	u.chip.Logger.Debug("usb setup request",
+		slog.Int("type", int(req.reqType)),
+		slog.Int("request", int(req.request)),
+		slog.Int("value", int(req.value)),
+		slog.Int("index", int(req.index)),
+		slog.Int("length", int(req.length)))
 }
 
 // epInFull reports whether the firmware has armed the IN buffer of an endpoint.
@@ -308,7 +309,7 @@ func (u *usbBlock) takeIN(ep int) []byte {
 	ctrl := u.word(usbBufCtrlOff(ep))
 	n := int(ctrl & usbBufLen)
 	data := u.readBytes(usbBufDataOff(ep, true), n)
-	u.logf("usb: in ep%d len=%d\n", ep, n)
+	u.chip.Logger.Debug("usb in packet", slog.Int("ep", ep), slog.Int("bytes", n))
 	u.setWord(usbBufCtrlOff(ep), 0)
 	u.raiseBuff(1 << uint(ep*2))
 	return data
@@ -357,8 +358,10 @@ func (u *usbBlock) finishStep() {
 	if u.step < len(hostEnumeration) {
 		req := hostEnumeration[u.step]
 		if req.request == 6 && len(u.collected) >= 8 {
-			u.logf("usb: descriptor %04x len=%d head=% x\n",
-				req.value, len(u.collected), u.collected[:min(8, len(u.collected))])
+			u.chip.Logger.Debug("usb descriptor",
+				slog.Int("value", int(req.value)),
+				slog.Int("bytes", len(u.collected)),
+				slog.String("head", fmt.Sprintf("% x", u.collected[:min(8, len(u.collected))])))
 		}
 	}
 	u.step++
@@ -367,13 +370,13 @@ func (u *usbBlock) finishStep() {
 		return
 	}
 	u.state = usbHostRunning
-	u.logf("usb: enumeration complete\n")
+	u.chip.Logger.Debug("usb enumeration complete")
 }
 
 // pollEndpoints services the CDC data endpoints once enumeration is done: every
 // IN packet the firmware arms is drained and acknowledged.
 func (u *usbBlock) pollEndpoints() {
-	for ep := 0; ep < 8; ep++ {
+	for ep := range 8 {
 		if !u.epInFull(ep) {
 			continue
 		}

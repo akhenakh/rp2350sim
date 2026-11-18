@@ -3,8 +3,9 @@ package rp2350
 
 import (
 	"fmt"
-	"io"
+	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/akhenakh/rp2350sim/internal/m33"
 )
@@ -84,12 +85,14 @@ type Chip struct {
 	OnUART0 func(b byte)
 	OnUART1 func(b byte)
 
-	// USBLog, when non-nil, receives USB host-state diagnostics.
-	USBLog io.Writer
+	// Logger receives peripheral diagnostics. It is never nil: New installs a
+	// discarding logger so callers can log unconditionally.
+	Logger *slog.Logger
 
 	// IRQCount counts delivered exceptions (diagnostics).
 	IRQCount uint64
 	usbPoll  int
+	pioLogN  int
 
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
@@ -106,12 +109,16 @@ type Chip struct {
 	OnWrite func(addr uint32, val uint32, size int)
 }
 
+// fmtHex renders a register value for a log attribute.
+func fmtHex(v uint32) string { return fmt.Sprintf("%#08x", v) }
+
 // New creates a chip with zeroed memories.
 func New() *Chip {
 	c := &Chip{
 		Flash:     make([]byte, FlashSize),
 		SRAM:      make([]byte, SRAMSize),
 		ROM:       make([]byte, ROMSize),
+		Logger:    slog.New(slog.DiscardHandler),
 		Unhandled: map[uint32]uint32{},
 		byBase:    map[uint32]*regBlock{},
 	}
@@ -580,11 +587,11 @@ func (c *Chip) DescribeUnhandled() string {
 		list = append(list, kv{a, n})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].addr < list[j].addr })
-	s := ""
+	var b strings.Builder
 	for _, e := range list {
-		s += fmt.Sprintf("%#08x x%d\n", e.addr, e.n)
+		fmt.Fprintf(&b, "%#08x x%d\n", e.addr, e.n)
 	}
-	return s
+	return b.String()
 }
 
 // SIOPushes reports the number of SIO FIFO words written (diagnostics).

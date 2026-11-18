@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -65,7 +66,7 @@ type Emu struct {
 
 	ws      *devices.WS2812B
 	ethKind string
-	ethLog  []string
+	ethLog  panelLog
 	ch9120  *devices.CH9120
 
 	scopePins  []int
@@ -324,7 +325,7 @@ func (e *Emu) resetChip() {
 	e.ws = nil
 	e.ch9120 = nil
 	e.ethKind = ""
-	e.ethLog = e.ethLog[:0]
+	e.ethLog.reset()
 	e.frozen = frozenLogic{}
 	e.usbEvents = e.usbEvents[:0]
 	e.uartEvents = e.uartEvents[:0]
@@ -333,12 +334,7 @@ func (e *Emu) resetChip() {
 	e.scope = nil
 	e.logic = nil
 	e.signals = e.signals[:0]
-	logEth := func(format string, args ...any) {
-		e.ethLog = append(e.ethLog, fmt.Sprintf(format, args...))
-		if len(e.ethLog) > 64 {
-			e.ethLog = e.ethLog[len(e.ethLog)-32:]
-		}
-	}
+	logEth := e.ethLog.logger()
 
 	if b := e.board; b != nil {
 		recordSPI := func(bus int, dev func(byte) byte) func(byte) byte {
@@ -364,7 +360,7 @@ func (e *Emu) resetChip() {
 		}
 		if w := b.Wifi; w != nil {
 			ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)
-			ch.Logf = logEth
+			ch.Logger = logEth
 			ch.OnByte = func(v byte) {
 				e.addUART(w.UART, c.Cycles, false, v)
 			}
@@ -376,7 +372,7 @@ func (e *Emu) resetChip() {
 			e.ethKind = d.Kind
 			if d.Kind == "ch9120" {
 				ch := devices.NewCH9120(c, d.UART, d.CFG0, d.RST, d.TCPCS)
-				ch.Logf = logEth
+				ch.Logger = logEth
 				ch.OnByte = func(v byte) {
 					e.addUART(d.UART, c.Cycles, false, v)
 				}
@@ -386,11 +382,11 @@ func (e *Emu) resetChip() {
 				var tick func()
 				if d.Kind == "w6300" {
 					eth := devices.NewW6300(c, d.CS)
-					eth.Logf = logEth
+					eth.Logger = logEth
 					transfer, tick = eth.Transfer, eth.Tick
 				} else {
 					eth := devices.NewW5500(c, d.CS)
-					eth.Logf = logEth
+					eth.Logger = logEth
 					transfer, tick = eth.Transfer, eth.Tick
 				}
 				if d.SPI == 1 {
@@ -509,9 +505,7 @@ func (e *Emu) attachSerial(c *rp2350.Chip, b *BoardDef) {
 		if b != nil {
 			for _, sd := range b.Serial {
 				br := devices.NewUARTBridge(c, sd.UART, sd.Listen)
-				br.Logf = func(format string, args ...any) {
-					fmt.Fprintf(os.Stderr, format+"\n", args...)
-				}
+				br.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 				if err := br.Start(); err != nil {
 					e.bridgeErrs = append(e.bridgeErrs, fmt.Sprintf("UART%d %s: %v", sd.UART, sd.Listen, err))
 				}
@@ -592,10 +586,7 @@ func (e *Emu) RunFor(cycles uint64) {
 	defer e.mu.Unlock()
 	const chunk = 500_000
 	for cycles > 0 && !e.chip.Halted {
-		n := uint64(chunk)
-		if n > cycles {
-			n = cycles
-		}
+		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
 		cycles -= n
 	}
@@ -658,7 +649,7 @@ func (e *Emu) Snapshot() MachineState {
 	s.Running = e.running
 	s.Firmware = e.fwPath
 	s.Err = e.errText
-	for i := 0; i < 48; i++ {
+	for i := range 48 {
 		s.Pins[i] = PinInfo{
 			Func:     e.chip.Pins.Func[i],
 			OE:       e.chip.Pins.OE&(1<<uint(i)) != 0,
@@ -675,10 +666,7 @@ func (e *Emu) Snapshot() MachineState {
 		s.LCD = e.lcdFrame
 	}
 	if len(e.console) > 0 {
-		start := len(e.console) - 16*1024
-		if start < 0 {
-			start = 0
-		}
+		start := max(len(e.console)-16*1024, 0)
 		s.Console = string(e.console[start:])
 	}
 	s.ConsolePos = e.consolePos
@@ -691,7 +679,7 @@ func (e *Emu) Snapshot() MachineState {
 	if e.ch9120 != nil {
 		s.EthStatus = e.ch9120.Status()
 	}
-	s.EthLog = append([]string(nil), e.ethLog...)
+	s.EthLog = e.ethLog.snapshot()
 	s.Serial = append([]string(nil), e.bridgeErrs...)
 	for _, br := range e.bridges {
 		listen, client, connected := br.Status()

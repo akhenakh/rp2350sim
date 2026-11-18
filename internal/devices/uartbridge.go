@@ -2,6 +2,7 @@ package devices
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -18,8 +19,8 @@ type UARTBridge struct {
 	UART       int
 	ListenAddr string
 
-	// Logf, when non-nil, reports listener and client events.
-	Logf func(format string, args ...any)
+	// Logger, when non-nil, reports listener and client events.
+	Logger *slog.Logger
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -41,12 +42,6 @@ func NewUARTBridge(chip *rp2350.Chip, uart int, listen string) *UARTBridge {
 	return &UARTBridge{Chip: chip, UART: uart, ListenAddr: listen}
 }
 
-func (b *UARTBridge) logf(format string, args ...any) {
-	if b.Logf != nil {
-		b.Logf(format, args...)
-	}
-}
-
 // Start opens the listener and the pump goroutines.
 func (b *UARTBridge) Start() error {
 	if b.UART < 0 || b.UART > 1 {
@@ -63,7 +58,7 @@ func (b *UARTBridge) Start() error {
 	b.done = make(chan struct{})
 	go b.acceptLoop()
 	go b.txLoop()
-	b.logf("uart bridge: uart%d listening on %s", b.UART, ln.Addr())
+	loggerOr(b.Logger).Info("uart bridge listening", slog.Int("uart", b.UART), slog.String("addr", ln.Addr().String()))
 	return nil
 }
 
@@ -75,12 +70,12 @@ func (b *UARTBridge) acceptLoop() {
 		}
 		b.mu.Lock()
 		if b.conn != nil {
-			b.conn.Close()
+			_ = b.conn.Close()
 		}
 		b.conn = conn
 		b.client = conn.RemoteAddr().String()
 		b.mu.Unlock()
-		b.logf("uart bridge: uart%d client %s", b.UART, conn.RemoteAddr())
+		loggerOr(b.Logger).Info("uart bridge client", slog.Int("uart", b.UART), slog.String("remote", conn.RemoteAddr().String()))
 		go b.readLoop(conn)
 	}
 }
@@ -115,7 +110,7 @@ func (b *UARTBridge) readLoop(conn net.Conn) {
 				b.client = ""
 			}
 			b.mu.Unlock()
-			b.logf("uart bridge: uart%d client gone", b.UART)
+			loggerOr(b.Logger).Info("uart bridge client gone", slog.Int("uart", b.UART))
 			return
 		}
 	}
@@ -131,9 +126,9 @@ func (b *UARTBridge) txLoop() {
 			if conn == nil {
 				continue
 			}
-			conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+			_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 			if _, err := conn.Write(data); err != nil {
-				conn.Close()
+				_ = conn.Close()
 				b.mu.Lock()
 				if b.conn == conn {
 					b.conn = nil
@@ -179,11 +174,11 @@ func (b *UARTBridge) Close() {
 		}
 		b.mu.Lock()
 		if b.conn != nil {
-			b.conn.Close()
+			_ = b.conn.Close()
 			b.conn = nil
 		}
 		if b.ln != nil {
-			b.ln.Close()
+			_ = b.ln.Close()
 			b.ln = nil
 		}
 		b.mu.Unlock()

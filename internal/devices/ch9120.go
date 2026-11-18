@@ -2,6 +2,7 @@ package devices
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -20,8 +21,8 @@ type CH9120 struct {
 	// CFG0, RST and TCPCS are the control pins (set to -1 to omit).
 	CFG0, RST, TCPCS int
 
-	// Logf, when non-nil, reports configuration and socket events.
-	Logf func(format string, args ...any)
+	// Logger, when non-nil, reports configuration and socket events.
+	Logger *slog.Logger
 	// ReplyTap, when non-nil, also receives every byte sent to the MCU.
 	ReplyTap func([]byte)
 	// OnByte, when non-nil, observes every byte written by the MCU (for the
@@ -112,12 +113,6 @@ func (d *CH9120) Attach() {
 	c.CycleHooks = append(c.CycleHooks, d.Tick)
 }
 
-func (d *CH9120) logf(format string, args ...any) {
-	if d.Logf != nil {
-		d.Logf(format, args...)
-	}
-}
-
 // ReceiveByte consumes one byte written by the MCU.
 func (d *CH9120) ReceiveByte(b byte) {
 	if d.OnByte != nil {
@@ -126,10 +121,7 @@ func (d *CH9120) ReceiveByte(b byte) {
 	d.mu.Lock()
 	if d.inConfigMode() {
 		d.frame = append(d.frame, b)
-		for {
-			if len(d.frame) < 3 {
-				break
-			}
+		for len(d.frame) >= 3 {
 			if d.frame[0] != 0x57 || d.frame[1] != 0xab {
 				d.frame = d.frame[1:]
 				continue
@@ -296,7 +288,7 @@ func (d *CH9120) Tick() {
 	if rst && !d.lastRST {
 		d.stopNetworkLocked()
 		d.applyLocked()
-		d.logf("ch9120: reset")
+		loggerOr(d.Logger).Debug("ch9120 reset")
 	}
 	d.lastRST = rst
 
@@ -305,15 +297,15 @@ func (d *CH9120) Tick() {
 		d.txBuf = nil
 		if d.udp != nil && d.udpPeer != nil {
 			if n, err := d.udp.WriteToUDP(data, d.udpPeer); err != nil {
-				d.logf("ch9120: udp send: %v", err)
+				loggerOr(d.Logger).Debug("ch9120 udp send failed", slog.Any("err", err))
 			} else {
-				d.logf("ch9120: tx udp %d bytes", n)
+				loggerOr(d.Logger).Debug("ch9120 tx", slog.String("proto", "udp"), slog.Int("bytes", n))
 			}
 		} else if d.conn != nil {
 			if n, err := d.conn.Write(data); err != nil {
-				d.logf("ch9120: tcp send: %v", err)
+				loggerOr(d.Logger).Debug("ch9120 tcp send failed", slog.Any("err", err))
 			} else {
-				d.logf("ch9120: tx tcp %d bytes", n)
+				loggerOr(d.Logger).Debug("ch9120 tx", slog.String("proto", "tcp"), slog.Int("bytes", n))
 			}
 		}
 	} else if len(d.txBuf) > 64*1024 {
@@ -334,7 +326,8 @@ func (d *CH9120) applyLocked() {
 	addr := net.JoinHostPort(net.IP(d.targetIP[:]).String(), strconv.Itoa(int(d.targetPort)))
 	mode := d.mode
 	port := d.localPort
-	d.logf("ch9120: mode=%d local=%d target=%s", mode, port, addr)
+	loggerOr(d.Logger).Debug("ch9120 configured",
+		slog.Int("mode", int(mode)), slog.Int("local_port", int(port)), slog.String("target", addr))
 
 	switch mode {
 	case CH9120TCPServer:
@@ -351,18 +344,18 @@ func (d *CH9120) applyLocked() {
 func (d *CH9120) serveTCP(gen uint64, port uint16) {
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(int(port)))
 	if err != nil {
-		d.logf("ch9120: listen :%d: %v", port, err)
+		loggerOr(d.Logger).Debug("ch9120 listen failed", slog.Int("port", int(port)), slog.Any("err", err))
 		return
 	}
 	d.mu.Lock()
 	if d.gen != gen {
 		d.mu.Unlock()
-		ln.Close()
+		_ = ln.Close()
 		return
 	}
 	d.listener = ln
 	d.mu.Unlock()
-	d.logf("ch9120: listening on :%d", port)
+	loggerOr(d.Logger).Debug("ch9120 listening", slog.Int("port", int(port)))
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -371,16 +364,16 @@ func (d *CH9120) serveTCP(gen uint64, port uint16) {
 		d.mu.Lock()
 		if d.gen != gen {
 			d.mu.Unlock()
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
 		if d.conn != nil {
-			d.conn.Close()
+			_ = d.conn.Close()
 		}
 		d.conn = conn
 		d.connected = true
 		d.mu.Unlock()
-		d.logf("ch9120: client %s", conn.RemoteAddr())
+		loggerOr(d.Logger).Debug("ch9120 client", slog.String("remote", conn.RemoteAddr().String()))
 		d.readTCP(gen, conn)
 	}
 }
@@ -388,19 +381,19 @@ func (d *CH9120) serveTCP(gen uint64, port uint16) {
 func (d *CH9120) dialTCP(gen uint64, addr string) {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		d.logf("ch9120: dial %s: %v", addr, err)
+		loggerOr(d.Logger).Debug("ch9120 dial failed", slog.String("target", addr), slog.Any("err", err))
 		return
 	}
 	d.mu.Lock()
 	if d.gen != gen {
 		d.mu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
 	d.conn = conn
 	d.connected = true
 	d.mu.Unlock()
-	d.logf("ch9120: connected to %s", addr)
+	loggerOr(d.Logger).Debug("ch9120 connected", slog.String("remote", addr))
 	d.readTCP(gen, conn)
 }
 
@@ -412,7 +405,7 @@ func (d *CH9120) readTCP(gen uint64, conn net.Conn) {
 			d.mu.Lock()
 			if d.gen == gen {
 				d.send(append([]byte(nil), buf[:n]...))
-				d.logf("ch9120: rx tcp %d bytes", n)
+				loggerOr(d.Logger).Debug("ch9120 rx", slog.String("proto", "tcp"), slog.Int("bytes", n))
 			}
 			d.mu.Unlock()
 		}
@@ -423,7 +416,7 @@ func (d *CH9120) readTCP(gen uint64, conn net.Conn) {
 				d.conn = nil
 			}
 			d.mu.Unlock()
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
 	}
@@ -436,19 +429,19 @@ func (d *CH9120) serveUDP(gen uint64, port uint16) {
 	}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		d.logf("ch9120: udp listen :%d: %v", port, err)
+		loggerOr(d.Logger).Debug("ch9120 udp listen failed", slog.Int("port", int(port)), slog.Any("err", err))
 		return
 	}
 	d.mu.Lock()
 	if d.gen != gen {
 		d.mu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
 	d.udp = conn
 	d.connected = true
 	d.mu.Unlock()
-	d.logf("ch9120: udp listening on :%d", port)
+	loggerOr(d.Logger).Debug("ch9120 udp listening", slog.Int("port", int(port)))
 	buf := make([]byte, 2048)
 	for {
 		n, peer, err := conn.ReadFromUDP(buf)
@@ -457,7 +450,7 @@ func (d *CH9120) serveUDP(gen uint64, port uint16) {
 			if d.gen == gen {
 				d.udpPeer = peer
 				d.send(append([]byte(nil), buf[:n]...))
-				d.logf("ch9120: rx udp %d bytes", n)
+				loggerOr(d.Logger).Debug("ch9120 rx", slog.String("proto", "udp"), slog.Int("bytes", n))
 			}
 			d.mu.Unlock()
 		}
@@ -474,20 +467,20 @@ func (d *CH9120) dialUDP(gen uint64, addr string) {
 	}
 	conn, err := net.DialUDP("udp", nil, raddr)
 	if err != nil {
-		d.logf("ch9120: udp dial %s: %v", addr, err)
+		loggerOr(d.Logger).Debug("ch9120 udp dial failed", slog.String("target", addr), slog.Any("err", err))
 		return
 	}
 	d.mu.Lock()
 	if d.gen != gen {
 		d.mu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
 	d.udp = conn
 	d.udpPeer = raddr
 	d.connected = true
 	d.mu.Unlock()
-	d.logf("ch9120: udp connected to %s", addr)
+	loggerOr(d.Logger).Debug("ch9120 udp connected", slog.String("remote", addr))
 	buf := make([]byte, 2048)
 	for {
 		n, err := conn.Read(buf)
@@ -495,7 +488,7 @@ func (d *CH9120) dialUDP(gen uint64, addr string) {
 			d.mu.Lock()
 			if d.gen == gen {
 				d.send(append([]byte(nil), buf[:n]...))
-				d.logf("ch9120: rx udp %d bytes", n)
+				loggerOr(d.Logger).Debug("ch9120 rx", slog.String("proto", "udp"), slog.Int("bytes", n))
 			}
 			d.mu.Unlock()
 		}
@@ -508,15 +501,15 @@ func (d *CH9120) dialUDP(gen uint64, addr string) {
 func (d *CH9120) stopNetworkLocked() {
 	d.gen++
 	if d.conn != nil {
-		d.conn.Close()
+		_ = d.conn.Close()
 		d.conn = nil
 	}
 	if d.listener != nil {
-		d.listener.Close()
+		_ = d.listener.Close()
 		d.listener = nil
 	}
 	if d.udp != nil {
-		d.udp.Close()
+		_ = d.udp.Close()
 		d.udp = nil
 	}
 	d.udpPeer = nil
