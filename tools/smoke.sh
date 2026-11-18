@@ -130,21 +130,21 @@ else
 fi
 kill "$serialpid" 2>/dev/null || true
 
-if (cd ui && go run . --board pico2 --png "../$BUILD/ui-smoke.png" --run 0.4 ../build/blinky.elf >/dev/null 2>&1) &&
+if (cd cmd/simui && go run . --board pico2 --png "../../$BUILD/ui-smoke.png" --run 0.4 "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI headless snapshot"
 else
 	bad "UI headless snapshot" "$(cat "$BUILD/smoke.log")"
 fi
 
-if (cd ui && go run . --board pico2-analog --tab scope --run 0.02 	--png "../$BUILD/scope-smoke.png" >/dev/null 2>&1) &&
+if (cd cmd/simui && go run . --board pico2-analog --tab scope --run 0.02 	--png "../../$BUILD/scope-smoke.png" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/scope-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI oscilloscope tab"
 else
 	bad "UI oscilloscope tab" "$(cat "$BUILD/smoke.log")"
 fi
 
-if (cd ui && go run . --board pico2-analog --tab logic --run 0.05 	--png "../$BUILD/logic-smoke.png" ../build/protocols.elf >/dev/null 2>&1) &&
+if (cd cmd/simui && go run . --board pico2-analog --tab logic --run 0.05 	--png "../../$BUILD/logic-smoke.png" "../../$BUILD/protocols.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 30 "$BUILD/logic-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI logic analyzer tab"
 else

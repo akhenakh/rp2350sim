@@ -13,7 +13,7 @@ interpreter is checked against QEMU instruction by instruction.
 
 ```
 cmd/rp2350sim/      headless runner and debugging tools
-ui/                 Shirei desktop UI (separate module)
+cmd/simui/          Shirei desktop UI (separate module)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
                     UART, SPI, DMA, PWM, ADC, I2C
@@ -169,11 +169,11 @@ See `.operator/specs/hardware.md` for the board wiring and the remaining gaps.
 ## Desktop UI
 
 ```sh
-cd ui
-go run . --board geek ../firmware.elf
+cd cmd/simui
+go run . --board geek ../../firmware.elf
 ```
 
-The UI starts with a board picker. The list comes from `ui/boards.yaml` (or
+The UI starts with a board picker. The list comes from `cmd/simui/boards.yaml` (or
 `RP2350SIM_BOARDS=/path/to/boards.yaml`), and each entry declares its hardware:
 an ST7789 LCD on an SPI bus with its CS/DC/RST pins, a W5500/W6300 controller,
 a WS2812B data pin, scope channels, generated analog signals, or logic-analyzer

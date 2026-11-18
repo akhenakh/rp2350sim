@@ -41,7 +41,7 @@ tasks:
       - go vet ./...
       - golangci-lint run ./...
       - go fix -diff ./...
-      - cd ui && go vet ./... && golangci-lint run ./... && go fix -diff ./...
+      - cd cmd/simui && go vet ./... && golangci-lint run ./... && go fix -diff ./...
       - cd drivers/ch9120 && go vet ./... && golangci-lint run ./... && go fix -diff ./...
       - cd drivers/w6300 && go vet ./... && golangci-lint run ./... && go fix -diff ./...
 
@@ -322,71 +322,71 @@ tasks:
     desc: Run the desktop UI with the blinky firmware loaded
     aliases: [ui]
     deps: [firmware:blinky]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board pico2 '../{{.BLINKY}}'
+      - go run . --board pico2 '../../{{.BLINKY}}'
 
   ui:lcd:
     desc: Run the desktop UI with the ST7789 example loaded
     deps: [firmware:lcd]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board geek '../{{.BUILD}}/lcd.elf'
+      - go run . --board geek '../../{{.BUILD}}/lcd.elf'
 
   ui:ws2812:
     desc: Run the UI with the WS2812B example (strip decoded from GP0)
     deps: [firmware:ws2812]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board pico2-ws2812 '../{{.BUILD}}/ws2812.elf'
+      - go run . --board pico2-ws2812 '../../{{.BUILD}}/ws2812.elf'
 
   ui:scope:
     desc: Run the UI oscilloscope demo (1 kHz sine on GP26)
-    dir: ui
+    dir: cmd/simui
     cmds:
       - go run . --board pico2-analog --tab scope
 
   ui:logic:
     desc: Run the UI logic analyzer with the UART/I2C/SPI demo
     deps: [firmware:protocols]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board pico2-analog --tab logic '../{{.BUILD}}/protocols.elf'
+      - go run . --board pico2-analog --tab logic '../../{{.BUILD}}/protocols.elf'
 
   ui:wifi:
     desc: Run the UI on the Pico 2 W (virtual Wi-Fi) with the netdev example
     deps: [firmware:wifi]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board pico2w '../{{.BUILD}}/wifi.elf'
+      - go run . --board pico2w '../../{{.BUILD}}/wifi.elf'
 
   ui:ch9120:
     desc: Run the UI on the RP2350-ETH (CH9120) board with the echo example
     deps: [firmware:ch9120]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board rp2350-eth '../{{.BUILD}}/ch9120.elf'
+      - go run . --board rp2350-eth '../../{{.BUILD}}/ch9120.elf'
 
   ui:serial:
     desc: Run the UI with UART1 bridged to an automatic TCP port (see Console)
     deps: [firmware:serialbridge]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board pico2-serial '../{{.BUILD}}/serialbridge.elf'
+      - go run . --board pico2-serial '../../{{.BUILD}}/serialbridge.elf'
 
   ui:w6300:
     desc: Run the UI with the W6300 example on the POE-ETH board
     deps: [firmware:w6300]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board poe-eth '../{{.BUILD}}/w6300.elf'
+      - go run . --board poe-eth '../../{{.BUILD}}/w6300.elf'
 
   ui:png:
     desc: Render the UI headlessly to build/ui.png with the LCD example
     deps: [firmware:lcd]
-    dir: ui
+    dir: cmd/simui
     cmds:
-      - go run . --board geek --tab lcd --png '../{{.BUILD}}/ui.png' --run 0.6 '../{{.BUILD}}/lcd.elf'
+      - go run . --board geek --tab lcd --png '../../{{.BUILD}}/ui.png' --run 0.6 '../../{{.BUILD}}/lcd.elf'
 
   clean:
     desc: Remove build outputs

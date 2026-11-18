@@ -1,19 +1,20 @@
 # Desktop UI
 
-The UI is a separate Go module (`ui/`) so GUI dependencies never enter the
-emulator build. It shows the selected board, live GPIO, LCD, Ethernet/Wi-Fi
+The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
+the emulator build. It shows the selected board, live GPIO, LCD, Ethernet/Wi-Fi
 state, a console, an oscilloscope and a logic analyzer.
 
 ```sh
-cd ui
-go run . --board geek ../path/to/firmware.elf
+cd cmd/simui
+go run . --board geek ../../path/to/firmware.elf
 ```
 
 The window is 1280×820 by default; `--width`/`--height` change it.
 
 ## Startup: the board picker
 
-The UI opens on a **scrollable list of boards** loaded from `ui/boards.yaml`
+The UI opens on a **scrollable list of boards** loaded from
+`cmd/simui/boards.yaml`
 (embedded). Each card shows the board name, description and device badges.
 Clicking a card attaches that board's devices to the emulated chip and opens
 the matching tabs.
@@ -161,10 +162,10 @@ works. See [boards.md](boards.md).
 ## Headless snapshots
 
 ```sh
-cd ui
-go run . --board geek --tab lcd --run 0.6 --png ui.png ../firmware.elf
-go run . --board pico2-analog --tab scope --run 0.02 --png scope.png
-go run . --board pico2-analog --tab logic --run 0.05 --png logic.png ../build/protocols.elf
+cd cmd/simui
+go run . --board geek --tab lcd --run 0.6 --png ../../ui.png ../../firmware.elf
+go run . --board pico2-analog --tab scope --run 0.02 --png ../../scope.png
+go run . --board pico2-analog --tab logic --run 0.05 --png ../../logic.png ../../build/protocols.elf
 ```
 
 `--run` advances virtual time synchronously (the UI does not step in the

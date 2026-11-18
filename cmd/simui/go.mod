@@ -1,4 +1,4 @@
-module github.com/akhenakh/rp2350sim/ui
+module github.com/akhenakh/rp2350sim/cmd/simui
 
 go 1.27
 
@@ -30,4 +30,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/akhenakh/rp2350sim => ../
+replace github.com/akhenakh/rp2350sim => ../../

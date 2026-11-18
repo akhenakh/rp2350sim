@@ -859,7 +859,7 @@ func logicPanel() {
 			Container(Attrs(Gap(10), Expand), func() {
 				l := selectedBoard.Logic
 				if l == nil {
-					Label("No protocols configured for this board (add a logic: block to ui/boards.yaml).",
+					Label("No protocols configured for this board (add a logic: block to cmd/simui/boards.yaml).",
 						FontSize(12), TextColor(220, 6, 60, 1))
 				} else {
 					if l.UART != nil {

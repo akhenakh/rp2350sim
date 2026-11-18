@@ -104,8 +104,8 @@ rp2350sim -fw firmware.elf -seconds 3 -lcd -lcd-png lcd.png \
 The UI can render a headless snapshot too (see [ui.md](ui.md)):
 
 ```sh
-(cd ui && go run . --board geek --tab lcd --run 0.6 \
-  --png ../ui.png ../firmware.elf)
+(cd cmd/simui && go run . --board geek --tab lcd --run 0.6 \
+  --png ../../ui.png ../../firmware.elf)
 ```
 
 ## GitHub Actions

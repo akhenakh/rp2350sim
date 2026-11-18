@@ -108,14 +108,14 @@ The UI module can render a deterministic frame, which is useful for design
 reviews or CI artifacts:
 
 ```sh
-cd ui
-go run . --board geek --tab lcd --run 0.6 --png ../ui.png ../build/firmware.elf
+cd cmd/simui
+go run . --board geek --tab lcd --run 0.6 --png ../../ui.png ../../build/firmware.elf
 ```
 
 ## Choosing hardware
 
 The headless runner attaches devices with flags (`-lcd`, `-eth`, `-w6300`,
-`-ch9120`, `-ws2812`); the UI uses board definitions in `ui/boards.yaml`. Use
+`-ch9120`, `-ws2812`); the UI uses board definitions in `cmd/simui/boards.yaml`. Use
 the flag that matches the wiring your firmware expects. The Pico 2 itself needs
 no flags.
 
