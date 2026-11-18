@@ -68,7 +68,9 @@ func (n *NVIC) wake() {
 	for irq := 0; irq < 64; irq++ {
 		if n.pending[irq/32]&(1<<uint(irq%32)) != 0 && n.enabled[irq/32]&(1<<uint(irq%32)) != 0 {
 			n.chip.CPU0.Sleeping = false
+			n.chip.CPU0.SleepOnEvent = false
 			n.chip.CPU1.Sleeping = false
+			n.chip.CPU1.SleepOnEvent = false
 			return
 		}
 	}

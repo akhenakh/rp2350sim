@@ -330,11 +330,16 @@ func (c *CPU) exec16Misc(hw uint16) {
 				c.EventRegister = false
 			} else {
 				c.Sleeping = true
+				c.SleepOnEvent = true
 			}
 		case 3: // WFI
 			c.Sleeping = true
-		case 4: // SEV
+			c.SleepOnEvent = false
+		case 4: // SEV signals an event to every core in the system.
 			c.EventRegister = true
+			if w, ok := c.Bus.(interface{ SignalEvent() }); ok {
+				w.SignalEvent()
+			}
 		}
 	}
 }

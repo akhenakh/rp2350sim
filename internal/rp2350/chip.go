@@ -210,6 +210,18 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 	cpu.Step()
 }
 
+// SignalEvent implements SEV: the event is visible to every core, and cores
+// sleeping in WFE resume. WFI sleepers only wake on an interrupt.
+func (c *Chip) SignalEvent() {
+	for _, cpu := range []*m33.CPU{c.CPU0, c.CPU1} {
+		cpu.EventRegister = true
+		if cpu.SleepOnEvent {
+			cpu.Sleeping = false
+			cpu.SleepOnEvent = false
+		}
+	}
+}
+
 // advanceSleep skips time forward when all cores are asleep.
 func (c *Chip) advanceSleep(max uint64) {
 	c.Cycles += max

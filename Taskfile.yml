@@ -97,6 +97,24 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/piotest.elf -seconds 0.3'
 
+  firmware:cores:
+    desc: Build the multicore scheduler test (-scheduler=cores)
+    dir: firmware/cores
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/cores.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -scheduler=cores -o ../../{{.BUILD}}/cores.elf .'
+
+  run:cores:
+    desc: Run the multicore test and trace both cores' pins
+    deps: [build, firmware:cores]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/cores.elf -seconds 1.5 -trace-pins 15,25'
+
   firmware:ws2812:
     desc: Build the WS2812B example (TinyGo PIO driver)
     dir: firmware/ws2812

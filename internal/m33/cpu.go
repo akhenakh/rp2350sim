@@ -61,6 +61,9 @@ type CPU struct {
 	Cycles uint64
 	// Sleeping is set by WFE/WFI and cleared when an event or interrupt arrives.
 	Sleeping bool
+	// SleepOnEvent marks a WFE sleep, which SEV may wake. WFI sleeps only
+	// end on an interrupt.
+	SleepOnEvent bool
 	// Parked keeps a core stopped until it is explicitly started (core 1
 	// bootrom wait loop).
 	Parked bool
@@ -111,6 +114,7 @@ func (c *CPU) Reset() {
 	c.PSP = 0
 	c.itstate = 0
 	c.Sleeping = false
+	c.SleepOnEvent = false
 	c.Halted = false
 	c.Cycles = 0
 }

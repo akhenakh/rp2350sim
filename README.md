@@ -38,6 +38,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
+| `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
@@ -151,8 +152,9 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 - The emulated CPU is the Cortex-M33 (thumbv8m.main); there is no RISC-V path.
   TinyGo `-target=pico2` emits Arm, and that is the contract.
 - Missing peripherals: USB host, PSRAM.
-- The TinyGo build under test does not launch core 1, so the emulator runs
-  single-core in practice.
+- The default `pico2` build does not launch core 1. With
+  `tinygo build -scheduler=cores` the runtime starts core 1 through the SIO
+  FIFO; both cores then run tasks (see `firmware/cores` and `task run:cores`).
 - Time is virtual and one instruction is one cycle; throughput is about 160M
   cycles/s (faster than the emulated 150 MHz clock), so firmware runs at or
   above real time. `-cpuprofile` writes a Go CPU profile.

@@ -119,7 +119,9 @@ func (t *timerBlock) tick(now uint64) {
 			t.intR |= bit
 			t.chip.NVIC.Pend(t.idx*4 + i)
 			t.chip.CPU0.Sleeping = false
+			t.chip.CPU0.SleepOnEvent = false
 			t.chip.CPU1.Sleeping = false
+			t.chip.CPU1.SleepOnEvent = false
 		}
 	}
 	t.block.regs[0x20/4] = t.armed
