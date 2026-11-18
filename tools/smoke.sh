@@ -72,6 +72,27 @@ contains "W6300 TCP server" 'server check 1: reply "pong\n"' "$log"
 contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
 
 # --- UI headless snapshot ---------------------------------------------------
+# --- UART over TCP ----------------------------------------------------------
+"$EMU" -fw "$BUILD/serialbridge.elf" -seconds 4 -serial-tcp 1:127.0.0.1:0 \
+	>"$BUILD/serial.log" 2>&1 &
+serialpid=$!
+serialaddr=""
+for i in $(seq 1 50); do
+	serialaddr=$(sed -n 's/.*uart1 listening on \([^ ]*\).*/\1/p' "$BUILD/serial.log" | head -1)
+	if [ -n "$serialaddr" ]; then
+		break
+	fi
+	sleep 0.1
+done
+if [ -z "$serialaddr" ]; then
+	bad "UART over TCP" "no listener address" "$(cat "$BUILD/serial.log")"
+elif "$BUILD/serialcheck" -addr "$serialaddr" -send "serial-check" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UART over TCP ($serialaddr)"
+else
+	bad "UART over TCP" "$(cat "$BUILD/serial.log")" "$(cat "$BUILD/smoke.log")"
+fi
+kill "$serialpid" 2>/dev/null || true
+
 if (cd ui && go run . --board pico2 --png "../$BUILD/ui-smoke.png" --run 0.4 ../build/blinky.elf >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI headless snapshot"

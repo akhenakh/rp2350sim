@@ -251,6 +251,11 @@ func (c *Chip) tickPeripherals() {
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
 	}
+	for _, u := range c.uart {
+		if u != nil {
+			u.tick()
+		}
+	}
 	if c.usb != nil {
 		// The USB host state machine only needs to observe the device every
 		// few cycles; full-speed bit times are 12 cycles at 150 MHz.
@@ -600,7 +605,10 @@ func (c *Chip) SendUART(idx int, data []byte) {
 	if idx < 0 || idx >= len(c.uart) || c.uart[idx] == nil {
 		return
 	}
+	c.uart[idx].rxMu.Lock()
 	c.uart[idx].rx = append(c.uart[idx].rx, data...)
+	c.uart[idx].rxMu.Unlock()
+	c.uart[idx].irqPending.Store(true)
 }
 
 // NowMicros returns the current virtual time in microseconds.

@@ -41,6 +41,7 @@ func main() {
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
 		inputStr   = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
+		serialTCP  = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
 		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
@@ -149,6 +150,53 @@ func main() {
 	c.OnUART0 = func(b byte) { os.Stdout.Write([]byte{b}) }
 	c.OnUART1 = func(b byte) { os.Stdout.Write([]byte{b}) }
 	c.SetUSBCDC(func(b []byte) { os.Stdout.Write(b) })
+
+	var bridges []*devices.UARTBridge
+	if *serialTCP != "" {
+		for _, spec := range strings.Split(*serialTCP, ",") {
+			uartStr, addr, ok := strings.Cut(spec, ":")
+			if !ok || addr == "" {
+				fmt.Fprintf(os.Stderr, "serial-tcp: bad spec %q (want uart:host:port)\n", spec)
+				continue
+			}
+			idx, err := strconv.Atoi(uartStr)
+			if err != nil || idx < 0 || idx > 1 {
+				fmt.Fprintf(os.Stderr, "serial-tcp: bad UART %q\n", uartStr)
+				continue
+			}
+			br := devices.NewUARTBridge(c, idx, addr)
+			br.Logf = func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}
+			if err := br.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "serial-tcp: uart%d: %v\n", idx, err)
+				continue
+			}
+			bridges = append(bridges, br)
+			if idx == 0 {
+				prev := c.OnUART0
+				c.OnUART0 = func(b byte) {
+					if prev != nil {
+						prev(b)
+					}
+					br.Write([]byte{b})
+				}
+			} else {
+				prev := c.OnUART1
+				c.OnUART1 = func(b byte) {
+					if prev != nil {
+						prev(b)
+					}
+					br.Write([]byte{b})
+				}
+			}
+		}
+		defer func() {
+			for _, br := range bridges {
+				br.Close()
+			}
+		}()
+	}
 	if os.Getenv("RP2350SIM_USB_LOG") != "" {
 		c.USBLog = os.Stderr
 	}
