@@ -48,6 +48,13 @@ type CPU struct {
 	// instructions executing inside an IT block (ARMv8-M rule).
 	itNoFlags bool
 
+	// VFP state: 32 single-precision registers, the status/control register,
+	// and whether the FP context is live (stacked on exception entry).
+	S         [32]uint32
+	FPSCR     uint32
+	FPUActive bool
+	dcp       dcpState
+
 	// CONTROL bit 1 selects PSP in thread mode.
 	CONTROL uint32
 	// MSP and PSP are the banked stack pointers.
@@ -89,6 +96,9 @@ type CPU struct {
 	// EventRegister models the SEV event register: WFE clears it if set.
 	EventRegister bool
 
+	// DCPLog, when set, reports each completed double-coprocessor operation.
+	DCPLog func(format DCPFormat, op DCPOp, x, y, result float64)
+
 	// TracePC, when set, is called before each instruction executes.
 	TracePC func(c *CPU, pc uint32, hw1 uint16)
 }
@@ -111,6 +121,12 @@ func (c *CPU) Reset() {
 	c.CONTROL = 0
 	c.MSP = 0
 	c.PSP = 0
+	for i := range c.S {
+		c.S[i] = 0
+	}
+	c.FPSCR = 0
+	c.FPUActive = false
+	c.dcp = dcpState{}
 	c.itstate = 0
 	c.Sleeping = false
 	c.SleepOnEvent = false
@@ -321,6 +337,10 @@ func (c *CPU) Exception(n uint32) {
 	if usePSP {
 		sp = c.PSP
 	}
+	fp := c.FPUActive
+	if fp {
+		sp -= 72 // S0-S15, FPSCR and the reserved word
+	}
 	sp -= 32
 	c.Bus.Write32(sp+0, c.R[0])
 	c.Bus.Write32(sp+4, c.R[1])
@@ -335,13 +355,25 @@ func (c *CPU) Exception(n uint32) {
 	} else {
 		c.MSP = sp
 	}
+	if fp {
+		base := sp + 32
+		for i := range 16 {
+			c.Bus.Write32(base+uint32(i*4), c.S[i])
+		}
+		c.Bus.Write32(base+64, c.FPSCR)
+		c.Bus.Write32(base+68, 0)
+	}
 	// Handler mode always uses MSP.
 	c.R[13] = c.MSP
-	// EXC_RETURN: thread/handler, MSP/PSP, no FP state.
+	// EXC_RETURN: thread/handler, MSP/PSP, and the stack frame type in bit 4
+	// (0 = standard frame with FP state, 1 = extended frame without it).
 	if usePSP {
 		c.R[14] = excReturnBase | 0xD
 	} else {
 		c.R[14] = excReturnBase | 0x9
+	}
+	if fp {
+		c.R[14] &^= 0x10
 	}
 	c.IPSR = n
 	c.APSR &^= flagQ
@@ -373,6 +405,16 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 	pc := c.Bus.Read32(sp + 24)
 	c.APSR = (c.APSR &^ 0xF8000000) | (c.Bus.Read32(sp+28) & 0xF8000000)
 	sp += 32
+	if excReturn&0x10 == 0 { // standard frame: restore the FP context
+		for i := range 16 {
+			c.S[i] = c.Bus.Read32(sp + uint32(i*4))
+		}
+		c.FPSCR = c.Bus.Read32(sp + 64)
+		sp += 72
+		c.FPUActive = true
+	} else {
+		c.FPUActive = false
+	}
 	if usePSP {
 		c.PSP = sp
 	} else {

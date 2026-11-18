@@ -193,6 +193,11 @@ func main() {
 
 	c := rp2350.New()
 	c.Logger = log
+	if os.Getenv("RP2350SIM_DCP_LOG") != "" {
+		c.CPU0.DCPLog = func(format m33.DCPFormat, op m33.DCPOp, x, y, result float64) {
+			log.Debug("dcp", "format", format, "op", op, "x", x, "y", y, "result", result)
+		}
+	}
 	if os.Getenv("RP2350SIM_USB_LOG") != "" || os.Getenv("RP2350SIM_PIO_LOG") != "" {
 		c.Logger = debugLog()
 	}

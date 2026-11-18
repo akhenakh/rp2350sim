@@ -6,7 +6,9 @@ A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodif
 Status: runs real TinyGo programs end to end — package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
 DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), an ST7789 display and
-W5500 Ethernet, plus a W6300 driver for the PoE board. The Cortex-M33
+W5500 Ethernet, plus a W6300 driver for the PoE board. Stock **Pico SDK C**
+firmware boots through the same vector table and runs its runtime, UART stdio,
+GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33
 interpreter is checked against QEMU instruction by instruction.
 
 ## Layout
@@ -14,6 +16,7 @@ interpreter is checked against QEMU instruction by instruction.
 ```
 cmd/rp2350sim/      headless runner and debugging tools
 cmd/simui/          Shirei desktop UI (separate module)
+firmware/c/         Pico SDK C examples (CMake)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
                     UART, SPI, DMA, PWM, ADC, I2C
@@ -58,6 +61,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
+| `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
+| `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task clean` | remove `build/` |
 
@@ -242,6 +247,7 @@ The user guide lives in [`docs/`](docs/README.md):
 - [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
 - [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, serial bridge
 - [`docs/boards.md`](docs/boards.md) — supported boards, wiring and limitations
+- [`docs/c.md`](docs/c.md) — C firmware with the Pico SDK, examples and current gaps
 
 ## Tests
 

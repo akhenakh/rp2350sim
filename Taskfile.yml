@@ -388,6 +388,46 @@ tasks:
     cmds:
       - go run . --board geek --tab lcd --png '../../{{.BUILD}}/ui.png' --run 0.6 '../../{{.BUILD}}/lcd.elf'
 
+  c:build:
+    desc: Build the Pico SDK C examples (requires PICO_SDK_PATH)
+    dir: firmware/c
+    sources:
+      - CMakeLists.txt
+      - '*/main.c'
+    generates:
+      - 'build/hello.elf'
+      - 'build/blinky.elf'
+      - 'build/floatdemo.elf'
+      - 'build/multicore.elf'
+    cmds:
+      - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
+      - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
+      - cmake --build build
+
+  c:hello:
+    desc: Run the Pico SDK hello world and assert its UART output
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/hello.elf -seconds 1 -quiet -expect "hello c done" -stop-on-expect'
+
+  c:blinky:
+    desc: Run the Pico SDK blinky and trace GP25
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/blinky.elf -seconds 1 -trace-pins 25'
+
+  c:float:
+    desc: Run the C single-precision FPU demo
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/floatdemo.elf -seconds 1 -quiet'
+
+  c:multicore:
+    desc: Run the C multicore (core 1 through the SIO FIFO) demo
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/multicore.elf -seconds 1 -quiet'
+
   clean:
     desc: Remove build outputs
     cmds:

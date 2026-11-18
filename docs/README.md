@@ -15,6 +15,7 @@ This directory is the user guide:
 | [tinygo.md](tinygo.md) | installing, building with TinyGo, drop-in Taskfile/Makefile targets, dev loop |
 | [ui.md](ui.md) | the desktop UI, board picker, `boards.yaml`, tabs, scope, logic analyzer, serial bridge |
 | [boards.md](boards.md) | supported boards, wiring, peripherals, and current limitations |
+| [c.md](c.md) | C firmware with the Pico SDK: build, examples, console, current gaps |
 
 ## Quick start
 
@@ -44,8 +45,9 @@ See [ci.md](ci.md) for the full recipe.
 
 ## Supported targets at a glance
 
-- **Raspberry Pi Pico 2** (RP2350A): GPIO, UART, SPI, I2C, PWM, ADC, PIO, USB
-  CDC console, DMA, timers, multicore (`-scheduler=cores`).
+- **Raspberry Pi Pico 2** (RP2350A), TinyGo and **Pico SDK C**: GPIO, UART,
+  SPI, I2C, PWM, ADC, PIO, USB CDC console (TinyGo), DMA, timers, multicore.
+  See [c.md](c.md) for the C path and its current limits.
 - **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
   CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).
 - **Waveshare RP2350-GEEK**: ST7789 240×135 on SPI1.
@@ -56,7 +58,9 @@ See [ci.md](ci.md) for the full recipe.
 ## Design notes
 
 - The CPU is Cortex-M33 (`thumbv8m.main`); stock TinyGo firmware is the
-  contract. The RP2350 bootrom is skipped (boot from the vector table).
+  contract, and stock Pico SDK C images boot through the same vector table. The
+  RP2350 bootrom itself is skipped; a synthetic table answers the SDK's
+  `rom_func_lookup` calls.
 - Time is virtual (150 MHz cycles); the emulator runs faster than real time,
   so `-seconds` is virtual time and `-wall-timeout` is real time.
 - The headless runner is the automation surface; the UI is a separate module.

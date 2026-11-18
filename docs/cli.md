@@ -208,6 +208,7 @@ of the others. Setting `-log-level debug` enables all of them.
 | `RP2350SIM_LCD_LOG` | ST7789 command decoding |
 | `RP2350SIM_USB_LOG` | USB host/device state |
 | `RP2350SIM_PIO_LOG` | PIO state machine execution |
+| `RP2350SIM_DCP_LOG` | RP2350 double coprocessor operations (operands and result) |
 
 ## Examples
 

@@ -144,6 +144,29 @@ else
 	bad "UI oscilloscope tab" "$(cat "$BUILD/smoke.log")"
 fi
 
+# --- Pico SDK C firmware (optional: needs the ARM toolchain and the SDK) ------
+if [ -n "$PICO_SDK_PATH" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &&
+	command -v cmake >/dev/null 2>&1; then
+	if cmake -S firmware/c -B "$BUILD/pico-c" -G Ninja -DPICO_BOARD=pico2 \
+		-DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release \
+		>>"$BUILD/smoke.log" 2>&1 &&
+		cmake --build "$BUILD/pico-c" >>"$BUILD/smoke.log" 2>&1; then
+		out=$("$EMU" -fw "$BUILD/pico-c/hello.elf" -seconds 1 -quiet 2>&1)
+		contains "Pico SDK C hello" "hello c done" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
+		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/multicore.elf" -seconds 1 -quiet 2>&1)
+		contains "C multicore" "worker=1" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/blinky.elf" -seconds 0.6 -trace-pins 25 2>&1)
+		n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
+		if [ "$n" -ge 2 ]; then ok "C blinky toggles GP25 ($n edges)"; else bad "C blinky GP25" "$out"; fi
+	else
+		bad "Pico SDK C build" "$(tail -20 "$BUILD/smoke.log")"
+	fi
+else
+	echo "skip: Pico SDK C checks (set PICO_SDK_PATH and install the ARM toolchain)"
+fi
+
 if (cd cmd/simui && go run . --board pico2-analog --tab logic --run 0.05 	--png "../../$BUILD/logic-smoke.png" "../../$BUILD/protocols.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 30 "$BUILD/logic-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI logic analyzer tab"
