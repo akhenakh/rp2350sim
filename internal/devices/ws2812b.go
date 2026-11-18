@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"image/color"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // WS2812B decodes the WS2812B single-wire protocol on a GPIO pin. The line is

@@ -1,6 +1,6 @@
 package rp2350
 
-import "github.com/akh/rp2350sim/internal/m33"
+import "github.com/akhenakh/rp2350sim/internal/m33"
 
 // NVIC models the Armv8-M Nested Vectored Interrupt Controller and the
 // System Control Block registers TinyGo and the Pico SDK touch.

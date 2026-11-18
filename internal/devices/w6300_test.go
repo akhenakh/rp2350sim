@@ -3,7 +3,7 @@ package devices
 import (
 	"testing"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 func newTestW6300() (*W6300, *rp2350.Chip) {

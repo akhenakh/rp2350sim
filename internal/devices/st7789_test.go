@@ -3,7 +3,7 @@ package devices
 import (
 	"testing"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 func newTestDisplay() *ST7789 {

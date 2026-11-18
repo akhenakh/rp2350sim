@@ -4,7 +4,7 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // ws2812Program drives one WS2812B strip with the same PIO program piolib uses

@@ -6,7 +6,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/akh/rp2350sim/internal/m33"
+	"github.com/akhenakh/rp2350sim/internal/m33"
 )
 
 // Memory map.

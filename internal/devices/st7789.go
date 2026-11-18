@@ -8,7 +8,7 @@ import (
 	"image/png"
 	"os"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // ST7789 models an ST7789-family SPI TFT controller. It decodes the command

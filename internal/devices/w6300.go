@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // W6300 models the WIZnet W6300 Ethernet controller, whose sockets are backed

@@ -9,9 +9,9 @@ import (
 
 	"image/color"
 
-	"github.com/akh/rp2350sim/internal/devices"
-	"github.com/akh/rp2350sim/internal/firmware"
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/firmware"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 	"go.hasen.dev/shirei"
 )
 

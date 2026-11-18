@@ -1,9 +1,9 @@
-module github.com/akh/rp2350sim/ui
+module github.com/akhenakh/rp2350sim/ui
 
 go 1.27
 
 require (
-	github.com/akh/rp2350sim v0.0.0
+	github.com/akhenakh/rp2350sim v0.0.0
 	github.com/ncruces/zenity v0.10.15
 	go.hasen.dev/shirei v0.9.1
 )
@@ -29,4 +29,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/akh/rp2350sim => ../
+replace github.com/akhenakh/rp2350sim => ../

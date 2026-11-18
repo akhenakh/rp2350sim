@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/akh/rp2350sim/internal/rp2350"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // W5500 models a WIZnet W5500 Ethernet controller as seen over SPI, with the
