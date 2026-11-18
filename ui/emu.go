@@ -160,7 +160,7 @@ func (e *Emu) loop() {
 	// still running the firmware as fast as the interpreter allows.
 	const chunk = 150_000
 	for {
-		time.Sleep(time.Millisecond)
+		time.Sleep(200 * time.Microsecond)
 		if shirei.GetHost().HeadlessRender {
 			continue // keep snapshots deterministic
 		}
