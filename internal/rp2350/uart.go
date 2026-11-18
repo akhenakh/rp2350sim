@@ -70,7 +70,11 @@ func newUART(c *Chip, base uint32, id int) *uartBlock {
 	return u
 }
 
-// EnableUART attaches a UART peripheral at the given base address.
+// AddUART attaches a UART peripheral at the given base address.
 func (c *Chip) AddUART(base uint32, id int) {
-	c.addRegBlock(newUART(c, base, id).block)
+	u := newUART(c, base, id)
+	if id >= 0 && id < len(c.uart) {
+		c.uart[id] = u
+	}
+	c.addRegBlock(u.block)
 }

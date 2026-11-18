@@ -20,6 +20,25 @@ func TestUSBDPRAMAccess(t *testing.T) {
 	}
 }
 
+// TestUSBCdcOutControl checks that host-to-device data lands in the OUT buffer
+// control: the guest reads the transfer length from there, and the IN control
+// must stay unarmed or the host drains a phantom IN packet.
+func TestUSBCdcOutControl(t *testing.T) {
+	c := New()
+	c.SendUSBCDC([]byte("hi"))
+
+	out := c.Read32(0x50100000 + usbBufCtrlOffOut(2))
+	if got := out & 0x3FF; got != 2 {
+		t.Fatalf("EP2 OUT length = %d, want 2", got)
+	}
+	if out&usbBufFull == 0 {
+		t.Fatal("EP2 OUT buffer not marked full")
+	}
+	if in := c.Read32(0x50100000 + usbBufCtrlOff(2)); in&usbBufFull != 0 {
+		t.Fatalf("EP2 IN control armed by SendCDC: %#x", in)
+	}
+}
+
 // TestUSBInterruptLatches checks the write-1-to-clear interrupt path used by the
 // firmware's USB handler.
 func TestUSBInterruptLatches(t *testing.T) {

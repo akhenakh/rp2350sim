@@ -54,14 +54,15 @@ type Chip struct {
 	// Pin state and per-pin external drive for the board model.
 	Pins *PinState
 
-	io  ioBank
-	sio sioBlock
-	tmr [2]timerBlock
-	usb *usbBlock
-	pwm *pwmBlock
-	adc *adcBlock
-	i2c [2]*i2cBlock
-	pio [3]*pioBlock
+	io   ioBank
+	sio  sioBlock
+	tmr  [2]timerBlock
+	usb  *usbBlock
+	pwm  *pwmBlock
+	adc  *adcBlock
+	i2c  [2]*i2cBlock
+	pio  [3]*pioBlock
+	uart [2]*uartBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -584,6 +585,14 @@ func (c *Chip) SetUSBCDC(fn func([]byte)) { c.usb.OnCDC = fn }
 
 // SendUSBCDC delivers data from the host to the device's CDC OUT endpoint.
 func (c *Chip) SendUSBCDC(data []byte) { c.usb.SendCDC(data) }
+
+// SendUART delivers host bytes to a UART receive FIFO (0 or 1).
+func (c *Chip) SendUART(idx int, data []byte) {
+	if idx < 0 || idx >= len(c.uart) || c.uart[idx] == nil {
+		return
+	}
+	c.uart[idx].rx = append(c.uart[idx].rx, data...)
+}
 
 // NowMicros returns the current virtual time in microseconds.
 func (c *Chip) NowMicros() uint64 { return c.Cycles / cyclesPerMicrosecond }

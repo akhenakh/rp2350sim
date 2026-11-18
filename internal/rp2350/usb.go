@@ -99,7 +99,12 @@ const (
 )
 
 // DPRAM layout helpers.
-func usbBufCtrlOff(ep int) uint32 { return 0x80 + uint32(ep)*8 }
+func usbBufCtrlOff(ep int) uint32 { return 0x80 + uint32(ep)*8 } // IN buffer control
+// usbBufCtrlOffOut is the OUT buffer control word; each endpoint has an IN
+// control at +0 and an OUT control at +4. Writing a host-to-device payload to
+// the IN register makes the guest read the configured 64-byte buffer size
+// instead of the transfer length (and arms a phantom IN packet).
+func usbBufCtrlOffOut(ep int) uint32 { return usbBufCtrlOff(ep) + 4 }
 func usbBufDataOff(ep int, in bool) uint32 {
 	off := 0x100 + uint32(ep)*128
 	if ep != 0 && in {
@@ -331,7 +336,7 @@ func (u *usbBlock) pollControl() {
 		// the firmware's parser sees a valid shape.
 		payload := make([]byte, req.length)
 		u.writeBytes(usbBufDataOff(0, false), payload)
-		u.setWord(usbBufCtrlOff(0), uint32(req.length)|usbBufData1|usbBufFull)
+		u.setWord(usbBufCtrlOffOut(0), uint32(req.length)|usbBufData1|usbBufFull)
 		u.raiseBuff(1 << 1) // EP0 OUT
 		u.outSent = true
 		return
@@ -386,6 +391,6 @@ func (u *usbBlock) SendCDC(data []byte) {
 		data = data[:64]
 	}
 	u.writeBytes(usbBufDataOff(2, false), data)
-	u.setWord(usbBufCtrlOff(2), uint32(len(data))|usbBufFull)
+	u.setWord(usbBufCtrlOffOut(2), uint32(len(data))|usbBufFull)
 	u.raiseBuff(1 << 5) // EP2 OUT
 }

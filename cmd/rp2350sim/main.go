@@ -40,6 +40,7 @@ func main() {
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
+		inputStr   = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
 		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
@@ -322,7 +323,27 @@ func main() {
 	}
 
 	start := time.Now()
-	if *sampleN > 0 {
+	if *sampleN == 0 {
+		runCycles := uint64(0)
+		if *secs > 0 {
+			runCycles = uint64(*secs * 150_000_000)
+		} else {
+			runCycles = *steps
+		}
+		if *inputStr != "" {
+			// Let the firmware initialise USB/UART before injecting.
+			warm := uint64(30_000_000)
+			if runCycles > warm {
+				c.Run(warm)
+				runCycles -= warm
+			} else {
+				runCycles = 0
+			}
+			c.SendUSBCDC([]byte(*inputStr))
+			c.SendUART(0, []byte(*inputStr))
+		}
+		c.Run(runCycles)
+	} else if *sampleN > 0 {
 		for i := 0; i < *sampleN; i++ {
 			c.Run(10_000_000)
 			fmt.Printf("sample %d: pc=%#08x lr=%#08x sp=%#08x r0=%#08x r1=%#08x\n", i, c.CPU0.R[15], c.CPU0.R[14], c.CPU0.R[13], c.CPU0.R[0], c.CPU0.R[1])
@@ -330,10 +351,6 @@ func main() {
 				break
 			}
 		}
-	} else if *secs > 0 {
-		c.Run(uint64(*secs * 150_000_000))
-	} else {
-		c.Run(*steps)
 	}
 	wall := time.Since(start)
 
