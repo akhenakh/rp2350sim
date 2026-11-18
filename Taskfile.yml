@@ -1,0 +1,104 @@
+version: '3'
+
+vars:
+  TINYGO: tinygo
+  TARGET: pico2
+  BUILD: build
+  EMU: '{{.BUILD}}/rp2350sim'
+  BLINKY: '{{.BUILD}}/blinky.elf'
+
+tasks:
+  default:
+    desc: Build the emulator and the blinky firmware
+    cmds:
+      - task: build
+      - task: firmware:blinky
+
+  build:
+    desc: Build the emulator
+    sources:
+      - cmd/**/*.go
+      - internal/**/*.go
+      - go.mod
+    generates:
+      - '{{.EMU}}'
+    cmds:
+      - go build -o {{.EMU}} ./cmd/rp2350sim
+
+  test:
+    desc: Run the unit tests
+    cmds:
+      - go test ./...
+
+  test:qemu:
+    desc: Differential instruction tests against QEMU (qemu-system-arm + arm-none-eabi-gdb)
+    cmds:
+      - go test -tags qemu ./internal/m33 -run TestQEMUInstructions
+
+  firmware:blinky:
+    desc: Build the TinyGo blinky firmware for the Pico 2
+    dir: firmware/blinky
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/blinky.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BLINKY}} .'
+
+  firmware:blinky:uf2:
+    desc: Build the blinky firmware as a UF2 image for flashing a real board
+    dir: firmware/blinky
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/blinky.uf2'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/blinky.uf2 .'
+
+  firmware:lcd:
+    desc: Build the TinyGo ST7789 example firmware
+    dir: firmware/lcd
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/lcd.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/lcd.elf .'
+
+  run:blinky:
+    desc: Run the blinky firmware and trace GP25 for three virtual seconds
+    deps: [build, firmware:blinky]
+    cmds:
+      - '{{.EMU}} -fw {{.BLINKY}} -seconds 3 -trace-pins 25'
+
+  lcd:
+    desc: Run the ST7789 example and export its framebuffer as a PNG
+    deps: [build, firmware:lcd]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/lcd.elf -seconds 1 -lcd -lcd-png {{.BUILD}}/lcd.png'
+
+  ui:
+    desc: Run the desktop UI with the blinky firmware loaded
+    deps: [firmware:blinky]
+    dir: ui
+    cmds:
+      - go run . '../{{.BLINKY}}'
+
+  ui:png:
+    desc: Render the UI headlessly to build/ui.png with the LCD example
+    deps: [firmware:lcd]
+    dir: ui
+    cmds:
+      - go run . --png '../{{.BUILD}}/ui.png' --run 0.6 '../{{.BUILD}}/lcd.elf'
+
+  clean:
+    desc: Remove build outputs
+    cmds:
+      - rm -rf {{.BUILD}}

@@ -16,15 +16,37 @@ cmd/rp2350sim/      headless runner and debugging tools
 ui/                 Shirei desktop UI (separate module)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
-                    UART, SPI, DMA, PWM, ADC
-internal/devices/   external chips (ST7789 display)
+                    UART, SPI, DMA, PWM, ADC, I2C
+internal/devices/   external chips (ST7789 display, W5500 Ethernet)
 internal/firmware/  UF2 / ELF / raw image loaders
+firmware/           example TinyGo programs (blinky, lcd)
+tools/              corpus generator
+Taskfile.yml        build/run/test tasks
 ```
+
+## Tasks
+
+The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
+
+| task | what it does |
+|---|---|
+| `task` | build the emulator and the blinky firmware |
+| `task build` | build `build/rp2350sim` |
+| `task firmware:blinky` | TinyGo blinky ELF for the Pico 2 |
+| `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
+| `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
+| `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
+| `task ui` | desktop UI with the blinky firmware loaded |
+| `task ui:png` | headless UI render to `build/ui.png` |
+| `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
+| `task clean` | remove `build/` |
 
 ## Running firmware
 
 ```sh
 go run ./cmd/rp2350sim -fw firmware.elf -seconds 1 -trace-pins 25
+# or, building and running the bundled blinky example:
+task run:blinky
 ```
 
 The default USB console and UART both write to stdout, so `println` output
