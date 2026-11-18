@@ -57,6 +57,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
+| `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task clean` | remove `build/` |
 
