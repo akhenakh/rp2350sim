@@ -72,3 +72,45 @@ func (p *pwmBlock) tick(now uint64) {
 		}
 	}
 }
+
+// PinBrightness returns the effective drive level of a pin as a 0..1 duty
+// cycle. It is used for backlight outputs: a plain GPIO reads as fully on or
+// off, a PWM pin as its compare/top ratio.
+func (c *Chip) PinBrightness(pin int) float32 {
+	if pin < 0 || pin > 47 {
+		return 0
+	}
+	if int(c.Pins.Func[pin]) != pwmFuncSel {
+		if c.Pins.Level(pin) {
+			return 1
+		}
+		return 0
+	}
+	slice := (pin >> 1) & 7
+	csr := c.pwm.block.regs[(slice*pwmStride+0)/4]
+	if csr&1 == 0 {
+		return 0
+	}
+	top := c.pwm.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
+	if top == 0 {
+		return 0
+	}
+	cc := c.pwm.block.regs[(slice*pwmStride+0x0C)/4]
+	var cmp uint32
+	if pin&1 == 0 {
+		cmp = cc & 0xFFFF
+	} else {
+		cmp = cc >> 16
+	}
+	duty := float32(cmp) / float32(top+1)
+	if csr&(0x8<<uint(pin&1)) != 0 {
+		duty = 1 - duty
+	}
+	if duty < 0 {
+		duty = 0
+	}
+	if duty > 1 {
+		duty = 1
+	}
+	return duty
+}

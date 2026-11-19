@@ -28,6 +28,10 @@ type ST7789 struct {
 
 	// GRAM addressable size.
 	Width, Height int
+	// stride is the driver-coordinate row pitch. With MADCTL MV the
+	// controller exchanges rows and columns, so a rotated 240x320 panel is
+	// addressed as 320x240.
+	stride int
 
 	gram   []uint16
 	casetX [2]int
@@ -42,7 +46,9 @@ type ST7789 struct {
 	madctl   byte
 	inverted bool
 	on       bool
-	pixels   int
+	// Brightness scales the exported image, matching a PWM backlight.
+	Brightness float32
+	pixels     int
 	// Used window, for rendering.
 	minX, minY, maxX, maxY int
 
@@ -53,8 +59,9 @@ type ST7789 struct {
 
 // NewST7789 creates a display attached to the chip, wired to the given pins.
 func NewST7789(chip *rp2350.Chip, cs, dc, rst int) *ST7789 {
-	d := &ST7789{Chip: chip, CS: cs, DC: dc, RST: rst, Width: 240, Height: 320}
-	d.gram = make([]uint16, d.Width*d.Height)
+	d := &ST7789{Chip: chip, CS: cs, DC: dc, RST: rst, Width: 240, Height: 320, Brightness: 1}
+	d.stride = max(d.Width, d.Height)
+	d.gram = make([]uint16, d.stride*d.stride)
 	d.reset()
 	return d
 }
@@ -78,7 +85,7 @@ func (d *ST7789) reset() {
 
 // Transfer feeds one byte clocked over SPI and returns the MISO byte.
 func (d *ST7789) Transfer(tx byte) byte {
-	if !d.Chip.Pins.Level(d.RST) {
+	if resetAsserted(d.Chip, d.RST) {
 		d.reset()
 		return 0x00
 	}
@@ -156,8 +163,12 @@ func (d *ST7789) data(b byte) {
 
 func (d *ST7789) putPixel(px uint16) {
 	x, y := d.x, d.y
-	if x >= 0 && x < d.Width && y >= 0 && y < d.Height {
-		d.gram[y*d.Width+x] = px
+	maxX, maxY := d.Width, d.Height
+	if d.madctl&0x20 != 0 { // MV exchanges rows and columns
+		maxX, maxY = d.Height, d.Width
+	}
+	if x >= 0 && x < maxX && y >= 0 && y < maxY {
+		d.gram[y*d.stride+x] = px
 		d.pixels++
 		if d.minX < 0 || x < d.minX {
 			d.minX = x
@@ -196,14 +207,29 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 	w := d.maxX - d.minX + 1
 	h := d.maxY - d.minY + 1
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	brightness := d.Brightness
+	if !d.on {
+		brightness = 0
+	}
+	if brightness < 0 {
+		brightness = 0
+	}
+	if brightness > 1 {
+		brightness = 1
+	}
 	for y := d.minY; y <= d.maxY; y++ {
 		for x := d.minX; x <= d.maxX; x++ {
-			px := d.gram[y*d.Width+x]
+			px := d.gram[y*d.stride+x]
 			r := uint8(px>>11) << 3
 			g := uint8(px>>5) << 2
 			b := uint8(px) << 3
 			if d.madctl&0x08 != 0 { // BGR
 				r, b = b, r
+			}
+			if brightness < 1 {
+				r = uint8(float32(r) * brightness)
+				g = uint8(float32(g) * brightness)
+				b = uint8(float32(b) * brightness)
 			}
 			// INVOFF/INVON compensate for panel polarity; the driver writes
 			// the intended colour into GRAM, so the exported image keeps it
