@@ -56,10 +56,17 @@ type w5sock struct {
 	listener net.Listener
 	udp      *net.UDPConn
 
+	// destSet records that the host wrote a destination since the last OPEN.
+	// TinyGo's W5500 driver requests a client connection with destination
+	// registers followed by OPEN (not CONNECT), so OPEN must only dial when a
+	// destination was written for this socket generation.
+	destSet bool
+
 	// Absolute buffer pointers, as the chip exposes them.
 	txReadPtr  uint16
 	txWritePtr uint16
 	rxReadPtr  uint16
+	rxReadAck  uint16
 	rxWritePtr uint16
 	rxPending  int
 
@@ -296,6 +303,7 @@ func (w *W5500) writeSockReg(n int, off uint16, b byte) {
 		s.srcPort = uint16(w.sockReg[n][w5SockSrcPort])<<8 | uint16(w.sockReg[n][w5SockSrcPort+1])
 	case w5SockDestIP:
 		s.destIP[0] = b
+		s.destSet = true
 	case w5SockDestIP + 1:
 		s.destIP[1] = b
 	case w5SockDestIP + 2:
@@ -304,8 +312,10 @@ func (w *W5500) writeSockReg(n int, off uint16, b byte) {
 		s.destIP[3] = b
 	case w5SockDestPort:
 		s.destPort = uint16(b)<<8 | uint16(w.sockReg[n][w5SockDestPort+1])
+		s.destSet = true
 	case w5SockDestPort + 1:
 		s.destPort = uint16(w.sockReg[n][w5SockDestPort])<<8 | uint16(b)
+		s.destSet = true
 		loggerOr(w.Logger).Debug("w5500 dest",
 			slog.Int("sock", n),
 			slog.String("addr", net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))))
@@ -359,12 +369,14 @@ func (w *W5500) command(n int, cmd byte) {
 			w.closeSocket(n)
 		}
 		s.proto = w.sockReg[n][w5SockMode] & 0x0F
+		destSet := s.destSet
+		s.destSet = false
 		switch s.proto {
 		case 1:
 			s.status = w5StatusInit
 			// TinyGo's driver issues OPEN (not CONNECT) after setting the
 			// destination; treat that as the connection request.
-			if s.destPort != 0 {
+			if destSet && s.destPort != 0 {
 				w.connect(n)
 			}
 		case 2:
@@ -385,9 +397,14 @@ func (w *W5500) command(n int, cmd byte) {
 	case w5CmdSend:
 		w.send(n)
 	case w5CmdRecv:
-		s.rxPending = 0
-		s.rxReadPtr = s.rxWritePtr
-		s.ints &^= w5IntReceive
+		// Only the bytes the host consumed (by advancing Sn_RX_RD) leave
+		// the RX buffer.
+		consumed := min(int(s.rxReadPtr-s.rxReadAck), s.rxPending)
+		s.rxPending -= consumed
+		s.rxReadAck = s.rxReadPtr
+		if s.rxPending == 0 {
+			s.ints &^= w5IntReceive
+		}
 	}
 }
 
@@ -467,6 +484,11 @@ func (w *W5500) listen(n int) {
 	loggerOr(w.Logger).Debug("w5500 listen", slog.Int("sock", n), slog.String("addr", addr))
 	go func() {
 		conn, err := ln.Accept()
+		// The host listener owns the port while waiting, exactly like a
+		// hardware socket in LISTEN. Once a peer is accepted the port must be
+		// released so the driver can re-arm the listener on another hardware
+		// socket.
+		_ = ln.Close()
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		if s.gen != gen {
@@ -478,6 +500,7 @@ func (w *W5500) listen(n int) {
 		if err != nil {
 			return
 		}
+		s.listener = nil
 		s.conn = conn
 		s.status = w5StatusEstablished
 		s.ints |= w5IntConnect
@@ -621,9 +644,14 @@ func (w *W5500) closeSocket(n int) {
 		s.listener = nil
 	}
 	s.udp = nil
+	// Host-written registers (protocol, ports, destination) survive a CLOSE,
+	// as they do on the chip. OPEN consumes the destination-write flag so a
+	// reused socket never dials a stale destination.
+	s.destSet = false
+	s.pendingTx = nil
 	s.status = w5StatusClosed
 	s.ints = 0
 	s.txReadPtr, s.txWritePtr = 0, 0
-	s.rxReadPtr, s.rxWritePtr = 0, 0
+	s.rxReadPtr, s.rxReadAck, s.rxWritePtr = 0, 0, 0
 	s.rxPending = 0
 }
