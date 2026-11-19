@@ -71,6 +71,18 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	case h1n == 0xEE00 && h2n == 0x0A40:
 		c.vfpSetS(sd, c.vfpS(sd)-c.vfpS(sn)*c.vfpS(sm))
 		return
+	case h1n == 0xEEA0 && h2n == 0x0A00: // VFMA
+		c.vfpSetS(sd, c.vfpS(sd)+c.vfpS(sn)*c.vfpS(sm))
+		return
+	case h1n == 0xEEA0 && h2n == 0x0A40: // VFMS
+		c.vfpSetS(sd, c.vfpS(sd)-c.vfpS(sn)*c.vfpS(sm))
+		return
+	case h1n == 0xEE90 && h2n == 0x0A40: // VFNMA
+		c.vfpSetS(sd, -(c.vfpS(sd) + c.vfpS(sn)*c.vfpS(sm)))
+		return
+	case h1n == 0xEE90 && h2n == 0x0A00: // VFNMS
+		c.vfpSetS(sd, -(c.vfpS(sd) - c.vfpS(sn)*c.vfpS(sm)))
+		return
 	}
 
 	// Two-operand group: the low nibble of hw1 and bits 7..6 of hw2 select the
