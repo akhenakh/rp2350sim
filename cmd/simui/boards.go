@@ -4,6 +4,8 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -113,6 +115,9 @@ type SDDevice struct {
 	SPI   int    `yaml:"spi"`
 	CS    int    `yaml:"cs"`
 	Image string `yaml:"image"`
+	// Dir backs the card with a real host directory: files are packed into
+	// the image at startup and firmware writes are mirrored back.
+	Dir string `yaml:"dir"`
 }
 
 type EthDevice struct {
@@ -231,12 +236,14 @@ type boardFile struct {
 // fails at startup rather than silently attaching the wrong model.
 func LoadBoards() ([]BoardDef, error) {
 	data := embeddedBoards
+	baseDir := ""
 	if p := os.Getenv("RP2350SIM_BOARDS"); p != "" {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return nil, fmt.Errorf("boards: %w", err)
 		}
 		data = b
+		baseDir = filepath.Dir(p)
 	}
 
 	var file boardFile
@@ -316,6 +323,15 @@ func LoadBoards() ([]BoardDef, error) {
 			if err := validSPI(spi, d.SPI, d.CS, "sd"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
+			if d.Image != "" && d.Dir != "" {
+				return nil, fmt.Errorf("boards: %s: sd image and dir are mutually exclusive", b.ID)
+			}
+			if d.Dir != "" {
+				d.Dir = expandPath(d.Dir)
+				if !filepath.IsAbs(d.Dir) && baseDir != "" {
+					d.Dir = filepath.Join(baseDir, d.Dir)
+				}
+			}
 		}
 		for _, sd := range b.Serial {
 			if sd.UART < 0 || sd.UART > 1 {
@@ -330,6 +346,22 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 	}
 	return file.Boards, nil
+}
+
+// expandPath expands ~ and environment variables in a board path.
+func expandPath(p string) string {
+	p = os.ExpandEnv(p)
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
 }
 
 // spiPin identifies one chip select on an SPI controller. A bus may carry

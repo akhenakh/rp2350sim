@@ -52,7 +52,7 @@ tab only when the device exists.
 | `touch` | `bus`, `addr`, `int`, `rst`, `width`, `height`, `rotation` |
 | `imu` | `bus`, `addr`, `int`, `int2` |
 | `battery` | `pin` (26-29), `divider`, `volts` |
-| `sd` | `spi`, `cs`, `image` (optional host file) |
+| `sd` | `spi`, `cs`, `dir` (host directory) or `image` (raw FAT image) |
 | `ethernet` | `kind` (`w5500`/`w6300`/`ch9120`), `spi`, `cs`, or the CH9120 pins |
 | `ws2812` | `pin` |
 | `analog` | list of `{pin, wave, hz, amplitude, offset}` |
@@ -69,6 +69,14 @@ backlight duty and card size. Touching the card state is read-only.
 On a touch board, clicking or dragging the **LCD** panel injects a finger at the
 corresponding native panel coordinate: the UI maps the displayed (rotated)
 frame back through the LCD `rotation`. Release injects a lift.
+
+### SD card directory
+
+`sd.dir` backs the emulated card with a real host directory. Files are packed
+into FAT16 at startup; firmware reads and writes are mirrored back after they
+settle. The Sensors tab shows the directory path. The distributed boards use
+`sdcards/geek` and `sdcards/touch-lcd2` relative to the UI's working
+directory. Edit `boards.yaml` or use a custom board file to point elsewhere.
 
 ```yaml
 boards:

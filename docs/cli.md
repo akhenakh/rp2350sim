@@ -156,13 +156,18 @@ rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
 | `-sensors` | print touch, IMU, battery, backlight and SD state at exit |
 | `-lcd-png PATH` | write the LCD framebuffer to a PNG at exit |
 | `-sd` | microSD on SPI0 (CS GP23), GEEK wiring |
-| `-sd-image PATH` | backing image for `-sd`/`-touch-lcd2` (default: built-in FAT16) |
+| `-sd-dir PATH` | back the card with a host directory (read/write files from the host) |
+| `-sd-image PATH` | raw FAT16 image for `-sd`/`-touch-lcd2` (default: built-in FAT16) |
 | `-eth` | W5500 on SPI0 (CS GP17) |
 | `-w6300` | W6300 on SPI0 (CS GP17) |
 | `-ch9120` | CH9120 on UART1 (GP20/21), CFG0 GP18, RST GP19, TCPCS GP17 |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 
-`-eth` and `-w6300` are mutually exclusive, as are `-lcd` and `-touch-lcd2`.
+`-sd-dir` and `-sd-image` are mutually exclusive. `-eth` and `-w6300` are
+mutually exclusive, as are `-lcd` and `-touch-lcd2`.
+
+A directory-backed card is packed into FAT16 at startup and written back after
+the firmware's writes settle; see [boards.md](boards.md).
 The UI has more boards (see [ui.md](ui.md)); the runner flags cover the common
 bring-up cases.
 

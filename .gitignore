@@ -5,3 +5,4 @@ build/
 firmware/c/build/
 /rp2350sim
 cmd/simui/simui
+sdcards/

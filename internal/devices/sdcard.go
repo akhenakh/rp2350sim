@@ -3,6 +3,7 @@ package devices
 import (
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -16,7 +17,12 @@ type SDCard struct {
 	Chip *rp2350.Chip
 	CS   int
 
-	image []byte
+	image    []byte
+	Dir      string
+	manifest map[string]bool
+	dirty    bool
+	syncAt   uint64
+	Logger   *slog.Logger
 
 	// Command parser.
 	cmdBuf [6]byte
@@ -36,14 +42,59 @@ type SDCard struct {
 	writeCRC   int
 }
 
-// NewSDCard creates an SPI card on cs, backed by imagePath when non-empty or
-// by a generated FAT16 image otherwise.
-func NewSDCard(chip *rp2350.Chip, cs int, imagePath string) (*SDCard, error) {
-	img, err := loadOrBuildImage(imagePath)
+// NewSDCard creates an SPI card on cs. It is backed by a host directory when
+// dir is non-empty (files are packed at startup and written back after card
+// writes), by imagePath when non-empty, or by a generated FAT16 image.
+func NewSDCard(chip *rp2350.Chip, cs int, imagePath, dir string) (*SDCard, error) {
+	if imagePath != "" && dir != "" {
+		return nil, fmt.Errorf("sd: image and directory backings are mutually exclusive")
+	}
+	var img []byte
+	var manifest map[string]bool
+	var err error
+	if dir != "" {
+		if err = PrepareSDDir(dir); err != nil {
+			return nil, err
+		}
+		img, manifest, err = BuildFAT16FromDir(dir, 16<<20)
+	} else {
+		img, err = loadOrBuildImage(imagePath)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return &SDCard{Chip: chip, CS: cs, image: img}, nil
+	return &SDCard{Chip: chip, CS: cs, image: img, Dir: dir, manifest: manifest}, nil
+}
+
+// Source describes the backing store for the UI and diagnostics.
+func (s *SDCard) Source() string {
+	if s.Dir != "" {
+		return s.Dir
+	}
+	return "built-in FAT16"
+}
+
+// markDirty schedules a host-directory sync after the card has been quiet for
+// a moment, so a multi-block file write is mirrored once rather than per
+// sector.
+func (s *SDCard) markDirty() {
+	if s.Dir == "" {
+		return
+	}
+	s.dirty = true
+	s.syncAt = s.Chip.Cycles + 7_500_000 // 50 ms at 150 MHz
+}
+
+// Tick writes a dirty card back to its host directory when the quiet period
+// expires.
+func (s *SDCard) Tick() {
+	if !s.dirty || s.Dir == "" || s.Chip.Cycles < s.syncAt {
+		return
+	}
+	if err := s.Sync(); err != nil {
+		loggerOr(s.Logger).Warn("sd sync failed", slog.String("dir", s.Dir), slog.Any("err", err))
+		s.dirty = false
+	}
 }
 
 func loadOrBuildImage(path string) ([]byte, error) {
@@ -275,6 +326,7 @@ func (s *SDCard) writeData(tx byte) byte {
 			start := int(s.multiAddr) * 512
 			if start+512 <= len(s.image) {
 				copy(s.image[start:start+512], s.writeBuf)
+				s.markDirty()
 			}
 		}
 		return 0xFF

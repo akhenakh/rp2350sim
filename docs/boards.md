@@ -15,8 +15,10 @@ UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
 
 - ST7789VW 240×135 on SPI1: CS GP9, DC GP8, RST GP12, backlight GP25.
 - microSD on SPI0: SCK GP18, MOSI GP19, MISO GP20, CS GP23. The card is backed
-  by a built-in FAT16 image (16 MB, `HELLO.TXT`); `-sd-image` substitutes a
-  host image. Use `-sd` (runner) or the `geek` UI board.
+  by the real host directory `sdcards/geek` by default: files are packed into
+  a FAT16 image at startup and firmware writes are mirrored back. `-sd-dir`
+  changes the directory; `-sd-image` uses a raw image instead. Use `-sd`
+  (runner) or the `geek` UI board.
 - The 3-pin SWD/UART and 4-pin I2C headers are pass-through connectors to the
   target board, not on-board devices.
 - Use `-lcd` (runner) or the `geek` UI board; `-lcd-png out.png` exports the
@@ -35,8 +37,9 @@ UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
   ±8 g (4096 LSB/g) with +1 g on Z; the range follows CTRL2. Data-ready INT1
   is a level that clears when the output or status register is read.
 - Battery monitor: GP28/ADC2 through a ÷3 divider (3.9 V battery ≈ 1.3 V).
-- microSD on SPI1: SCK GP26, MOSI GP27, MISO GP24, CS GP25. Same built-in
-  FAT16 image as the GEEK; `-sd-image` replaces it.
+- microSD on SPI1: SCK GP26, MOSI GP27, MISO GP24, CS GP25. Backed by
+  `sdcards/touch-lcd2` by default (a real host directory, see below);
+  `-sd-dir` or `-sd-image` override it.
 - The camera connector (DVP on GP0-GP11, SCCB on I2C1 GP22/GP23) is a
   connector for an optional OV2640/OV5640 module and is not emulated.
 - Use `-touch-lcd2` (runner) or the `touch-lcd2` UI board. `-lcd-png` exports
@@ -44,6 +47,21 @@ UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
   coordinates), and `-touch-at`/`-touch-hold` place it in virtual time.
 - Reference firmware: `firmware/touchlcd`, which initialises the panel, touch,
   IMU, backlight and ADC, prints deterministic values and draws touch points.
+
+## SD card backing
+
+A card can be backed by a host directory (`sd.dir` in `boards.yaml`, or
+`-sd-dir PATH`). The directory is packed into a 16 MiB FAT16 image at startup
+and the image is mirrored back after firmware writes settle (about 50 ms of
+virtual time). Drop files into the directory before starting, or read files
+the firmware creates while it runs; files deleted on the card are removed
+from the directory too. Host files that were not part of the card are never
+deleted, and symlinks are skipped. Host edits made while the emulator is
+running are picked up on the next start, not live.
+
+The UI uses `sdcards/<board>` relative to its working directory by default.
+`-sd-image PATH` uses a raw FAT image instead; `image` and `dir` are mutually
+exclusive.
 
 ## Waveshare RP2350-POE-ETH (W6300)
 

@@ -15,7 +15,7 @@ func sdFixture(t *testing.T) *SDCard {
 	const cs = 7
 	c.Pins.OE |= 1 << cs
 	c.Pins.Out &^= 1 << cs
-	card, err := NewSDCard(c, cs, "")
+	card, err := NewSDCard(c, cs, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -82,6 +82,7 @@ type BacklightState struct {
 type SDState struct {
 	Inserted bool
 	Blocks   int
+	Source   string
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -381,6 +382,9 @@ func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
 // resetChip builds a fresh machine and attaches the selected board's devices.
 func (e *Emu) resetChip() {
 	c := rp2350.New()
+	if e.sd != nil {
+		_ = e.sd.Sync()
+	}
 	e.lcd = nil
 	e.ws = nil
 	e.touch = nil
@@ -434,12 +438,13 @@ func (e *Emu) resetChip() {
 			c.Pins.SetAnalog(d.Pin, float32(d.Volts/d.Divider))
 		}
 		if d := b.SD; d != nil {
-			card, err := devices.NewSDCard(c, d.CS, d.Image)
+			card, err := devices.NewSDCard(c, d.CS, d.Image, d.Dir)
 			if err != nil {
 				e.errText = err.Error()
 			} else {
 				e.sd = card
 				attachSPI(d.SPI, d.CS, card.Transfer)
+				c.CycleHooks = append(c.CycleHooks, card.Tick)
 			}
 		}
 		if w := b.Wifi; w != nil {
@@ -795,7 +800,7 @@ func (e *Emu) Snapshot() MachineState {
 		s.Battery = &BatteryState{Volts: v, Raw: raw}
 	}
 	if e.sd != nil {
-		s.SD = &SDState{Inserted: e.sd.Inserted(), Blocks: e.sd.Blocks()}
+		s.SD = &SDState{Inserted: e.sd.Inserted(), Blocks: e.sd.Blocks(), Source: e.sd.Source()}
 	}
 	if len(e.console) > 0 {
 		start := max(len(e.console)-16*1024, 0)

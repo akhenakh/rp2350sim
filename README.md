@@ -6,8 +6,8 @@ A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodif
 Status: runs real TinyGo programs end to end — package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
 DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a
-CST816D touch controller, a QMI8658 IMU, a microSD card model and W5500
-Ethernet, plus a W6300 driver for the PoE board. Stock **Pico SDK C**
+CST816D touch controller, a QMI8658 IMU, a microSD card model that can be
+backed by a real host directory, and W5500 Ethernet, plus a W6300 driver for the PoE board. Stock **Pico SDK C**
 firmware boots through the same vector table and runs its runtime, UART stdio,
 GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33
 interpreter is checked against QEMU instruction by instruction.

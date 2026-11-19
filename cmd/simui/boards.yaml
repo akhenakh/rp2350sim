@@ -10,7 +10,7 @@
 #   touch:  { bus, addr, int, rst, width, height, rotation }
 #   imu:    { bus, addr, int }
 #   battery: { pin, divider, volts }
-#   sd:     { spi, cs, image }
+#   sd:     { spi, cs, image | dir }
 #   ethernet: { kind: w5500|w6300, spi, cs }
 #   ws2812: { pin }
 #
@@ -65,6 +65,7 @@ boards:
     sd:
       spi: 0
       cs: 23
+      dir: sdcards/geek
 
   - id: touch-lcd2
     name: Waveshare RP2350-Touch-LCD-2
@@ -102,6 +103,7 @@ boards:
     sd:
       spi: 1
       cs: 25
+      dir: sdcards/touch-lcd2
 
   - id: poe-eth
     name: Waveshare RP2350-POE-ETH

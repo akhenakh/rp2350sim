@@ -600,7 +600,11 @@ func sensorsPanel(snap MachineState) {
 				}
 				if snap.SD != nil {
 					mb := snap.SD.Blocks / 2048
-					infoCard("microSD", fmt.Sprintf("%d MB", mb), "SPI · FAT16")
+					src := snap.SD.Source
+					if len(src) > 48 {
+						src = "…" + src[len(src)-47:]
+					}
+					infoCard("microSD", fmt.Sprintf("%d MB", mb), src)
 				}
 			})
 		})

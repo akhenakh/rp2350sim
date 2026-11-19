@@ -24,6 +24,10 @@ import (
 // hex renders an address or register value for a log attribute.
 func hex(v uint32) string { return fmt.Sprintf("%#08x", v) }
 
+func newRunnerCard(c *rp2350.Chip, cs int, image, dir string) (*devices.SDCard, error) {
+	return devices.NewSDCard(c, cs, image, dir)
+}
+
 // regAttrs describes a core's register set for break and trace records.
 func regAttrs(cpu *m33.CPU) []any {
 	attrs := make([]any, 0, 16)
@@ -122,6 +126,7 @@ func main() {
 		sensorsOut = flag.Bool("sensors", false, "print touch, IMU and battery state at exit")
 		sdFlag     = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
 		sdImage    = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
+		sdDir      = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
@@ -145,6 +150,10 @@ func main() {
 	var expectFlag stringList
 	flag.Var(&expectFlag, "expect", "fail unless this console output appears (repeatable)")
 	flag.Parse()
+	if *sdImage != "" && *sdDir != "" {
+		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
+		os.Exit(2)
+	}
 
 	format, err := logging.ParseFormat(*logFormat)
 	if err != nil {
@@ -251,9 +260,17 @@ func main() {
 		c.AttachI2C(0, 0x6b, imu)
 		c.CycleHooks = append(c.CycleHooks, imu.Tick)
 		c.Pins.SetAnalog(28, 3.9/3) // battery divider
-		card, _ = devices.NewSDCard(c, 25, *sdImage)
+		card, err = newRunnerCard(c, 25, *sdImage, *sdDir)
+		if err != nil {
+			log.Error("sd card", slog.Any("err", err))
+			os.Exit(1)
+		}
 	} else if *sdFlag {
-		card, _ = devices.NewSDCard(c, 23, *sdImage)
+		card, err = newRunnerCard(c, 23, *sdImage, *sdDir)
+		if err != nil {
+			log.Error("sd card", slog.Any("err", err))
+			os.Exit(1)
+		}
 		spiCardBus = 0
 	}
 
@@ -350,6 +367,9 @@ func main() {
 			}
 			pinBus[d.cs] = bus
 		}
+	}
+	if card != nil {
+		c.CycleHooks = append(c.CycleHooks, card.Tick)
 	}
 	spiHandler := func(devs []spiDev) func(byte) byte {
 		return func(tx byte) byte {
@@ -838,6 +858,11 @@ func main() {
 	if lcd != nil && !*quiet {
 		log.Info("lcd", slog.Int("pixels", lcd.PixelsWritten()), slog.Bool("on", lcd.On()))
 	}
+	if card != nil {
+		if err := card.Sync(); err != nil {
+			log.Warn("sd sync", slog.Any("err", err))
+		}
+	}
 	if *sensorsOut {
 		attrs := []any{}
 		if touch != nil {
@@ -850,7 +875,7 @@ func main() {
 			attrs = append(attrs, "temp", imu.Temperature())
 		}
 		if card != nil {
-			attrs = append(attrs, "sd_blocks", card.Blocks())
+			attrs = append(attrs, "sd_blocks", card.Blocks(), "sd_source", card.Source())
 		}
 		if *touchLCD2 {
 			attrs = append(attrs, "battery", 3.9, "backlight", c.PinBrightness(15))

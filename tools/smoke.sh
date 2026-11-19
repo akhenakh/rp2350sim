@@ -84,6 +84,18 @@ contains "battery ADC" "touchlcd battery raw=25808 mv=3897" "$out"
 out=$("$EMU" -fw "$BUILD/touchlcd.elf" -seconds 0.6 -quiet -touch-lcd2 -sensors 2>&1)
 contains "Touch-LCD-2 sensors" '"sd_blocks":32768' "$out"
 
+# --- SD card backed by a host directory -------------------------------------
+mkdir -p "$BUILD/sdhost"
+printf 'host file\n' >"$BUILD/sdhost/HOST.TXT"
+out=$("$EMU" -fw "$BUILD/lcd.elf" -seconds 0.3 -quiet -lcd -sd \
+	-sd-dir "$BUILD/sdhost" -sensors 2>&1)
+contains "SD directory backing" '"sd_source":"' "$out"
+if grep -q "$BUILD/sdhost" <<<"$out"; then
+	ok "SD directory source"
+else
+	bad "SD directory source" "$out"
+fi
+
 # --- W6300 Ethernet against the host helper --------------------------------
 if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
 	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
