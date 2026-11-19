@@ -371,6 +371,16 @@ func (c *CPU) exec32DataProc(hw1, hw2 uint16, _ bool) {
 		}
 	case 0x4: // EOR
 		res = a ^ v
+	case 0x6: // PKHBT / PKHTB (the shift type is fixed by the opcode)
+		if hw2&0x0020 != 0 { // PKHTB: arithmetic shift right, keep Rn's high half
+			sh := shift
+			if sh == 0 {
+				sh = 32
+			}
+			res = (a & 0xFFFF0000) | (uint32(int32(c.R[rm])>>sh) & 0xFFFF)
+		} else { // PKHBT: logical shift left, keep Rm's low half
+			res = a<<shift | (c.R[rm] & 0xFFFF)
+		}
 	case 0x8: // ADD
 		if s {
 			res = c.addFlags(a, v, 0)

@@ -86,3 +86,28 @@ func TestStoreReleaseByte(t *testing.T) {
 		t.Fatalf("stlb stored %#x", got)
 	}
 }
+
+// TestPKHBT covers the packed-halfword insert instructions emitted by the
+// TinyGo math/PWM helpers.
+func TestPKHBT(t *testing.T) {
+	bus := newExecBus()
+	cpu := New(bus)
+	// pkhbt r1, r2, r3, lsl #16 / pkhtb r1, r2, r3, asr #16 / b .
+	prog := []byte{
+		0xc2, 0xea, 0x03, 0x41,
+		0xc2, 0xea, 0x23, 0x41,
+		0xfe, 0xe7,
+	}
+	copy(bus.mem, prog)
+	cpu.R[2] = 0x11112222
+	cpu.R[3] = 0x33334444
+	cpu.R[15] = 0x20000000
+	cpu.Step()
+	if cpu.R[1] != 0x22224444 {
+		t.Fatalf("pkhbt = %#x, want 0x22224444", cpu.R[1])
+	}
+	cpu.Step()
+	if cpu.R[1] != 0x11113333 {
+		t.Fatalf("pkhtb = %#x, want 0x11113333", cpu.R[1])
+	}
+}
