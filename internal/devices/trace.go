@@ -110,8 +110,12 @@ func (t *Trace) Snapshot() (pins []int, samples []TraceSample) {
 	}
 	samples = make([]TraceSample, t.count)
 	start := (t.head - t.count + len(t.samples)) % len(t.samples)
-	for i := 0; i < t.count; i++ {
-		samples[i] = t.samples[(start+i)%len(t.samples)]
+	first := min(t.count, len(t.samples)-start)
+	for i := range first {
+		samples[i] = t.samples[start+i]
+	}
+	for i := first; i < t.count; i++ {
+		samples[i] = t.samples[i-first]
 	}
 	return pins, samples
 }

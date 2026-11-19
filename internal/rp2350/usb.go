@@ -169,6 +169,17 @@ func (u *usbBlock) write(c *Chip, off, v uint32) {
 func (u *usbBlock) inte() uint32  { return u.block.regs[usbReg(usbINTE)/4] }
 func (u *usbBlock) enabled() bool { return u.block.regs[usbReg(usbMAINCTRL)/4]&usbMainEnable != 0 }
 
+// idleForSkip reports whether the USB host cannot be mid-handshake, so a
+// microsecond jump will not disturb it. Enumeration waits on tick counters;
+// once running, the endpoint poll is periodic and a coarser tick only adds
+// latency well below a USB frame.
+func (u *usbBlock) idleForSkip() bool {
+	if !u.attached || !u.enabled() {
+		return true
+	}
+	return u.state == usbHostRunning
+}
+
 func (u *usbBlock) attach() {
 	u.attached = true
 	u.state = usbHostResetWait

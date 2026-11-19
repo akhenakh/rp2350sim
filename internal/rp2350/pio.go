@@ -23,6 +23,9 @@ type pioBlock struct {
 	outOE  uint32
 
 	fdebug uint32
+
+	// active is a mask of enabled state machines, kept in step with CTRL.
+	active uint8
 }
 
 type pioSM struct {
@@ -189,15 +192,26 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 }
 
 func (p *pioBlock) writeCtrl(v uint32) {
+	var active uint8
 	for i := range p.sm {
 		s := &p.sm[i]
 		s.enabled = v&(1<<uint(i)) != 0
+		if s.enabled {
+			active |= 1 << uint(i)
+		}
 		if v&(1<<uint(4+i)) != 0 {
 			s.restart()
 		}
 		if v&(1<<uint(8+i)) != 0 {
 			s.acc = 0
 		}
+	}
+	p.active = active
+	bit := uint8(1) << uint(p.id)
+	if active != 0 {
+		p.chip.pioActive |= bit
+	} else {
+		p.chip.pioActive &^= bit
 	}
 }
 
@@ -899,10 +913,10 @@ func (s *pioSM) execSet(instr uint16) {
 
 // tick advances one PIO block by one CPU cycle.
 func (p *pioBlock) tick() {
-	if p.block.regs[0]&0xF == 0 {
-		return
-	}
-	for i := range p.sm {
+	mask := p.active
+	for mask != 0 {
+		i := bits.TrailingZeros8(mask)
+		mask &^= 1 << uint(i)
 		p.sm[i].tick()
 	}
 }

@@ -4,7 +4,6 @@ package devices
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"image/png"
 	"log/slog"
 	"os"
@@ -217,24 +216,40 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 	if brightness > 1 {
 		brightness = 1
 	}
+	// Per-channel lookup tables apply the backlight once instead of doing a
+	// float multiply for every pixel.
+	var rTab [32]uint8
+	var gTab [64]uint8
+	var bTab [32]uint8
+	for i := range rTab {
+		rTab[i] = uint8(float32(uint8(i)<<3) * brightness)
+	}
+	for i := range gTab {
+		gTab[i] = uint8(float32(uint8(i)<<2) * brightness)
+	}
+	for i := range bTab {
+		bTab[i] = uint8(float32(uint8(i)<<3) * brightness)
+	}
+	bgr := d.madctl&0x08 != 0
+	pix := img.Pix
 	for y := d.minY; y <= d.maxY; y++ {
-		for x := d.minX; x <= d.maxX; x++ {
-			px := d.gram[y*d.stride+x]
-			r := uint8(px>>11) << 3
-			g := uint8(px>>5) << 2
-			b := uint8(px) << 3
-			if d.madctl&0x08 != 0 { // BGR
+		row := d.gram[y*d.stride+d.minX : y*d.stride+d.maxX+1]
+		o := (y - d.minY) * w * 4
+		for _, px := range row {
+			r := rTab[(px>>11)&0x1f]
+			g := gTab[(px>>5)&0x3f]
+			b := bTab[px&0x1f]
+			if bgr {
 				r, b = b, r
-			}
-			if brightness < 1 {
-				r = uint8(float32(r) * brightness)
-				g = uint8(float32(g) * brightness)
-				b = uint8(float32(b) * brightness)
 			}
 			// INVOFF/INVON compensate for panel polarity; the driver writes
 			// the intended colour into GRAM, so the exported image keeps it
 			// as written.
-			img.SetRGBA(x-d.minX, y-d.minY, color.RGBA{R: r, G: g, B: b, A: 255})
+			pix[o] = r
+			pix[o+1] = g
+			pix[o+2] = b
+			pix[o+3] = 255
+			o += 4
 		}
 	}
 	return img

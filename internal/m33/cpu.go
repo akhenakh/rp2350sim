@@ -96,6 +96,11 @@ type CPU struct {
 	// EventRegister models the SEV event register: WFE clears it if set.
 	EventRegister bool
 
+	// IRQPending mirrors the controller's pending-and-enabled state so Step
+	// can skip the Interrupts call on the common path. The controller keeps
+	// it up to date.
+	IRQPending bool
+
 	// DCPLog, when set, reports each completed double-coprocessor operation.
 	DCPLog func(format DCPFormat, op DCPOp, x, y, result float64)
 
@@ -128,6 +133,7 @@ func (c *CPU) Reset() {
 	c.FPUActive = false
 	c.dcp = dcpState{}
 	c.itstate = 0
+	c.IRQPending = false
 	c.Sleeping = false
 	c.SleepOnEvent = false
 	c.Halted = false
@@ -223,7 +229,7 @@ func (c *CPU) Step() int {
 	if c.Parked {
 		return 0
 	}
-	if c.itstate == 0 && c.Interrupts != nil && c.IPSR == 0 {
+	if c.itstate == 0 && c.IRQPending && c.IPSR == 0 && c.PRIMASK&1 == 0 && c.Interrupts != nil {
 		if exc := c.Interrupts.NextPending(); exc != 0 {
 			c.Exception(uint32(exc))
 			return 12

@@ -114,6 +114,11 @@ func newUART(c *Chip, base uint32, id int) *uartBlock {
 
 // tick moves a queued RX interrupt onto the NVIC from the emulator thread.
 func (u *uartBlock) tick() {
+	// The common case is no host byte waiting; a plain load is much cheaper
+	// than the locked swap, which is only needed when work is pending.
+	if !u.irqPending.Load() {
+		return
+	}
 	if !u.irqPending.Swap(false) {
 		return
 	}

@@ -9,7 +9,10 @@ type NVIC struct {
 
 	enabled [2]uint32
 	pending [2]uint32
-	prio    [64]byte
+	// active is pending & enabled, maintained on every change so the
+	// per-cycle check does not compute it twice.
+	active [2]uint32
+	prio   [64]byte
 
 	actlr uint32
 	vtor  uint32
@@ -31,6 +34,7 @@ type NVIC struct {
 func (n *NVIC) reset() {
 	n.enabled = [2]uint32{}
 	n.pending = [2]uint32{}
+	n.active = [2]uint32{}
 	n.prio = [64]byte{}
 	n.actlr = 0
 	n.vtor = 0
@@ -44,6 +48,22 @@ func (n *NVIC) reset() {
 	n.systickCtrl = 0
 	n.systickLoad = 0
 	n.systickVal = 0
+	n.syncActive()
+}
+
+// syncActive recomputes pending & enabled and mirrors it into the cores, so
+// the instruction loop can test a plain bool instead of calling into the
+// controller every cycle.
+func (n *NVIC) syncActive() {
+	n.active[0] = n.pending[0] & n.enabled[0]
+	n.active[1] = n.pending[1] & n.enabled[1]
+	any := n.active[0]|n.active[1] != 0
+	if n.chip.CPU0 != nil {
+		n.chip.CPU0.IRQPending = any
+	}
+	if n.chip.CPU1 != nil {
+		n.chip.CPU1.IRQPending = any
+	}
 }
 
 // Pend marks an external IRQ pending.
@@ -52,6 +72,7 @@ func (n *NVIC) Pend(irq int) {
 		return
 	}
 	n.pending[irq/32] |= 1 << uint(irq%32)
+	n.syncActive()
 	n.wake()
 }
 
@@ -61,18 +82,16 @@ func (n *NVIC) ClearPending(irq int) {
 		return
 	}
 	n.pending[irq/32] &^= 1 << uint(irq%32)
+	n.syncActive()
 }
 
 func (n *NVIC) wake() {
 	// Any enabled pending interrupt takes the cores out of WFE/WFI.
-	for irq := range 64 {
-		if n.pending[irq/32]&(1<<uint(irq%32)) != 0 && n.enabled[irq/32]&(1<<uint(irq%32)) != 0 {
-			n.chip.CPU0.Sleeping = false
-			n.chip.CPU0.SleepOnEvent = false
-			n.chip.CPU1.Sleeping = false
-			n.chip.CPU1.SleepOnEvent = false
-			return
-		}
+	if n.active[0]|n.active[1] != 0 {
+		n.chip.CPU0.Sleeping = false
+		n.chip.CPU0.SleepOnEvent = false
+		n.chip.CPU1.Sleeping = false
+		n.chip.CPU1.SleepOnEvent = false
 	}
 }
 
@@ -89,12 +108,9 @@ func (n *NVIC) NextPending() int {
 }
 
 func (n *NVIC) bestPending(clear bool) int {
-	// Fast path: nothing pending, or nothing pending that is enabled. This is
-	// the common case and it runs on every cycle.
-	if n.pending[0]|n.pending[1] == 0 {
-		return 0
-	}
-	if n.pending[0]&n.enabled[0]|(n.pending[1]&n.enabled[1]) == 0 {
+	// Fast path: no enabled pending interrupt. This is the common case and it
+	// runs on every cycle.
+	if n.active[0]|n.active[1] == 0 {
 		return 0
 	}
 	cpu := n.chip.currentCPU()
@@ -124,6 +140,7 @@ func (n *NVIC) bestPending(clear bool) int {
 	}
 	if clear {
 		n.pending[best/32] &^= 1 << uint(best%32)
+		n.syncActive()
 		n.chip.IRQCount++
 	}
 	return 16 + best
@@ -150,7 +167,7 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off >= 0x280 && off < 0x288:
 		return n.pending[(off-0x280)/4]
 	case off >= 0x300 && off < 0x308:
-		return n.pending[(off-0x300)/4] & n.enabled[(off-0x300)/4]
+		return n.active[(off-0x300)/4]
 	case off >= 0x400 && off < 0x400+64:
 		i := (off - 0x400) / 4
 		var v uint32
@@ -205,15 +222,23 @@ func (n *NVIC) write(off, v uint32) {
 	case off == 0x018:
 		n.systickVal = 0
 	case off >= 0x100 && off < 0x108: // ISER
-		n.enabled[(off-0x100)/4] |= v
+		i := (off - 0x100) / 4
+		n.enabled[i] |= v
+		n.syncActive()
 		n.wake()
 	case off >= 0x180 && off < 0x188: // ICER
-		n.enabled[(off-0x180)/4] &^= v
+		i := (off - 0x180) / 4
+		n.enabled[i] &^= v
+		n.syncActive()
 	case off >= 0x200 && off < 0x208: // ISPR
-		n.pending[(off-0x200)/4] |= v
+		i := (off - 0x200) / 4
+		n.pending[i] |= v
+		n.syncActive()
 		n.wake()
 	case off >= 0x280 && off < 0x288: // ICPR
-		n.pending[(off-0x280)/4] &^= v
+		i := (off - 0x280) / 4
+		n.pending[i] &^= v
+		n.syncActive()
 	case off >= 0x400 && off < 0x400+64: // IPR
 		i := (off - 0x400) / 4
 		for k := range 4 {

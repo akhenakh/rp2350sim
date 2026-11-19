@@ -1,5 +1,7 @@
 package rp2350
 
+import "math/bits"
+
 // dmaBlock models the RP2350 DMA controller. Transfers are paced at one
 // element per cycle so BUSY has a real duration and a channel raises its
 // completion interrupt when it drains. DREQ pacing is not modelled, so a
@@ -8,7 +10,10 @@ type dmaBlock struct {
 	block *regBlock
 	chip  *Chip
 	ch    [16]dmaChannel
-	intr  uint32 // INTR, write-1-to-clear
+	// active is a bitmask of channels with work, so the per-cycle check does
+	// not scan all sixteen channels.
+	active uint16
+	intr   uint32 // INTR, write-1-to-clear
 }
 
 type dmaChannel struct {
@@ -92,11 +97,13 @@ func (d *dmaBlock) trigger(ch int, v uint32) {
 	chp := &d.ch[ch]
 	if v&dmaCtrlEN == 0 {
 		chp.active = false
+		d.active &^= 1 << uint(ch)
 		d.block.regs[base/4+3] = ctrl
 		return
 	}
 	d.block.regs[base/4+3] = ctrl | dmaCtrlBusy
 	chp.active = true
+	d.active |= 1 << uint(ch)
 	chp.read = d.block.regs[base/4]
 	chp.write = d.block.regs[base/4+1]
 	chp.count = d.block.regs[base/4+2]
@@ -109,22 +116,20 @@ func (d *dmaBlock) trigger(ch int, v uint32) {
 // busy reports whether any channel still has work, so the per-cycle tick can
 // stay out of the hot path when the controller is idle.
 func (d *dmaBlock) busy() bool {
-	for i := range d.ch {
-		if d.ch[i].active {
-			return true
-		}
-	}
-	return false
+	return d.active != 0
 }
 
 // tick advances every active channel by one element.
 func (d *dmaBlock) tick() {
-	for i := range d.ch {
-		ch := &d.ch[i]
+	mask := d.active
+	for mask != 0 {
+		n := bits.TrailingZeros16(mask)
+		mask &^= 1 << uint(n)
+		ch := &d.ch[n]
 		if !ch.active {
 			continue
 		}
-		d.step(i, ch)
+		d.step(n, ch)
 	}
 }
 
@@ -169,6 +174,7 @@ func (d *dmaBlock) complete(n int) {
 	base := uint32(n * 0x40)
 	ch := &d.ch[n]
 	ch.active = false
+	d.active &^= 1 << uint(n)
 	d.block.regs[base/4+2] = 0
 	d.block.regs[base/4+3] = ch.ctrl &^ (dmaCtrlEN | dmaCtrlBusy)
 	if d.chip.OnDMA != nil {

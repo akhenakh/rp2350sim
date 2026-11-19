@@ -2,6 +2,7 @@
 package rp2350
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -72,6 +73,9 @@ type Chip struct {
 	uart [2]*uartBlock
 	dma  *dmaBlock
 	otp  *otpBlock
+	// pioActive has a bit per PIO block with at least one enabled state
+	// machine, so the per-cycle tick skips idle blocks.
+	pioActive uint8
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -193,11 +197,50 @@ func (c *Chip) addRegBlock(b *regBlock) {
 	sort.Slice(c.regs, func(i, j int) bool { return c.regs[i].base < c.regs[j].base })
 }
 
+// coreIdle reports whether a core has no instructions to run this cycle.
+func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
+
 // Run executes n cycles across both cores.
 func (c *Chip) Run(n uint64) {
 	for i := uint64(0); i < n && !c.Halted; i++ {
+		// With both cores asleep and nothing that needs per-cycle attention,
+		// only timers can make progress; jump to the next microsecond tick
+		// instead of executing 150 empty cycles.
+		if i&7 == 0 && c.canIdleSkip() {
+			skip := cyclesPerMicrosecond - c.Cycles%cyclesPerMicrosecond
+			skip = min(skip, n-i)
+			c.Cycles += skip
+			c.usbPoll = 7 // check host input on this tick
+			c.tickPeripherals()
+			i += skip - 1
+			continue
+		}
 		c.Step()
 	}
+}
+
+// canIdleSkip reports whether a jump to the next microsecond tick cannot
+// change any observable state: both cores are asleep or parked, no DMA or PIO
+// engine is running, no cycle hook samples pins, and the USB device is off.
+func (c *Chip) canIdleSkip() bool {
+	if c.Paused || !coreIdle(c.CPU0) || !coreIdle(c.CPU1) {
+		return false
+	}
+	if c.dma != nil && c.dma.busy() {
+		return false
+	}
+	if c.pioActive != 0 || len(c.CycleHooks) != 0 {
+		return false
+	}
+	if c.usb != nil && !c.usb.idleForSkip() {
+		return false
+	}
+	for _, u := range c.uart {
+		if u != nil && u.irqPending.Load() {
+			return false
+		}
+	}
+	return true
 }
 
 // Step advances the machine by one cycle.
@@ -210,8 +253,14 @@ func (c *Chip) Step() {
 	c.tickPeripherals()
 
 	if !c.Paused {
-		c.stepCore(c.CPU0)
-		c.stepCore(c.CPU1)
+		// Sleeping and parked cores need no work; checking here avoids two
+		// function calls per cycle for the common idle case.
+		if !c.CPU0.Sleeping && !c.CPU0.Parked {
+			c.stepCore(c.CPU0)
+		}
+		if !c.CPU1.Sleeping && !c.CPU1.Parked {
+			c.stepCore(c.CPU1)
+		}
 	} else {
 		// Paused: still advance time so timers behave.
 		c.advanceSleep(1)
@@ -282,23 +331,26 @@ func (c *Chip) tickPeripherals() {
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
 	}
-	for _, u := range c.uart {
-		if u != nil {
-			u.tick()
+	// Host input and the USB host state machine are asynchronous to the
+	// instruction stream; polling every 8 cycles costs nothing observable and
+	// keeps the two atomic checks off the per-cycle path.
+	c.usbPoll++
+	if c.usbPoll >= 8 {
+		c.usbPoll = 0
+		for _, u := range c.uart {
+			if u != nil && u.irqPending.Load() {
+				u.tick()
+			}
 		}
-	}
-	if c.usb != nil {
-		// The USB host state machine only needs to observe the device every
-		// few cycles; full-speed bit times are 12 cycles at 150 MHz.
-		c.usbPoll++
-		if c.usbPoll >= 8 {
-			c.usbPoll = 0
+		if c.usb != nil {
 			c.usb.tick(c)
 		}
 	}
-	for _, p := range c.pio {
-		if p != nil {
-			p.tick()
+	if c.pioActive != 0 {
+		for i, p := range c.pio {
+			if p != nil && c.pioActive&(1<<uint(i)) != 0 {
+				p.tick()
+			}
 		}
 	}
 	for _, h := range c.CycleHooks {
@@ -404,20 +456,20 @@ func (c *Chip) Read8(addr uint32) uint8 {
 func (c *Chip) Read16(addr uint32) uint16 {
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-1 {
 		o := addr - SRAMBase
-		return uint16(c.SRAM[o]) | uint16(c.SRAM[o+1])<<8
+		return binary.LittleEndian.Uint16(c.SRAM[o:])
 	}
 	if addr >= FlashBase && addr < FlashBase+FlashSize-1 {
 		o := addr - FlashBase
-		return uint16(c.Flash[o]) | uint16(c.Flash[o+1])<<8
+		return binary.LittleEndian.Uint16(c.Flash[o:])
 	}
 	if off, ok := flashAlias(addr); ok {
 		if off < FlashSize-1 {
-			return uint16(c.Flash[off]) | uint16(c.Flash[off+1])<<8
+			return binary.LittleEndian.Uint16(c.Flash[off:])
 		}
 		return c.unhandledRead16(addr)
 	}
 	if addr < ROMSize-1 {
-		return uint16(c.ROM[addr]) | uint16(c.ROM[addr+1])<<8
+		return binary.LittleEndian.Uint16(c.ROM[addr:])
 	}
 	if addr >= PeriphBase {
 		v := c.readMMIO(addr &^ 3)
@@ -432,21 +484,20 @@ func (c *Chip) Read16(addr uint32) uint16 {
 func (c *Chip) Read32(addr uint32) uint32 {
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-3 {
 		o := addr - SRAMBase
-		return uint32(c.SRAM[o]) | uint32(c.SRAM[o+1])<<8 | uint32(c.SRAM[o+2])<<16 | uint32(c.SRAM[o+3])<<24
+		return binary.LittleEndian.Uint32(c.SRAM[o:])
 	}
 	if addr >= FlashBase && addr < FlashBase+FlashSize-3 {
 		o := addr - FlashBase
-		return uint32(c.Flash[o]) | uint32(c.Flash[o+1])<<8 | uint32(c.Flash[o+2])<<16 | uint32(c.Flash[o+3])<<24
+		return binary.LittleEndian.Uint32(c.Flash[o:])
 	}
 	if off, ok := flashAlias(addr); ok {
 		if off < FlashSize-3 {
-			return uint32(c.Flash[off]) | uint32(c.Flash[off+1])<<8 | uint32(c.Flash[off+2])<<16 | uint32(c.Flash[off+3])<<24
+			return binary.LittleEndian.Uint32(c.Flash[off:])
 		}
 		return c.unhandledRead32(addr)
 	}
 	if addr < ROMSize-3 {
-		o := addr
-		return uint32(c.ROM[o]) | uint32(c.ROM[o+1])<<8 | uint32(c.ROM[o+2])<<16 | uint32(c.ROM[o+3])<<24
+		return binary.LittleEndian.Uint32(c.ROM[addr:])
 	}
 	if addr >= PeriphBase {
 		return c.readMMIO(addr)
