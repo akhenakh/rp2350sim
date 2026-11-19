@@ -16,10 +16,16 @@ const (
 	ROMSize   = 32 * 1024
 	FlashBase = 0x10000000
 	FlashSize = 16 * 1024 * 1024
-	SRAMBase  = 0x20000000
-	SRAMSize  = 520 * 1024
-	SIOBase   = 0xD0000000
-	PPBBase   = 0xE0000000
+	// XIP aliases over the same flash. The RP2350 no longer has the RP2040
+	// cache-as-SRAM window at 0x15000000; all three are flash views.
+	XIPNoCacheBase     = 0x14000000
+	XIPMaintenanceBase = 0x18000000
+	XIPNoTranslateBase = 0x1c000000
+	XIPAliasWindowSize = 0x04000000
+	SRAMBase           = 0x20000000
+	SRAMSize           = 520 * 1024
+	SIOBase            = 0xD0000000
+	PPBBase            = 0xE0000000
 	// SCSBase is the start of the System Control Space registers (NVIC, SCB,
 	// SysTick). PPBBase also covers the ITM and DWT, which are not modelled.
 	SCSBase    = 0xE000E000
@@ -330,6 +336,21 @@ func (c *Chip) LoadImage(data []byte) {
 	copy(c.Flash, data)
 }
 
+// flashAlias maps the RP2350 XIP windows onto the flash array. The third
+// return reports whether the address was in a window; a true offset that is
+// past the flash is an unmapped access.
+func flashAlias(addr uint32) (uint32, bool) {
+	switch {
+	case addr >= XIPNoCacheBase && addr < XIPNoCacheBase+XIPAliasWindowSize:
+		return addr - XIPNoCacheBase, true
+	case addr >= XIPMaintenanceBase && addr < XIPMaintenanceBase+XIPAliasWindowSize:
+		return addr - XIPMaintenanceBase, true
+	case addr >= XIPNoTranslateBase && addr < XIPNoTranslateBase+XIPAliasWindowSize:
+		return addr - XIPNoTranslateBase, true
+	}
+	return 0, false
+}
+
 // LoadSegment copies image bytes to a physical address, routing flash, SRAM
 // and ROM ranges appropriately.
 func (c *Chip) LoadSegment(addr uint32, data []byte) {
@@ -356,6 +377,12 @@ func (c *Chip) Read8(addr uint32) uint8 {
 	if addr >= FlashBase && addr < FlashBase+FlashSize {
 		return c.Flash[addr-FlashBase]
 	}
+	if off, ok := flashAlias(addr); ok {
+		if off < FlashSize {
+			return c.Flash[off]
+		}
+		return c.unhandledRead8(addr)
+	}
 	if addr < ROMSize {
 		return c.ROM[addr]
 	}
@@ -376,6 +403,12 @@ func (c *Chip) Read16(addr uint32) uint16 {
 	if addr >= FlashBase && addr < FlashBase+FlashSize-1 {
 		o := addr - FlashBase
 		return uint16(c.Flash[o]) | uint16(c.Flash[o+1])<<8
+	}
+	if off, ok := flashAlias(addr); ok {
+		if off < FlashSize-1 {
+			return uint16(c.Flash[off]) | uint16(c.Flash[off+1])<<8
+		}
+		return c.unhandledRead16(addr)
 	}
 	if addr < ROMSize-1 {
 		return uint16(c.ROM[addr]) | uint16(c.ROM[addr+1])<<8
@@ -399,6 +432,12 @@ func (c *Chip) Read32(addr uint32) uint32 {
 		o := addr - FlashBase
 		return uint32(c.Flash[o]) | uint32(c.Flash[o+1])<<8 | uint32(c.Flash[o+2])<<16 | uint32(c.Flash[o+3])<<24
 	}
+	if off, ok := flashAlias(addr); ok {
+		if off < FlashSize-3 {
+			return uint32(c.Flash[off]) | uint32(c.Flash[off+1])<<8 | uint32(c.Flash[off+2])<<16 | uint32(c.Flash[off+3])<<24
+		}
+		return c.unhandledRead32(addr)
+	}
 	if addr < ROMSize-3 {
 		o := addr
 		return uint32(c.ROM[o]) | uint32(c.ROM[o+1])<<8 | uint32(c.ROM[o+2])<<16 | uint32(c.ROM[o+3])<<24
@@ -421,6 +460,14 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		// Flash writes are ignored: XIP is read-only in this model.
 		return
 	}
+	if off, ok := flashAlias(addr); ok {
+		if off >= FlashSize {
+			c.unhandledWrite(addr, uint32(v))
+		}
+		// Read-only flash views; the maintenance window accepts cache
+		// maintenance writes as no-ops.
+		return
+	}
 	if addr >= PeriphBase {
 		c.writeMMIO8(addr, v)
 		return
@@ -439,6 +486,12 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		return
 	}
 	if addr >= FlashBase && addr < FlashBase+FlashSize-1 {
+		return
+	}
+	if off, ok := flashAlias(addr); ok {
+		if off >= FlashSize-1 {
+			c.unhandledWrite(addr, uint32(v))
+		}
 		return
 	}
 	if addr >= PeriphBase {
@@ -461,6 +514,12 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		return
 	}
 	if addr >= FlashBase && addr < FlashBase+FlashSize-3 {
+		return
+	}
+	if off, ok := flashAlias(addr); ok {
+		if off >= FlashSize-3 {
+			c.unhandledWrite(addr, v)
+		}
 		return
 	}
 	if addr >= PeriphBase {
