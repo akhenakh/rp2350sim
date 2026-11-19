@@ -191,7 +191,7 @@ func main() {
 	}
 	if err := img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
 		log.Error("unsupported firmware layout", slog.String("path", *path), slog.Any("err", err))
-		os.Exit(2)
+		os.Exit(1)
 	}
 	if !*quiet {
 		log.Info("firmware loaded",

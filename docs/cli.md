@@ -5,8 +5,13 @@ rp2350sim -fw IMAGE [flags]
 ```
 
 `-fw` accepts a `.elf`, `.uf2` or raw `.bin` image. UF2 family IDs are
-validated. The machine boots from the vector table at `0x10000000`; no RP2350
-bootrom is needed.
+validated and picotool's RP2350-E10 ignore block is skipped. The flash model
+is 16 MiB.
+
+The machine boots from the vector table at `0x10000000`; no RP2350 bootrom is
+needed. The image must contain that vector table, with SP inside SRAM and the
+reset vector in flash or SRAM. SRAM-resident and partition-table layouts are
+rejected with a load error instead of being executed.
 
 ## Output contract
 
