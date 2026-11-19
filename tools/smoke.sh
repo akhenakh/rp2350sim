@@ -69,6 +69,21 @@ else
 	bad "LCD framebuffer" "$out" "$(cat "$BUILD/smoke.log")"
 fi
 
+# --- RP2350-Touch-LCD-2 -----------------------------------------------------
+out=$("$EMU" -fw "$BUILD/touchlcd.elf" -seconds 1 -touch-lcd2 -lcd-png "$BUILD/touchlcd-smoke.png" 2>&1)
+if "$BUILD/pngcheck" -w 320 -h 240 -colors 2 "$BUILD/touchlcd-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "Touch-LCD-2 framebuffer exported"
+else
+	bad "Touch-LCD-2 framebuffer" "$out" "$(cat "$BUILD/smoke.log")"
+fi
+out=$("$EMU" -fw "$BUILD/touchlcd.elf" -seconds 3 -quiet -touch-lcd2 \
+	-touch 120,200 -touch-at 1s -touch-hold 500ms 2>&1)
+contains "CST816D touch" "touchlcd touch x=120 y=200" "$out"
+contains "QMI8658 IMU" "touchlcd imu ax=0 ay=0 az=4096" "$out"
+contains "battery ADC" "touchlcd battery raw=25808 mv=3897" "$out"
+out=$("$EMU" -fw "$BUILD/touchlcd.elf" -seconds 0.6 -quiet -touch-lcd2 -sensors 2>&1)
+contains "Touch-LCD-2 sensors" '"sd_blocks":32768' "$out"
+
 # --- W6300 Ethernet against the host helper --------------------------------
 if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
 	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2

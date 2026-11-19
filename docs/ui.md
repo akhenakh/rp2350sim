@@ -2,7 +2,8 @@
 
 The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
 the emulator build. It shows the selected board, live GPIO, LCD, Ethernet/Wi-Fi
-state, a console, an oscilloscope and a logic analyzer.
+state, touch/IMU/battery sensors, a console, an oscilloscope and a logic
+analyzer.
 
 ```sh
 cd cmd/simui
@@ -31,7 +32,7 @@ Other startup options:
 |---|---|
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
 | `--list-boards` | print board IDs, names and badges, then exit |
-| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `scope`, `logic`, `console` |
+| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--png PATH` | render one settled frame and exit (headless) |
@@ -44,6 +45,30 @@ picker. Changing boards reloads the current firmware onto the new hardware.
 
 A board declares the devices it has. Every key is optional; the UI creates a
 tab only when the device exists.
+
+| key | fields |
+|---|---|
+| `lcd` | `spi`, `cs`, `dc`, `rst`, `width`, `height`, `rotation`, `backlight` |
+| `touch` | `bus`, `addr`, `int`, `rst`, `width`, `height`, `rotation` |
+| `imu` | `bus`, `addr`, `int`, `int2` |
+| `battery` | `pin` (26-29), `divider`, `volts` |
+| `sd` | `spi`, `cs`, `image` (optional host file) |
+| `ethernet` | `kind` (`w5500`/`w6300`/`ch9120`), `spi`, `cs`, or the CH9120 pins |
+| `ws2812` | `pin` |
+| `analog` | list of `{pin, wave, hz, amplitude, offset}` |
+| `logic` | `{uart, i2c, spi}` pins the analyzer observes |
+| `serial` | list of `{uart, listen}` TCP bridges |
+| `wifi` | `{uart, cfg0, rst, tcpcs}` virtual netdev |
+
+### Sensors tab and touch
+
+Boards with `touch`, `imu`, `battery` or `sd` get a **Sensors** tab showing the
+live touch point, acceleration/rate, die temperature, battery voltage, PWM
+backlight duty and card size. Touching the card state is read-only.
+
+On a touch board, clicking or dragging the **LCD** panel injects a finger at the
+corresponding native panel coordinate: the UI maps the displayed (rotated)
+frame back through the LCD `rotation`. Release injects a lift.
 
 ```yaml
 boards:
@@ -63,6 +88,17 @@ boards:
       i2c: { sda: 28, scl: 29 }
       spi: { bus: 1, sck: 10, mosi: 11, cs: 9 }
     lcd: { spi: 1, cs: 9, dc: 8, rst: 12, width: 240, height: 135 }
+    sd: { spi: 0, cs: 23 }
+
+  - id: touch-lcd2
+    name: Waveshare RP2350-Touch-LCD-2
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320,
+           rotation: 90, backlight: 15 }
+    touch: { bus: 0, addr: 0x15, int: 29, rst: 20, width: 240, height: 320,
+             rotation: 90 }
+    imu: { bus: 0, addr: 0x6b, int: 14 }
+    battery: { pin: 28, divider: 3, volts: 3.9 }
+    sd: { spi: 1, cs: 25 }
 
   - id: rp2350-eth
     name: Waveshare RP2350-ETH (CH9120)

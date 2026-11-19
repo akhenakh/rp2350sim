@@ -51,6 +51,7 @@ tasks:
       - build
       - firmware:blinky
       - firmware:lcd
+      - firmware:touchlcd
       - firmware:piotest
       - firmware:ws2812
       - firmware:cores
@@ -63,6 +64,7 @@ tasks:
     cmds:
       - task: lint
       - go test ./...
+      - cd cmd/simui && go test ./...
       - 'go test -tags qemu ./internal/m33 -run TestQEMUInstructions'
       - 'go build -o {{.BUILD}}/ethhost ./tools/ethhost'
       - 'go build -o {{.BUILD}}/pngcheck ./tools/pngcheck'
@@ -116,6 +118,19 @@ tasks:
     deps: [build, firmware:blinky]
     cmds:
       - '{{.EMU}} -fw {{.BLINKY}} -seconds 3 -trace-pins 25'
+
+  firmware:touchlcd:
+    desc: Build the RP2350-Touch-LCD-2 example firmware
+    dir: firmware/touchlcd
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/touchlcd.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/touchlcd.elf .'
 
   firmware:piotest:
     desc: Build the PIO API conformance firmware
@@ -318,6 +333,18 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/lcd.elf -seconds 1 -lcd -lcd-png {{.BUILD}}/lcd.png'
 
+  run:touchlcd:
+    desc: Run the Touch-LCD-2 example with a deterministic touch
+    deps: [build, firmware:touchlcd]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/touchlcd.elf -seconds 3 -touch-lcd2 -touch 120,200 -touch-at 1s -touch-hold 500ms'
+
+  touchlcd:
+    desc: Run the Touch-LCD-2 example and export its framebuffer
+    deps: [build, firmware:touchlcd]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/touchlcd.elf -seconds 1 -touch-lcd2 -lcd-png {{.BUILD}}/touchlcd.png'
+
   ui:blinky:
     desc: Run the desktop UI with the blinky firmware loaded
     aliases: [ui]
@@ -332,6 +359,13 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board geek '../../{{.BUILD}}/lcd.elf'
+
+  ui:touchlcd:
+    desc: Run the UI on the Touch-LCD-2 board
+    deps: [firmware:touchlcd]
+    dir: cmd/simui
+    cmds:
+      - go run . --board touch-lcd2 '../../{{.BUILD}}/touchlcd.elf'
 
   ui:ws2812:
     desc: Run the UI with the WS2812B example (strip decoded from GP0)

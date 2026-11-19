@@ -17,6 +17,10 @@ type BoardDef struct {
 	Name        string         `yaml:"name"`
 	Description string         `yaml:"description"`
 	LCD         *LCDDevice     `yaml:"lcd"`
+	Touch       *TouchDevice   `yaml:"touch"`
+	IMU         *IMUDevice     `yaml:"imu"`
+	Battery     *BatteryDevice `yaml:"battery"`
+	SD          *SDDevice      `yaml:"sd"`
 	Ethernet    *EthDevice     `yaml:"ethernet"`
 	WS2812      *LEDDevice     `yaml:"ws2812"`
 	Analog      []SignalDef    `yaml:"analog"`
@@ -48,6 +52,67 @@ type LCDDevice struct {
 	RST    int `yaml:"rst"`
 	Width  int `yaml:"width"`
 	Height int `yaml:"height"`
+	// Rotation is the panel's logical rotation (0/90/180/270) used to map
+	// pointer input back to native touch coordinates.
+	Rotation  int  `yaml:"rotation"`
+	Backlight *int `yaml:"backlight"`
+}
+
+// BacklightPin returns the backlight GPIO, or -1 when it is not modelled.
+func (d *LCDDevice) BacklightPin() int {
+	if d.Backlight == nil {
+		return -1
+	}
+	return *d.Backlight
+}
+
+// TouchDevice is a capacitive controller on an I2C bus.
+type TouchDevice struct {
+	Bus      int  `yaml:"bus"`
+	Addr     int  `yaml:"addr"`
+	INT      int  `yaml:"int"`
+	RST      *int `yaml:"rst"`
+	Width    int  `yaml:"width"`
+	Height   int  `yaml:"height"`
+	Rotation int  `yaml:"rotation"`
+}
+
+// RSTPin returns the shared reset GPIO, or -1 when it is not wired.
+func (d *TouchDevice) RSTPin() int {
+	if d.RST == nil {
+		return -1
+	}
+	return *d.RST
+}
+
+// IMUDevice is a QMI8658 on an I2C bus.
+type IMUDevice struct {
+	Bus  int  `yaml:"bus"`
+	Addr int  `yaml:"addr"`
+	INT  int  `yaml:"int"`
+	INT2 *int `yaml:"int2"`
+}
+
+// INT2Pin returns the second interrupt GPIO, or -1.
+func (d *IMUDevice) INT2Pin() int {
+	if d.INT2 == nil {
+		return -1
+	}
+	return *d.INT2
+}
+
+// BatteryDevice is a resistor-divider battery monitor on an ADC pin.
+type BatteryDevice struct {
+	Pin     int     `yaml:"pin"`
+	Divider float64 `yaml:"divider"`
+	Volts   float64 `yaml:"volts"`
+}
+
+// SDDevice is a microSD card on a hardware SPI bus.
+type SDDevice struct {
+	SPI   int    `yaml:"spi"`
+	CS    int    `yaml:"cs"`
+	Image string `yaml:"image"`
 }
 
 type EthDevice struct {
@@ -201,6 +266,36 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
+		if d := b.Touch; d != nil {
+			if d.Bus != 0 && d.Bus != 1 {
+				return nil, fmt.Errorf("boards: %s: touch bus must be 0 or 1", b.ID)
+			}
+			if d.Addr < 0x08 || d.Addr > 0x77 {
+				return nil, fmt.Errorf("boards: %s: touch address %#x is not 7-bit", b.ID, d.Addr)
+			}
+			if d.Width <= 0 || d.Height <= 0 {
+				return nil, fmt.Errorf("boards: %s: touch needs width and height", b.ID)
+			}
+		}
+		if d := b.IMU; d != nil {
+			if d.Bus != 0 && d.Bus != 1 {
+				return nil, fmt.Errorf("boards: %s: imu bus must be 0 or 1", b.ID)
+			}
+			if d.Addr < 0x08 || d.Addr > 0x77 {
+				return nil, fmt.Errorf("boards: %s: imu address %#x is not 7-bit", b.ID, d.Addr)
+			}
+		}
+		if d := b.Battery; d != nil {
+			if d.Pin < 26 || d.Pin > 29 {
+				return nil, fmt.Errorf("boards: %s: battery pin must be an ADC pin (26-29)", b.ID)
+			}
+			if d.Divider <= 0 {
+				d.Divider = 1
+			}
+			if d.Volts <= 0 {
+				d.Volts = 3.9
+			}
+		}
 		if d := b.Ethernet; d != nil {
 			switch d.Kind {
 			case "":
@@ -216,6 +311,16 @@ func LoadBoards() ([]BoardDef, error) {
 			default:
 				return nil, fmt.Errorf("boards: %s: unknown ethernet kind %q", b.ID, d.Kind)
 			}
+		}
+		if d := b.SD; d != nil {
+			if d.SPI != 0 && d.SPI != 1 {
+				return nil, fmt.Errorf("boards: %s: sd: spi must be 0 or 1", b.ID)
+			}
+			// A card may share the LCD bus: CS selects between them.
+			if prev, ok := spi[d.SPI]; ok && prev != "lcd" {
+				return nil, fmt.Errorf("boards: %s: sd and %s both use SPI%d", b.ID, prev, d.SPI)
+			}
+			spi[d.SPI] = "sd"
 		}
 		for _, sd := range b.Serial {
 			if sd.UART < 0 || sd.UART > 1 {

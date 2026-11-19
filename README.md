@@ -5,8 +5,9 @@ A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodif
 
 Status: runs real TinyGo programs end to end — package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
-DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), an ST7789 display and
-W5500 Ethernet, plus a W6300 driver for the PoE board. Stock **Pico SDK C**
+DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a
+CST816D touch controller, a QMI8658 IMU, a microSD card model and W5500
+Ethernet, plus a W6300 driver for the PoE board. Stock **Pico SDK C**
 firmware boots through the same vector table and runs its runtime, UART stdio,
 GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33
 interpreter is checked against QEMU instruction by instruction.
@@ -20,7 +21,7 @@ firmware/c/         Pico SDK C examples (CMake)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
                     UART, SPI, DMA, PWM, ADC, I2C
-internal/devices/   external chips (ST7789 display, W5500/W6300 Ethernet)
+internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
 internal/firmware/  UF2 / ELF / raw image loaders
 drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
 firmware/           example TinyGo programs (blinky, lcd, piotest, ws2812, w6300)
@@ -41,6 +42,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
+| `task run:touchlcd` | run the Touch-LCD-2 example with a deterministic touch |
+| `task touchlcd` | run the Touch-LCD-2 example and export its framebuffer |
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
 | `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
 | `task run:echo` | echo injected console input through USB CDC |
@@ -49,6 +52,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
 | `task ui:blinky` (`ui`) | desktop UI on the `pico2` board with the blinky firmware |
 | `task ui:lcd` | desktop UI on the `geek` board with the ST7789 example |
+| `task ui:touchlcd` | desktop UI on the `touch-lcd2` board |
 | `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
 | `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
 | `task run:ch9120` | CH9120 UART-to-Ethernet example against the host echo |

@@ -45,6 +45,43 @@ type MachineState struct {
 	EthStatus  string
 	EthLog     []string
 	Serial     []string
+
+	Touch     *TouchState
+	IMU       *IMUState
+	Battery   *BatteryState
+	Backlight *BacklightState
+	SD        *SDState
+}
+
+// TouchState is the last reported touch point in panel coordinates.
+type TouchState struct {
+	X, Y    int
+	Pressed bool
+	Gesture byte
+}
+
+// IMUState is the QMI8658 sample shown in the Sensors tab.
+type IMUState struct {
+	AX, AY, AZ float32 // g
+	GX, GY, GZ float32 // deg/s
+	Temp       float32
+}
+
+// BatteryState is the battery monitor reading.
+type BatteryState struct {
+	Volts float32
+	Raw   uint16
+}
+
+// BacklightState is the LCD backlight drive level.
+type BacklightState struct {
+	Duty float32
+}
+
+// SDState summarises the attached card.
+type SDState struct {
+	Inserted bool
+	Blocks   int
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -61,10 +98,16 @@ type Emu struct {
 
 	lcdGen   int
 	lcdFrame *image.RGBA
+	lcdDuty  float32
+	lcdOn    bool
 
 	board *BoardDef
 
 	ws      *devices.WS2812B
+	touch   *devices.CST816D
+	imu     *devices.QMI8658
+	sd      *devices.SDCard
+	blPin   int
 	ethKind string
 	ethLog  panelLog
 	ch9120  *devices.CH9120
@@ -155,6 +198,23 @@ func (e *Emu) SetBoard(b *BoardDef) {
 		e.scopePins = b.ScopePins()
 	}
 	e.loadLocked()
+}
+
+// SetTouch injects a touch point in panel coordinates (the CST816D's own
+// 240x320 frame, not the rotated display frame).
+func (e *Emu) SetTouch(x, y int, pressed bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.touch != nil {
+		e.touch.SetTouch(x, y, pressed)
+	}
+}
+
+// TouchAvailable reports whether the selected board has a touch controller.
+func (e *Emu) TouchAvailable() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.touch != nil
 }
 
 // SetLogicTrigger arms or disarms the analyzer trigger and clears any frozen
@@ -323,6 +383,10 @@ func (e *Emu) resetChip() {
 	c := rp2350.New()
 	e.lcd = nil
 	e.ws = nil
+	e.touch = nil
+	e.imu = nil
+	e.sd = nil
+	e.blPin = -1
 	e.ch9120 = nil
 	e.ethKind = ""
 	e.ethLog.reset()
@@ -337,25 +401,45 @@ func (e *Emu) resetChip() {
 	logEth := e.ethLog.logger()
 
 	if b := e.board; b != nil {
-		recordSPI := func(bus int, dev func(byte) byte) func(byte) byte {
-			return func(tx byte) byte {
-				rx := byte(0xFF)
-				if dev != nil {
-					rx = dev(tx)
-				}
-				e.addSPI(bus, c.Cycles, tx, rx)
-				return rx
-			}
+		type spiClient struct {
+			cs int
+			fn func(byte) byte
 		}
-		var spiAttached [2]bool
+		var spiClients [2][]spiClient
+		attachSPI := func(bus, cs int, fn func(byte) byte) {
+			if bus != 0 && bus != 1 {
+				return
+			}
+			spiClients[bus] = append(spiClients[bus], spiClient{cs: cs, fn: fn})
+		}
+
 		if d := b.LCD; d != nil {
 			e.lcd = devices.NewST7789(c, d.CS, d.DC, d.RST)
-			if d.SPI == 1 {
-				c.OnSPI1 = recordSPI(1, e.lcd.Transfer)
-				spiAttached[1] = true
+			e.blPin = d.BacklightPin()
+			attachSPI(d.SPI, d.CS, e.lcd.Transfer)
+		}
+		if d := b.Touch; d != nil {
+			e.touch = devices.NewCST816D(c, uint8(d.Addr), d.RSTPin(), d.INT)
+			e.touch.Width, e.touch.Height = d.Width, d.Height
+			e.touch.TouchRotate = d.Rotation
+			c.AttachI2C(d.Bus, uint8(d.Addr), e.touch)
+			c.CycleHooks = append(c.CycleHooks, e.touch.Tick)
+		}
+		if d := b.IMU; d != nil {
+			e.imu = devices.NewQMI8658(c, uint8(d.Addr), d.INT, d.INT2Pin())
+			c.AttachI2C(d.Bus, uint8(d.Addr), e.imu)
+			c.CycleHooks = append(c.CycleHooks, e.imu.Tick)
+		}
+		if d := b.Battery; d != nil {
+			c.Pins.SetAnalog(d.Pin, float32(d.Volts/d.Divider))
+		}
+		if d := b.SD; d != nil {
+			card, err := devices.NewSDCard(c, d.CS, d.Image)
+			if err != nil {
+				e.errText = err.Error()
 			} else {
-				c.OnSPI0 = recordSPI(0, e.lcd.Transfer)
-				spiAttached[0] = true
+				e.sd = card
+				attachSPI(d.SPI, d.CS, card.Transfer)
 			}
 		}
 		if w := b.Wifi; w != nil {
@@ -389,13 +473,7 @@ func (e *Emu) resetChip() {
 					eth.Logger = logEth
 					transfer, tick = eth.Transfer, eth.Tick
 				}
-				if d.SPI == 1 {
-					c.OnSPI1 = recordSPI(1, transfer)
-					spiAttached[1] = true
-				} else {
-					c.OnSPI0 = recordSPI(0, transfer)
-					spiAttached[0] = true
-				}
+				attachSPI(d.SPI, d.CS, transfer)
 				c.CycleHooks = append(c.CycleHooks, tick)
 			}
 		}
@@ -425,6 +503,39 @@ func (e *Emu) resetChip() {
 			c.CycleHooks = append(c.CycleHooks, src.Tick)
 		}
 
+		// A protocol without an attached chip still records bytes clocked by
+		// firmware through that SPI controller.
+		spiFallback := [2]bool{}
+		if l := b.Logic; l != nil && l.SPI != nil {
+			bus := l.SPI.Bus
+			if (bus == 0 || bus == 1) && len(spiClients[bus]) == 0 {
+				spiFallback[bus] = true
+			}
+		}
+		for bus := range 2 {
+			if len(spiClients[bus]) == 0 && !spiFallback[bus] {
+				continue
+			}
+			clients := spiClients[bus]
+			handler := func(tx byte) byte {
+				rx := byte(0xFF)
+				for _, cl := range clients {
+					if cl.cs >= 0 && c.Pins.Level(cl.cs) {
+						continue
+					}
+					rx = cl.fn(tx)
+					break
+				}
+				e.addSPI(bus, c.Cycles, tx, rx)
+				return rx
+			}
+			if bus == 1 {
+				c.OnSPI1 = handler
+			} else {
+				c.OnSPI0 = handler
+			}
+		}
+
 		scopePins := e.scopePins
 		if len(scopePins) == 0 {
 			scopePins = b.ScopePins()
@@ -435,18 +546,6 @@ func (e *Emu) resetChip() {
 		if pins := b.LogicPins(); len(pins) > 0 {
 			e.logic = devices.NewTrace(c, pins, devices.LogicInterval, devices.LogicDepth)
 			c.CycleHooks = append(c.CycleHooks, e.logic.Tick)
-		}
-		// A protocol without an attached chip still records bytes clocked
-		// by firmware through that SPI controller.
-		if l := b.Logic; l != nil && l.SPI != nil {
-			bus := l.SPI.Bus
-			if bus >= 0 && bus < 2 && !spiAttached[bus] {
-				if bus == 1 {
-					c.OnSPI1 = recordSPI(1, nil)
-				} else {
-					c.OnSPI0 = recordSPI(0, nil)
-				}
-			}
 		}
 		c.OnI2C = func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool) {
 			e.addI2C(bus, cycles, kind, addr, data, ack)
@@ -485,6 +584,8 @@ func (e *Emu) resetChip() {
 	e.chip = c
 	e.lcdGen = 0
 	e.lcdFrame = nil
+	e.lcdDuty = -1
+	e.lcdOn = false
 }
 
 // attachSerial keeps the TCP bridges across chip resets when the board's
@@ -659,11 +760,39 @@ func (e *Emu) Snapshot() MachineState {
 		}
 	}
 	if e.lcd != nil {
-		if g := e.lcd.PixelsWritten(); g != e.lcdGen {
+		duty := float32(1)
+		if e.blPin >= 0 {
+			duty = e.chip.PinBrightness(e.blPin)
+		}
+		on := e.lcd.On()
+		if g := e.lcd.PixelsWritten(); g != e.lcdGen || duty != e.lcdDuty || on != e.lcdOn {
+			e.lcd.Brightness = duty
 			e.lcdFrame = e.lcd.Framebuffer()
 			e.lcdGen = g
+			e.lcdDuty = duty
+			e.lcdOn = on
 		}
 		s.LCD = e.lcdFrame
+		if e.blPin >= 0 {
+			s.Backlight = &BacklightState{Duty: duty}
+		}
+	}
+	if e.touch != nil {
+		x, y, pressed := e.touch.Last()
+		s.Touch = &TouchState{X: x, Y: y, Pressed: pressed, Gesture: e.touch.Gesture()}
+	}
+	if e.imu != nil {
+		ax, ay, az := e.imu.Accel()
+		gx, gy, gz := e.imu.Gyro()
+		s.IMU = &IMUState{AX: ax, AY: ay, AZ: az, GX: gx, GY: gy, GZ: gz, Temp: e.imu.Temperature()}
+	}
+	if b := e.board; b != nil && b.Battery != nil {
+		v := float32(b.Battery.Volts)
+		raw := min(uint16(4095*(v/float32(b.Battery.Divider))/3.3), uint16(4095))
+		s.Battery = &BatteryState{Volts: v, Raw: raw}
+	}
+	if e.sd != nil {
+		s.SD = &SDState{Inserted: e.sd.Inserted(), Blocks: e.sd.Blocks()}
 	}
 	if len(e.console) > 0 {
 		start := max(len(e.console)-16*1024, 0)

@@ -115,6 +115,13 @@ func main() {
 		valStr     = flag.String("watch-val", "", "log writes of this value (hex)")
 		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
 		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
+		touchLCD2  = flag.Bool("touch-lcd2", false, "attach the RP2350-Touch-LCD-2 hardware (touch LCD, IMU, battery, microSD)")
+		touchStr   = flag.String("touch", "", "inject a touch at x,y in native panel coordinates")
+		touchAt    = flag.Duration("touch-at", 150*time.Millisecond, "delay before -touch is applied")
+		touchHold  = flag.Duration("touch-hold", 100*time.Millisecond, "how long -touch stays down")
+		sensorsOut = flag.Bool("sensors", false, "print touch, IMU and battery state at exit")
+		sdFlag     = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
+		sdImage    = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
@@ -210,11 +217,40 @@ func main() {
 	}
 
 	var lcd *devices.ST7789
-	if *lcdFlag || *lcdPNG != "" {
+	var lcdSPI = 1
+	if *lcdFlag || (*lcdPNG != "" && !*touchLCD2) {
 		lcd = devices.NewST7789(c, 9, 8, 12)
+		lcdSPI = 1
 		if os.Getenv("RP2350SIM_LCD_LOG") != "" {
 			lcd.Logger = debugLog()
 		}
+	}
+
+	var touch *devices.CST816D
+	var imu *devices.QMI8658
+	var card *devices.SDCard
+	spiCardBus := 1
+	if *touchLCD2 {
+		if *lcdFlag {
+			log.Error("-lcd and -touch-lcd2 are mutually exclusive")
+			os.Exit(2)
+		}
+		lcd = devices.NewST7789(c, 17, 16, 20)
+		lcdSPI = 0
+		if os.Getenv("RP2350SIM_LCD_LOG") != "" {
+			lcd.Logger = debugLog()
+		}
+		touch = devices.NewCST816D(c, 0x15, 20, 29)
+		c.AttachI2C(0, 0x15, touch)
+		c.CycleHooks = append(c.CycleHooks, touch.Tick)
+		imu = devices.NewQMI8658(c, 0x6b, 14, -1)
+		c.AttachI2C(0, 0x6b, imu)
+		c.CycleHooks = append(c.CycleHooks, imu.Tick)
+		c.Pins.SetAnalog(28, 3.9/3) // battery divider
+		card, _ = devices.NewSDCard(c, 25, *sdImage)
+	} else if *sdFlag {
+		card, _ = devices.NewSDCard(c, 23, *sdImage)
+		spiCardBus = 0
 	}
 
 	if os.Getenv("RP2350SIM_DMA_LOG") != "" {
@@ -261,34 +297,100 @@ func main() {
 	if spiLog {
 		spiLogger = debugLog()
 	}
-	c.OnSPI0 = func(tx byte) byte {
-		if w6300 != nil {
-			return w6300.Transfer(tx)
-		}
-		if w5500 != nil {
-			return w5500.Transfer(tx)
-		}
-		if spiLog {
-			spiLogger.Debug("spi tx", slog.Int("bus", 0), slog.String("byte", fmt.Sprintf("%02x", tx)))
-		}
-		return 0xFF
+	type spiDev struct {
+		cs int
+		fn func(byte) byte
 	}
-	c.OnSPI1 = func(tx byte) byte {
-		if lcd != nil {
-			return lcd.Transfer(tx)
-		}
-		if spiLog {
-			spiLogger.Debug("spi tx", slog.Int("bus", 1), slog.String("byte", fmt.Sprintf("%02x", tx)))
-		}
-		return 0xFF
+	var spi0, spi1 []spiDev
+	if w6300 != nil {
+		spi0 = append(spi0, spiDev{17, w6300.Transfer})
 	}
+	if w5500 != nil {
+		spi0 = append(spi0, spiDev{17, w5500.Transfer})
+	}
+	if lcd != nil {
+		if lcdSPI == 1 {
+			spi1 = append(spi1, spiDev{9, lcd.Transfer})
+		} else {
+			spi0 = append(spi0, spiDev{17, lcd.Transfer})
+		}
+	}
+	if card != nil {
+		if spiCardBus == 0 {
+			spi0 = append(spi0, spiDev{23, card.Transfer})
+		} else {
+			spi1 = append(spi1, spiDev{25, card.Transfer})
+		}
+	}
+	if len(spi0) > 1 {
+		log.Error("SPI0 has more than one attached device; choose one of -lcd/-eth/-w6300/-touch-lcd2")
+		os.Exit(2)
+	}
+	spiHandler := func(devs []spiDev) func(byte) byte {
+		return func(tx byte) byte {
+			rx := byte(0xFF)
+			for _, d := range devs {
+				if d.cs >= 0 && c.Pins.Level(d.cs) {
+					continue
+				}
+				rx = d.fn(tx)
+				break
+			}
+			if spiLog {
+				spiLogger.Debug("spi tx", slog.String("byte", fmt.Sprintf("%02x", tx)), slog.String("rx", fmt.Sprintf("%02x", rx)))
+			}
+			return rx
+		}
+	}
+	c.OnSPI0 = spiHandler(spi0)
+	c.OnSPI1 = spiHandler(spi1)
 	expects := &expectSet{}
 	for _, w := range expectFlag {
 		expects.add(w)
 	}
+	if os.Getenv("RP2350SIM_I2C_LOG") != "" {
+		i2cLog := debugLog()
+		c.OnI2C = func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool) {
+			i2cLog.Debug("i2c", slog.Int("bus", bus), slog.String("kind", kind),
+				slog.String("addr", fmt.Sprintf("%02x", addr)), slog.String("data", fmt.Sprintf("%02x", data)), slog.Bool("ack", ack))
+		}
+	}
 	c.OnUART0 = func(b byte) { expects.console([]byte{b}) }
 	c.OnUART1 = func(b byte) { expects.console([]byte{b}) }
 	c.SetUSBCDC(expects.console)
+
+	if *touchStr != "" {
+		if touch == nil {
+			log.Error("-touch needs -touch-lcd2")
+			os.Exit(2)
+		}
+		parts := strings.Split(*touchStr, ",")
+		if len(parts) != 2 {
+			log.Error("-touch expects x,y")
+			os.Exit(2)
+		}
+		x, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+		y, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err1 != nil || err2 != nil {
+			log.Error("-touch expects integer x,y")
+			os.Exit(2)
+		}
+		at := uint64(touchAt.Seconds() * 150e6)
+		end := at + uint64(touchHold.Seconds()*150e6)
+		var applied, released bool
+		c.CycleHooks = append(c.CycleHooks, func() {
+			if !applied && c.Cycles >= at {
+				log.Debug("inject touch", "x", x, "y", y, "cycles", c.Cycles)
+				touch.SetTouch(x, y, true)
+				applied = true
+			}
+			if applied && !released && c.Cycles >= end {
+				log.Debug("release touch", "cycles", c.Cycles)
+				touch.SetTouch(x, y, false)
+				released = true
+			}
+		})
+	}
 
 	if *ch9120Flag {
 		ch := devices.NewCH9120(c, 1, 18, 19, 17)
@@ -710,6 +812,25 @@ func main() {
 	}
 	if lcd != nil && !*quiet {
 		log.Info("lcd", slog.Int("pixels", lcd.PixelsWritten()), slog.Bool("on", lcd.On()))
+	}
+	if *sensorsOut {
+		attrs := []any{}
+		if touch != nil {
+			tx, ty, pressed := touch.Last()
+			attrs = append(attrs, "touch", fmt.Sprintf("%d,%d", tx, ty), "pressed", pressed)
+		}
+		if imu != nil {
+			ax, ay, az := imu.Accel()
+			attrs = append(attrs, "accel", fmt.Sprintf("%.2f,%.2f,%.2f", ax, ay, az))
+			attrs = append(attrs, "temp", imu.Temperature())
+		}
+		if card != nil {
+			attrs = append(attrs, "sd_blocks", card.Blocks())
+		}
+		if *touchLCD2 {
+			attrs = append(attrs, "battery", 3.9, "backlight", c.PinBrightness(15))
+		}
+		log.Info("sensors", attrs...)
 	}
 	if lcd != nil && *lcdPNG != "" {
 		if err := lcd.WritePNG(*lcdPNG); err != nil {

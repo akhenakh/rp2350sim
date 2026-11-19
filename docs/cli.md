@@ -144,15 +144,29 @@ rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
 
 | flag | attaches |
 |---|---|
-| `-lcd` | ST7789 240×135 on SPI1 (CS GP9, DC GP8, RST GP12) |
+| `-lcd` | ST7789 240×135 on SPI1 (CS GP9, DC GP8, RST GP12), GEEK wiring |
+| `-touch-lcd2` | RP2350-Touch-LCD-2: 240×320 LCD on SPI0, CST816D, QMI8658, battery ADC, microSD |
+| `-touch x,y` | inject a tap at native panel coordinates (needs `-touch-lcd2`) |
+| `-touch-at D`, `-touch-hold D` | when the tap goes down and how long it lasts (default 150 ms / 100 ms) |
+| `-sensors` | print touch, IMU, battery, backlight and SD state at exit |
 | `-lcd-png PATH` | write the LCD framebuffer to a PNG at exit |
+| `-sd` | microSD on SPI0 (CS GP23), GEEK wiring |
+| `-sd-image PATH` | backing image for `-sd`/`-touch-lcd2` (default: built-in FAT16) |
 | `-eth` | W5500 on SPI0 (CS GP17) |
 | `-w6300` | W6300 on SPI0 (CS GP17) |
 | `-ch9120` | CH9120 on UART1 (GP20/21), CFG0 GP18, RST GP19, TCPCS GP17 |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 
-`-eth` and `-w6300` are mutually exclusive. The UI has more boards
-(see [ui.md](ui.md)); the runner flags cover the common bring-up cases.
+`-eth` and `-w6300` are mutually exclusive, as are `-lcd` and `-touch-lcd2`.
+The UI has more boards (see [ui.md](ui.md)); the runner flags cover the common
+bring-up cases.
+
+A deterministic touch on the Touch-LCD-2:
+
+```sh
+rp2350sim -fw touchlcd.elf -seconds 3 -touch-lcd2 \
+  -touch 120,200 -touch-at 1s -touch-hold 500ms
+```
 
 ### UART over TCP
 
@@ -208,6 +222,7 @@ of the others. Setting `-log-level debug` enables all of them.
 | `RP2350SIM_LCD_LOG` | ST7789 command decoding |
 | `RP2350SIM_USB_LOG` | USB host/device state |
 | `RP2350SIM_PIO_LOG` | PIO state machine execution |
+| `RP2350SIM_I2C_LOG` | every I2C address, byte and STOP |
 | `RP2350SIM_DCP_LOG` | RP2350 double coprocessor operations (operands and result) |
 
 ## Examples

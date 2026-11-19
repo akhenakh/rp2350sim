@@ -6,7 +6,11 @@
 #
 # Fields:
 #   id, name, description        identity shown in the picker and toolbar
-#   lcd:    { spi, cs, dc, rst, width, height }
+#   lcd:    { spi, cs, dc, rst, width, height, rotation, backlight }
+#   touch:  { bus, addr, int, rst, width, height, rotation }
+#   imu:    { bus, addr, int }
+#   battery: { pin, divider, volts }
+#   sd:     { spi, cs, image }
 #   ethernet: { kind: w5500|w6300, spi, cs }
 #   ws2812: { pin }
 #
@@ -57,6 +61,47 @@ boards:
       rst: 12
       width: 240
       height: 135
+      backlight: 25
+    sd:
+      spi: 0
+      cs: 23
+
+  - id: touch-lcd2
+    name: Waveshare RP2350-Touch-LCD-2
+    description: 240×320 ST7789T3 touch LCD on SPI0 · CST816D + QMI8658 on I2C0 · microSD · battery ADC
+    scope: [18, 19]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+      i2c: { sda: 12, scl: 13 }
+      spi: { bus: 0, sck: 18, mosi: 19, miso: 4, cs: 17 }
+    lcd:
+      spi: 0
+      cs: 17
+      dc: 16
+      rst: 20
+      width: 240
+      height: 320
+      rotation: 90
+      backlight: 15
+    touch:
+      bus: 0
+      addr: 0x15
+      int: 29
+      rst: 20
+      width: 240
+      height: 320
+      rotation: 90
+    imu:
+      bus: 0
+      addr: 0x6b
+      int: 14
+    battery:
+      pin: 28
+      divider: 3
+      volts: 3.9
+    sd:
+      spi: 1
+      cs: 25
 
   - id: poe-eth
     name: Waveshare RP2350-POE-ETH

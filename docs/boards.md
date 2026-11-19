@@ -11,14 +11,39 @@ uses: GPIO/IO_BANK0/PADS, SIO, NVIC/SCB, timers, clocks/PLL/XOSC, watchdog,
 UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
 `tinygo build -target=pico2 -scheduler=cores` boots core 1.
 
-## Waveshare RP2350-GEEK (LCD)
+## Waveshare RP2350-GEEK
 
 - ST7789VW 240×135 on SPI1: CS GP9, DC GP8, RST GP12, backlight GP25.
+- microSD on SPI0: SCK GP18, MOSI GP19, MISO GP20, CS GP23. The card is backed
+  by a built-in FAT16 image (16 MB, `HELLO.TXT`); `-sd-image` substitutes a
+  host image. Use `-sd` (runner) or the `geek` UI board.
+- The 3-pin SWD/UART and 4-pin I2C headers are pass-through connectors to the
+  target board, not on-board devices.
 - Use `-lcd` (runner) or the `geek` UI board; `-lcd-png out.png` exports the
   framebuffer.
 - Reference firmware: `firmware/lcd`, which animates palette bands and a
   sweeping cursor so full-frame fills, partial updates and rotation are all
   exercised.
+
+## Waveshare RP2350-Touch-LCD-2
+
+- ST7789T3 240×320 IPS on SPI0: SCK GP18, MOSI GP19, CS GP17, DC GP16,
+  RST GP20 (shared with touch), backlight GP15.
+- CST816D touch on I2C0 at `0x15`: SDA GP12, SCL GP13, INT GP29, RST GP20.
+  Reports finger count and raw X/Y at `0x02..0x06`; chip ID `0xA7` = `0xB6`.
+- QMI8658 6-axis IMU on I2C0 at `0x6B`: INT1 GP14. Accelerometer defaults to
+  ±8 g (4096 LSB/g) with +1 g on Z; the range follows CTRL2. Data-ready INT1
+  is a level that clears when the output or status register is read.
+- Battery monitor: GP28/ADC2 through a ÷3 divider (3.9 V battery ≈ 1.3 V).
+- microSD on SPI1: SCK GP26, MOSI GP27, MISO GP24, CS GP25. Same built-in
+  FAT16 image as the GEEK; `-sd-image` replaces it.
+- The camera connector (DVP on GP0-GP11, SCCB on I2C1 GP22/GP23) is a
+  connector for an optional OV2640/OV5640 module and is not emulated.
+- Use `-touch-lcd2` (runner) or the `touch-lcd2` UI board. `-lcd-png` exports
+  the 320×240 rotated frame; `-touch x,y` injects a tap (native panel
+  coordinates), and `-touch-at`/`-touch-hold` place it in virtual time.
+- Reference firmware: `firmware/touchlcd`, which initialises the panel, touch,
+  IMU, backlight and ADC, prints deterministic values and draws touch points.
 
 ## Waveshare RP2350-POE-ETH (W6300)
 
@@ -106,6 +131,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 |---|---|
 | `firmware/blinky` | GPIO and timing |
 | `firmware/lcd` | ST7789 over SPI |
+| `firmware/touchlcd` | Touch-LCD-2: ST7789, CST816D, QMI8658, ADC, microSD |
 | `firmware/piotest` | PIO API conformance (FIFOs, autopush/pull, IRQ, side-set) |
 | `firmware/ws2812` | WS2812B strip over PIO |
 | `firmware/cores` | `-scheduler=cores` and core 1 |

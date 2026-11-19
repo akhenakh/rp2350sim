@@ -46,6 +46,7 @@ const (
 	tabLCD
 	tabEth
 	tabWS
+	tabSensors
 	tabScope
 	tabLogic
 	tabConsole
@@ -113,6 +114,8 @@ func RootView() {
 				ethPanel(snap)
 			case tabWS:
 				ws2812Panel(snap)
+			case tabSensors:
+				sensorsPanel(snap)
 			case tabScope:
 				scopePanel()
 			case tabLogic:
@@ -233,6 +236,10 @@ func setTab(name string) {
 		if selectedBoard != nil && selectedBoard.WS2812 != nil {
 			activeTab = tabWS
 		}
+	case "sensors", "imu", "touch", "battery":
+		if boardHasSensors(selectedBoard) {
+			activeTab = tabSensors
+		}
 	case "scope", "osc":
 		activeTab = tabScope
 	case "logic", "la":
@@ -261,6 +268,9 @@ func tabsBar() {
 		if selectedBoard.WS2812 != nil {
 			tabButton("LEDs", tabWS)
 		}
+		if boardHasSensors(selectedBoard) {
+			tabButton("Sensors", tabSensors)
+		}
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
 		tabButton("Console", tabConsole)
@@ -269,6 +279,12 @@ func tabsBar() {
 			Label(selectedBoard.Description, FontSize(11), TextColor(220, 6, 68, 1))
 		}
 	})
+}
+
+// boardHasSensors reports whether the board exposes on-board sensors worth
+// their own tab.
+func boardHasSensors(b *BoardDef) bool {
+	return b != nil && (b.Touch != nil || b.IMU != nil || b.Battery != nil || b.SD != nil)
 }
 
 func tabButton(label string, tab int) {
@@ -416,13 +432,36 @@ func pinCard(p int, in PinInfo) {
 	})
 }
 
-// lcdViewSize fits the 4:3-ish panel into the window while keeping its aspect.
-func lcdViewSize() Vec2 {
+// lcdAspect returns the displayed frame size: the last frame when there is
+// one, otherwise the board's panel with its logical rotation applied.
+func lcdAspect(snap MachineState) (int, int) {
+	if snap.LCD != nil {
+		b := snap.LCD.Bounds()
+		if b.Dx() > 1 && b.Dy() > 1 {
+			return b.Dx(), b.Dy()
+		}
+	}
+	if d := selectedBoard.LCD; d != nil {
+		if d.Rotation == 90 || d.Rotation == 270 {
+			return d.Height, d.Width
+		}
+		return d.Width, d.Height
+	}
+	return 240, 135
+}
+
+// lcdViewSize fits the panel into the window while keeping its aspect.
+func lcdViewSize(snap MachineState) Vec2 {
+	iw, ih := lcdAspect(snap)
+	if iw <= 0 || ih <= 0 {
+		iw, ih = 240, 135
+	}
+	aspect := float32(iw) / float32(ih)
 	w := float32(viewW) * 0.62
-	h := w * 135 / 240
+	h := w / aspect
 	if maxH := float32(viewH) * 0.64; h > maxH {
 		h = maxH
-		w = h * 240 / 135
+		w = h * aspect
 	}
 	return Vec2{w, h}
 }
@@ -441,17 +480,174 @@ func lcdPanel(snap MachineState) {
 			}
 		})
 		Container(Attrs(Grow(1), Expand, Center), func() {
-			Container(Attrs(Corners(6), Clip, Background(0, 0, 0, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+			size := lcdViewSize(snap)
+			Container(Attrs(FixSizeVec(size), Corners(6), Clip, Background(0, 0, 0, 1),
+				BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+				st := ProcessButtonEvents(false)
 				if snap.LCD != nil {
 					id := UseImage("lcd", snap.LCD)
-					ImageViewAt(id, lcdViewSize())
+					ImageViewAt(id, size)
 				} else {
-					Container(Attrs(FixSizeVec(lcdViewSize()), Center), func() {
+					Container(Attrs(FixSizeVec(size), Center), func() {
 						Label("LCD idle", FontSize(14), TextColor(220, 5, 55, 1))
 					})
 				}
+				// A press or drag on the panel is a finger on the capacitive
+				// controller. The image is in driver order; convert back to
+				// the panel's native coordinates.
+				if snap.LCD != nil && snap.Touch != nil {
+					down := Use[bool]("lcd-touch-down")
+					if st.Active {
+						b := snap.LCD.Bounds()
+						lx := clampFloat(st.Local[0]/size[0], 0, 1)
+						ly := clampFloat(st.Local[1]/size[1], 0, 1)
+						nx, ny := touchPoint(selectedBoard, lx, ly, b.Dx(), b.Dy())
+						emu.SetTouch(nx, ny, true)
+						*down = true
+						RequestNextFrame()
+					} else if *down {
+						emu.SetTouch(0, 0, false)
+						*down = false
+					}
+				}
+			})
+			if snap.Touch != nil {
+				Label("Click or drag the panel to inject touch", FontSize(12),
+					TextColor(220, 6, 70, 1))
+			}
+		})
+	})
+}
+
+func clampFloat(v, lo, hi float32) float32 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// touchPoint maps a normalised position in the displayed (rotated) frame to
+// the touch controller's native panel coordinates.
+func touchPoint(b *BoardDef, fx, fy float32, dispW, dispH int) (int, int) {
+	if b == nil || b.Touch == nil {
+		return int(fx * float32(dispW)), int(fy * float32(dispH))
+	}
+	t := b.Touch
+	rot := 0
+	if b.LCD != nil {
+		rot = b.LCD.Rotation
+	}
+	var nx, ny int
+	switch rot {
+	case 90:
+		nx = t.Width - 1 - int(fy*float32(t.Width))
+		ny = int(fx * float32(t.Height))
+	case 180:
+		nx = t.Width - 1 - int(fx*float32(t.Width))
+		ny = t.Height - 1 - int(fy*float32(t.Height))
+	case 270:
+		nx = int(fy * float32(t.Width))
+		ny = t.Height - 1 - int(fx*float32(t.Height))
+	default:
+		nx = int(fx * float32(t.Width))
+		ny = int(fy * float32(t.Height))
+	}
+	if nx < 0 {
+		nx = 0
+	}
+	if ny < 0 {
+		ny = 0
+	}
+	if nx >= t.Width {
+		nx = t.Width - 1
+	}
+	if ny >= t.Height {
+		ny = t.Height - 1
+	}
+	return nx, ny
+}
+
+// sensorsPanel shows the touch, IMU, battery, backlight and card state.
+func sensorsPanel(snap MachineState) {
+	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("Sensors", FontSize(16), FontWeight(700))
+			Filler(1)
+			if snap.Touch != nil {
+				Label("drag the LCD to inject touch", FontSize(12))
+			}
+		})
+		Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+			ScrollOnInput()
+			ScrollBars()
+			Container(Attrs(Row, Gap(10)), func() {
+				if snap.Touch != nil {
+					touchCard(snap.Touch)
+				}
+				if snap.IMU != nil {
+					imuCard(snap.IMU)
+				}
+			})
+			Container(Attrs(Row, Gap(10)), func() {
+				if snap.Battery != nil {
+					batteryCard(snap.Battery)
+				}
+				if snap.Backlight != nil {
+					infoCard("Backlight", fmt.Sprintf("%d%%", int(snap.Backlight.Duty*100+0.5)), "GP15 PWM")
+				}
+				if snap.SD != nil {
+					mb := snap.SD.Blocks / 2048
+					infoCard("microSD", fmt.Sprintf("%d MB", mb), "SPI · FAT16")
+				}
 			})
 		})
+	})
+}
+
+func sensorCard(title string, body func()) {
+	Container(Attrs(Grow(1), Gap(6), Pad(14), Corners(8), Background(220, 12, 12, 1),
+		BorderWidth(1), BorderColor(220, 8, 26, 1)), func() {
+		Label(title, FontSize(14), FontWeight(700))
+		body()
+	})
+}
+
+func touchCard(t *TouchState) {
+	sensorCard("CST816D touch", func() {
+		if t.Pressed {
+			Label(fmt.Sprintf("X %d   Y %d", t.X, t.Y), Fonts(Monospace...), FontSize(20))
+			Label("contact", FontSize(12), TextColor(140, 65, 55, 1))
+		} else {
+			Label("no contact", Fonts(Monospace...), FontSize(20))
+			Label(fmt.Sprintf("last %d,%d", t.X, t.Y), FontSize(12))
+		}
+	})
+}
+
+func imuCard(m *IMUState) {
+	sensorCard("QMI8658 IMU", func() {
+		Label(fmt.Sprintf("acc  %+.2f %+.2f %+.2f g", m.AX, m.AY, m.AZ), Fonts(Monospace...), FontSize(13))
+		Label(fmt.Sprintf("gyro %+.1f %+.1f %+.1f °/s", m.GX, m.GY, m.GZ), Fonts(Monospace...), FontSize(13))
+		Label(fmt.Sprintf("die  %.1f °C", m.Temp), FontSize(12), TextColor(220, 6, 68, 1))
+	})
+}
+
+func batteryCard(b *BatteryState) {
+	pct := min(max(int((b.Volts-3.2)*100), 0), 100)
+	sensorCard("Battery", func() {
+		Label(fmt.Sprintf("%.2f V", b.Volts), Fonts(Monospace...), FontSize(20))
+		Label(fmt.Sprintf("%d%% · ADC %d", pct, b.Raw), FontSize(12), TextColor(220, 6, 68, 1))
+		Label("GP28 · ÷3 divider", FontSize(11))
+	})
+}
+
+func infoCard(title, value, sub string) {
+	sensorCard(title, func() {
+		Label(value, Fonts(Monospace...), FontSize(20))
+		Label(sub, FontSize(11), TextColor(220, 6, 68, 1))
 	})
 }
 
