@@ -322,9 +322,30 @@ func main() {
 			spi1 = append(spi1, spiDev{25, card.Transfer})
 		}
 	}
-	if len(spi0) > 1 {
-		log.Error("SPI0 has more than one attached device; choose one of -lcd/-eth/-w6300/-touch-lcd2")
-		os.Exit(2)
+	// A controller may carry several devices; each needs its own CS pin, and
+	// a pin cannot serve two controllers.
+	type spiKey struct{ bus, cs int }
+	seenCS := map[spiKey]bool{}
+	pinBus := map[int]int{}
+	for bus, devs := range [][]spiDev{spi0, spi1} {
+		for _, d := range devs {
+			if d.cs < 0 {
+				continue
+			}
+			k := spiKey{bus: bus, cs: d.cs}
+			if seenCS[k] {
+				log.Error("two SPI devices share a chip select",
+					slog.Int("spi", bus), slog.Int("cs", d.cs))
+				os.Exit(2)
+			}
+			seenCS[k] = true
+			if prev, ok := pinBus[d.cs]; ok && prev != bus {
+				log.Error("one GPIO is used as CS on two SPI controllers",
+					slog.Int("gpio", d.cs), slog.Int("spi", prev), slog.Int("other", bus))
+				os.Exit(2)
+			}
+			pinBus[d.cs] = bus
+		}
 	}
 	spiHandler := func(devs []spiDev) func(byte) byte {
 		return func(tx byte) byte {

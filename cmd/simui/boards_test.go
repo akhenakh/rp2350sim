@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestTouchPointRotation checks the LCD click mapping for the Touch-LCD-2's
 // 90-degree rotation: the displayed 320x240 frame runs along the panel's
@@ -62,5 +65,40 @@ func TestBoardsIncludeTouchLCD2(t *testing.T) {
 	}
 	if geek == nil || geek.SD == nil || geek.SD.SPI != 0 || geek.SD.CS != 23 {
 		t.Fatalf("geek sd = %+v", geek)
+	}
+}
+
+// writeBoards writes a temporary board file and points LoadBoards at it.
+func writeBoards(t *testing.T, yaml string) {
+	t.Helper()
+	path := t.TempDir() + "/boards.yaml"
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RP2350SIM_BOARDS", path)
+}
+
+// TestBoardsAllowSharedSPI checks that an LCD and an Ethernet controller may
+// share a controller when they have different chip selects.
+func TestBoardsAllowSharedSPI(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: shared
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    ethernet: { kind: w5500, spi: 0, cs: 20 }
+`)
+	if _, err := LoadBoards(); err != nil {
+		t.Fatalf("shared bus rejected: %v", err)
+	}
+}
+
+// TestBoardsRejectSameChipSelect checks the real conflict: one CS on one bus.
+func TestBoardsRejectSameChipSelect(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: clash
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    ethernet: { kind: w5500, spi: 0, cs: 17 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("same CS on one bus was accepted")
 	}
 }

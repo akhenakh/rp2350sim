@@ -260,9 +260,9 @@ func LoadBoards() ([]BoardDef, error) {
 		if b.Name == "" {
 			b.Name = b.ID
 		}
-		spi := map[int]string{}
+		spi := map[spiPin]string{}
 		if d := b.LCD; d != nil {
-			if err := validSPI(spi, d.SPI, "lcd"); err != nil {
+			if err := validSPI(spi, d.SPI, d.CS, "lcd"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
@@ -301,7 +301,7 @@ func LoadBoards() ([]BoardDef, error) {
 			case "":
 				d.Kind = "w5500"
 			case "w5500", "w6300":
-				if err := validSPI(spi, d.SPI, "ethernet"); err != nil {
+				if err := validSPI(spi, d.SPI, d.CS, "ethernet"); err != nil {
 					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 				}
 			case "ch9120":
@@ -313,14 +313,9 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 		}
 		if d := b.SD; d != nil {
-			if d.SPI != 0 && d.SPI != 1 {
-				return nil, fmt.Errorf("boards: %s: sd: spi must be 0 or 1", b.ID)
+			if err := validSPI(spi, d.SPI, d.CS, "sd"); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
-			// A card may share the LCD bus: CS selects between them.
-			if prev, ok := spi[d.SPI]; ok && prev != "lcd" {
-				return nil, fmt.Errorf("boards: %s: sd and %s both use SPI%d", b.ID, prev, d.SPI)
-			}
-			spi[d.SPI] = "sd"
 		}
 		for _, sd := range b.Serial {
 			if sd.UART < 0 || sd.UART > 1 {
@@ -337,13 +332,23 @@ func LoadBoards() ([]BoardDef, error) {
 	return file.Boards, nil
 }
 
-func validSPI(used map[int]string, spi int, device string) error {
+// spiPin identifies one chip select on an SPI controller. A bus may carry
+// several devices as long as each has its own CS.
+type spiPin struct {
+	bus, cs int
+}
+
+func validSPI(used map[spiPin]string, spi, cs int, device string) error {
 	if spi != 0 && spi != 1 {
 		return fmt.Errorf("%s: spi must be 0 or 1", device)
 	}
-	if prev, ok := used[spi]; ok {
-		return fmt.Errorf("%s and %s both use SPI%d", prev, device, spi)
+	if cs < 0 || cs > 47 {
+		return fmt.Errorf("%s: cs GP%d is not a valid pin", device, cs)
 	}
-	used[spi] = device
+	key := spiPin{bus: spi, cs: cs}
+	if prev, ok := used[key]; ok {
+		return fmt.Errorf("%s and %s both use SPI%d CS GP%d", prev, device, spi, cs)
+	}
+	used[key] = device
 	return nil
 }
