@@ -24,6 +24,14 @@ type I2CDevice interface {
 	Read() byte
 }
 
+// I2CTransaction is implemented by targets that need transaction boundaries
+// (a register pointer that survives a repeated start, or state cleared by the
+// STOP). Begin runs when the address is latched; End runs on STOP.
+type I2CTransaction interface {
+	BeginTransaction()
+	EndTransaction()
+}
+
 // I2C register offsets.
 const (
 	i2cCON        = 0x00
@@ -112,6 +120,11 @@ func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 		case i2cTAR:
 			i.addr = uint8(v & 0x7F)
 			i.write = i.write[:0]
+			if dev, ok := i.devices[i.addr]; ok {
+				if t, ok := dev.(I2CTransaction); ok {
+					t.BeginTransaction()
+				}
+			}
 			if c.OnI2C != nil {
 				c.OnI2C(i.id, c.Cycles, "addr", i.addr, 0, true)
 			}
@@ -188,6 +201,11 @@ func (i *i2cBlock) dataCmd(v uint32) {
 	i.raw |= i2cTXEmpty
 	if stop {
 		i.raw |= i2cStopDet
+		if dev, ok := i.devices[i.addr]; ok {
+			if t, ok := dev.(I2CTransaction); ok {
+				t.EndTransaction()
+			}
+		}
 		if i.chip.OnI2C != nil {
 			i.chip.OnI2C(i.id, i.chip.Cycles, "stop", i.addr, 0, true)
 		}
