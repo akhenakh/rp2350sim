@@ -507,7 +507,7 @@ func main() {
 		}
 		maxAddr := img.MaxAddr()
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
-			if pc >= maxAddr && pc < 0x10400000 {
+			if pc >= maxAddr && pc < rp2350.FlashBase+rp2350.FlashSize {
 				log.Error("pc outside image",
 					slog.String("pc", hex(pc)), slog.String("lr", hex(cpu.R[14])), slog.String("sp", hex(cpu.R[13])))
 				start := 0

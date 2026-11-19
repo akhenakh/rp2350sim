@@ -15,7 +15,7 @@ const (
 	ROMBase   = 0x00000000
 	ROMSize   = 32 * 1024
 	FlashBase = 0x10000000
-	FlashSize = 4 * 1024 * 1024
+	FlashSize = 16 * 1024 * 1024
 	SRAMBase  = 0x20000000
 	SRAMSize  = 520 * 1024
 	SIOBase   = 0xD0000000

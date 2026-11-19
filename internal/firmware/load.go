@@ -9,10 +9,15 @@ import (
 )
 
 const (
-	uf2MagicStart0  = 0x0A324655
-	uf2MagicStart1  = 0x9E5D5157
-	uf2MagicEnd     = 0x0AB16F30
-	uf2FamilyRP2350 = 0xE48BFF59
+	uf2MagicStart0    = 0x0A324655
+	uf2MagicStart1    = 0x9E5D5157
+	uf2MagicEnd       = 0x0AB16F30
+	uf2FamilyRP2350   = 0xE48BFF59
+	uf2FamilyAbsolute = 0xE48BFF57
+
+	uf2FlagExtension    = 0x00008000
+	uf2ExtensionIgnore  = 0x9957E304 // RP2350-E10 absolute block marker
+	uf2ExtensionDataOff = 256
 )
 
 // Image is a loaded firmware image.
@@ -72,9 +77,20 @@ func loadUF2(data []byte) (*Image, error) {
 		if payloadSize > 476 {
 			return nil, fmt.Errorf("uf2: payload size %d too large", payloadSize)
 		}
+		// picotool's RP2350-E10 workaround prepends a 256-byte metadata block
+		// tagged "ignore me". The real bootrom skips it; writing its 0xEF
+		// payload would destroy the last flash sector.
+		if flags&uf2FlagExtension != 0 && binary.LittleEndian.Uint32(blk[32+uf2ExtensionDataOff:]) == uf2ExtensionIgnore {
+			continue
+		}
 		if flags&0x2000 != 0 {
 			family := binary.LittleEndian.Uint32(blk[28:])
-			if family != uf2FamilyRP2350 {
+			switch family {
+			case uf2FamilyRP2350:
+			case uf2FamilyAbsolute:
+				// Absolute metadata blocks carry no firmware payload.
+				continue
+			default:
 				return nil, fmt.Errorf("uf2: unsupported family id %#08x (expected %#08x)", family, uf2FamilyRP2350)
 			}
 		}
