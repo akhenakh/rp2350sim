@@ -39,6 +39,9 @@ var (
 	touchDemo          bool
 	touchDemoStart     time.Time
 	touchDemoAt        time.Time
+	pendingTouch       bool
+	pendingTouchX      int
+	pendingTouchY      int
 )
 
 // Scope voltage ranges in volts (full scale, from 0).
@@ -109,11 +112,11 @@ func RootView() {
 		selectedBoard = nil
 	}
 
+	if emu.Booted() {
+		updateTouchInput()
+	}
 	snap := emu.Snapshot()
 	updateConsole(snap)
-	if touchDemo {
-		updateTouchDemo()
-	}
 
 	lightText := TextColor(220, 8, 92, 1)
 	Container(Attrs(Viewport, Background(220, 8, 12, 1), AmendTextStyle(lightText)), func() {
@@ -243,6 +246,25 @@ func findBoard(id string) *BoardDef {
 		}
 	}
 	return nil
+}
+
+// touchBootCycles is how much virtual time passes before a host-injected touch
+// is delivered. The touch controller and the panel share a reset line, so a
+// touch sent while the firmware is still in its driver init would be cleared;
+// 100 ms clears the 60 ms init sequence in the bundled examples.
+const touchBootCycles = 100 * 150_000 // 100 ms at 150 MHz
+
+// updateTouchInput delivers host touches only once the firmware has booted and
+// advanced virtual time. A pending --touch is held from that point; the demo
+// contact starts moving then too.
+func updateTouchInput() {
+	if pendingTouch {
+		pendingTouch = false
+		emu.SetTouch(pendingTouchX, pendingTouchY, true)
+	}
+	if touchDemo {
+		updateTouchDemo()
+	}
 }
 
 // updateTouchDemo walks a contact around the panel so a recording shows a
@@ -1870,7 +1892,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "--touch expects native panel coordinates as x,y")
 			os.Exit(2)
 		}
-		emu.SetTouch(x, y, true)
+		pendingTouch, pendingTouchX, pendingTouchY = true, x, y
 	}
 	touchDemo = *touchDemoFlag
 	setTab(*tabName)

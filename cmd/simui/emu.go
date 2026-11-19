@@ -230,6 +230,14 @@ func (e *Emu) SetTouch(x, y int, pressed bool) {
 	}
 }
 
+// Booted reports whether a firmware has advanced past the driver-init window,
+// so host-injected touches reach a controller the firmware has configured.
+func (e *Emu) Booted() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.chip != nil && e.chip.Cycles >= touchBootCycles
+}
+
 // TouchAvailable reports whether the selected board has a touch controller.
 func (e *Emu) TouchAvailable() bool {
 	e.mu.Lock()

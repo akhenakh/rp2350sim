@@ -37,6 +37,8 @@ Other startup options:
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--png PATH` | render one settled frame and exit (headless) |
+| `--touch x,y` | inject a held touch at native panel coordinates |
+| `--touch-demo` | move a synthetic touch around the panel while the UI runs |
 | `--scope-zoom N`, `--scope-range V` | initial scope time zoom / full-scale volts |
 
 The toolbar shows the selected board and a **Board…** button to return to the
@@ -217,6 +219,8 @@ cd cmd/simui
 go run . --board geek --tab lcd --run 0.6 --png ../../ui.png ../../firmware.elf
 go run . --board pico2-analog --tab scope --run 0.02 --png ../../scope.png
 go run . --board pico2-analog --tab logic --run 0.05 --png ../../logic.png ../../build/protocols.elf
+go run . --board touch-lcd2 --tab sensors --touch-demo --width 1920 --height 1080 \
+  --png ../../sensors.png ../../build/touchlcd.elf
 ```
 
 `--run` advances virtual time synchronously (the UI does not step in the
