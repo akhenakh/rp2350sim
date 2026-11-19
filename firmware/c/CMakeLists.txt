@@ -23,7 +23,10 @@ target_link_libraries(floatdemo pico_stdlib)
 add_executable(multicore multicore/main.c)
 target_link_libraries(multicore pico_stdlib pico_multicore)
 
-foreach(app hello blinky floatdemo multicore)
+add_executable(otp otp/main.c)
+target_link_libraries(otp pico_stdlib)
+
+foreach(app hello blinky floatdemo multicore otp)
     pico_enable_stdio_uart(${app} 1)
     pico_enable_stdio_usb(${app} 0)
     pico_add_extra_outputs(${app})

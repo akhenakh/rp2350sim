@@ -71,6 +71,7 @@ type Chip struct {
 	pio  [3]*pioBlock
 	uart [2]*uartBlock
 	dma  *dmaBlock
+	otp  *otpBlock
 
 	regs   []*regBlock
 	byBase map[uint32]*regBlock
@@ -181,6 +182,8 @@ func New() *Chip {
 	for _, p := range c.pio {
 		c.addRegBlock(p.block)
 	}
+	c.otp = newOTP(c)
+	c.addRegBlock(c.otp.block)
 	return c
 }
 
@@ -321,6 +324,9 @@ func (c *Chip) Reset() {
 	}
 	c.io.reset()
 	c.sio.reset()
+	if c.otp != nil {
+		c.otp.resetLockState()
+	}
 }
 
 // Boot vectors core 0 at the image in flash.
@@ -559,6 +565,11 @@ func (c *Chip) readMMIO(addr uint32) uint32 {
 	}
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
 		return c.NVIC.read(addr - SCSBase)
+	}
+	if c.otp != nil {
+		if v, ok := c.otp.readWindow(addr); ok {
+			return v
+		}
 	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {

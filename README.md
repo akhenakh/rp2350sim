@@ -7,7 +7,7 @@ Status: runs real TinyGo programs end to end — package initialisation, the tas
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
 DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a
 CST816D touch controller, a QMI8658 IMU, a microSD card model that can be
-backed by a real host directory, and W5500 Ethernet, plus a W6300 driver for the PoE board. Stock **Pico SDK C**
+backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, and the OTP array (fuses, Hamming ECC, page locks, bootrom access). Stock **Pico SDK C**
 firmware boots through the same vector table and runs its runtime, UART stdio,
 GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33
 interpreter is checked against QEMU instruction by instruction.
@@ -20,7 +20,7 @@ cmd/simui/          Shirei desktop UI (separate module)
 firmware/c/         Pico SDK C examples (CMake)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
-                    UART, SPI, DMA, PWM, ADC, I2C
+                    UART, SPI, DMA, PWM, ADC, I2C, OTP
 internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
 internal/firmware/  UF2 / ELF / raw image loaders
 drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
@@ -70,6 +70,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
 | `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
 | `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
+| `task c:otp` | run the C OTP demo and dump the programmed array |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task clean` | remove `build/` |
 
@@ -106,6 +107,7 @@ Useful flags:
 | `-poke ADDR=VAL` | write memory before starting |
 | `-peek ADDR` | print a memory word at exit |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
+| `-otp PATH`, `-otp-dump PATH` | seed / write back the OTP array (JSON) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |

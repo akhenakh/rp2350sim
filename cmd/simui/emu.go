@@ -51,6 +51,7 @@ type MachineState struct {
 	Battery   *BatteryState
 	Backlight *BacklightState
 	SD        *SDState
+	OTP       *OTPState
 }
 
 // TouchState is the last reported touch point in panel coordinates.
@@ -83,6 +84,24 @@ type SDState struct {
 	Inserted bool
 	Blocks   int
 	Source   string
+}
+
+// OTPPageState is one OTP page as the UI shows it.
+type OTPPageState struct {
+	Secure         uint8 // 0 read/write, 1 read-only, 2 inaccessible
+	NonSecure      uint8
+	Programmed     int
+	SoftwareLocked bool
+}
+
+// OTPState is the whole OTP array plus its page locks. The array is 16 KB,
+// small enough to copy per frame.
+type OTPState struct {
+	Rows       []uint32
+	Pages      [rp2350.OTPPages]OTPPageState
+	Writes     uint64
+	Programmed int
+	LastWrite  int
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -802,6 +821,25 @@ func (e *Emu) Snapshot() MachineState {
 	if e.sd != nil {
 		s.SD = &SDState{Inserted: e.sd.Inserted(), Blocks: e.sd.Blocks(), Source: e.sd.Source()}
 	}
+	otp := &OTPState{
+		Rows:      e.chip.OTPRowsCopy(),
+		Writes:    e.chip.OTPWrites(),
+		LastWrite: e.chip.OTPLastWriteRow(),
+	}
+	for i, raw := range otp.Rows {
+		if raw == 0 {
+			continue
+		}
+		otp.Programmed++
+		otp.Pages[i/rp2350.OTPPageRows].Programmed++
+	}
+	for page := range otp.Pages {
+		sec, nsec := e.chip.OTPPageLock(page)
+		otp.Pages[page].Secure = sec
+		otp.Pages[page].NonSecure = nsec
+		otp.Pages[page].SoftwareLocked = e.chip.OTPSoftwareLocked(page)
+	}
+	s.OTP = otp
 	if len(e.console) > 0 {
 		start := max(len(e.console)-16*1024, 0)
 		s.Console = string(e.console[start:])

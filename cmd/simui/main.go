@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 
 	app "go.hasen.dev/shirei/app"
 
@@ -49,8 +50,13 @@ const (
 	tabSensors
 	tabScope
 	tabLogic
+	tabOTP
 	tabConsole
 )
+
+// otpPage is the OTP page shown in the OTP tab; -1 follows the last
+// programmed row, or page 0 when nothing was written.
+var otpPage = -1
 
 var funcNames = []string{"JTAG", "SPI", "UART", "I2C", "PWM", "SIO", "PIO0", "PIO1", "PIO2"}
 
@@ -130,6 +136,8 @@ func RootView() {
 				scopePanel()
 			case tabLogic:
 				logicPanel()
+			case tabOTP:
+				otpPanel(snap)
 			case tabConsole:
 				consolePanel(snap)
 			default:
@@ -254,6 +262,8 @@ func setTab(name string) {
 		activeTab = tabScope
 	case "logic", "la":
 		activeTab = tabLogic
+	case "otp":
+		activeTab = tabOTP
 	case "console":
 		activeTab = tabConsole
 	}
@@ -283,6 +293,7 @@ func tabsBar() {
 		}
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
+		tabButton("OTP", tabOTP)
 		tabButton("Console", tabConsole)
 		Filler(1)
 		if selectedBoard.Description != "" {
@@ -663,6 +674,178 @@ func infoCard(title, value, sub string) {
 		Label(value, Fonts(Monospace...), FontSize(20))
 		Label(sub, FontSize(11), TextColor(220, 6, 68, 1))
 	})
+}
+
+// ---- OTP tab ----
+
+func lockShort(level uint8) string {
+	switch level {
+	case 0:
+		return "RW"
+	case 1:
+		return "RO"
+	}
+	return "locked"
+}
+
+func lockColor(level uint8) (h, s, l float32) {
+	switch level {
+	case 0:
+		return 140, 30, 62
+	case 1:
+		return 35, 60, 62
+	}
+	return 0, 60, 66
+}
+
+// otpVisiblePage picks the page the panel shows: the user's choice, else the
+// page holding the last programmed row, else page 0.
+func otpVisiblePage(o *OTPState) int {
+	if otpPage >= 0 {
+		return otpPage
+	}
+	if o.LastWrite >= 0 {
+		return o.LastWrite / rp2350.OTPPageRows
+	}
+	return 0
+}
+
+// otpChipID assembles the 64-bit manufacturing ID from rows 0-3.
+func otpChipID(o *OTPState) (uint64, bool) {
+	var id uint64
+	for i := range 4 {
+		if i >= len(o.Rows) {
+			return 0, false
+		}
+		data, ok := rp2350.OTPDecodeRow(o.Rows[i])
+		if !ok {
+			return 0, false
+		}
+		id |= uint64(data) << (16 * i)
+	}
+	return id, true
+}
+
+// otpPanel shows the OTP array: 64 pages of 64 rows, their effective secure
+// and non-secure locks, and the raw/ECC contents of the selected page.
+func otpPanel(snap MachineState) {
+	o := snap.OTP
+	if o == nil {
+		return
+	}
+	page := otpVisiblePage(o)
+	rowBase := page * rp2350.OTPPageRows
+	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			Label("OTP", FontSize(16), FontWeight(700))
+			Label("8 KB antifuse · 4096 rows × 16 bit + Hamming ECC", FontSize(12))
+			if id, ok := otpChipID(o); ok {
+				Label(fmt.Sprintf("chip id %016x", id), Fonts(Monospace...), FontSize(11),
+					TextColor(220, 6, 68, 1))
+			}
+			Filler(1)
+			Label(fmt.Sprintf("%d rows programmed · %d writes", o.Programmed, o.Writes), FontSize(12))
+		})
+		Container(Attrs(Row, Grow(1), Expand, Gap(12)), func() {
+			Container(Attrs(FixWidth(636), Gap(6)), func() {
+				Label("Pages · 64 rows each", FontSize(12), FontWeight(600))
+				for row := range 8 {
+					Container(Attrs(Row, Gap(6)), func() {
+						for col := range 8 {
+							n := row*8 + col
+							otpPageTile(n, o.Pages[n], n == page)
+						}
+					})
+				}
+				Container(Attrs(Row, CrossMid, Gap(12), Pad2(4, 2)), func() {
+					Label("secure / non-secure:", FontSize(10), TextColor(220, 6, 62, 1))
+					for _, level := range []uint8{0, 1, 2} {
+						h, s, l := lockColor(level)
+						Label(lockShort(level), FontSize(10), TextColor(h, s, l, 1))
+					}
+					Filler(1)
+					Label("locked → firmware reads return all-ones", FontSize(10),
+						TextColor(220, 6, 62, 1))
+				})
+			})
+			Container(Attrs(Grow(1), Expand, Pad(12), Corners(8), Background(220, 12, 8, 1),
+				BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+				sec := o.Pages[page].Secure
+				nsec := o.Pages[page].NonSecure
+				Container(Attrs(Row, CrossMid, Gap(8)), func() {
+					Label(fmt.Sprintf("Page %d · rows %#03x–%#03x", page, rowBase, rowBase+rp2350.OTPPageRows-1),
+						FontSize(13), FontWeight(700))
+					Filler(1)
+					sh, ss, sl := lockColor(sec)
+					nh, ns, nl := lockColor(nsec)
+					Label("secure "+lockShort(sec), FontSize(10), TextColor(sh, ss, sl, 1))
+					Label("non-secure "+lockShort(nsec), FontSize(10), TextColor(nh, ns, nl, 1))
+					if o.Pages[page].SoftwareLocked {
+						Label("software locked", FontSize(10), TextColor(0, 60, 66, 1))
+					}
+				})
+				Container(Attrs(Row, Grow(1), Expand, Gap(24), Pad2(6, 0)), func() {
+					for half := range 2 {
+						Container(Attrs(Grow(1), Gap(1)), func() {
+							for i := range rp2350.OTPPageRows / 2 {
+								n := rowBase + half*(rp2350.OTPPageRows/2) + i
+								otpRowLine(n, o.Rows[n])
+							}
+						})
+					}
+				})
+			})
+		})
+	})
+}
+
+func otpPageTile(page int, p OTPPageState, selected bool) {
+	Container(Attrs(FixWidth(72), FixHeight(58), Pad(6), Corners(6),
+		Background(220, 12, 14, 1), BorderWidth(1), BorderColor(220, 8, 26, 1)), func() {
+		st := ProcessButtonEvents(false)
+		switch {
+		case selected:
+			ModAttrs(Background(140, 35, 22, 1), BorderColor(140, 45, 45, 1))
+		case st.Hovered:
+			ModAttrs(Background(220, 14, 20, 1))
+		}
+		if st.Clicked {
+			otpPage = page
+			RequestNextFrame()
+		}
+		Label(fmt.Sprintf("P%02d", page), FontSize(12), FontWeight(700))
+		if p.Programmed == 0 {
+			Label("blank", FontSize(10), TextColor(220, 5, 55, 1))
+		} else {
+			Label(fmt.Sprintf("%d rows", p.Programmed), FontSize(10))
+		}
+		sh, ss, sl := lockColor(p.Secure)
+		nh, ns, nl := lockColor(p.NonSecure)
+		Container(Attrs(Row, Gap(4)), func() {
+			Label(lockShort(p.Secure), FontSize(9), TextColor(sh, ss, sl, 1))
+			Label(lockShort(p.NonSecure), FontSize(9), TextColor(nh, ns, nl, 1))
+		})
+	})
+}
+
+func otpRowLine(row int, raw uint32) {
+	if raw == 0 {
+		Label(fmt.Sprintf("%03x  ----  ------  blank", row), Fonts(Monospace...), FontSize(10),
+			TextColor(220, 5, 44, 1))
+		return
+	}
+	data, status := rp2350.OTPRowStatus(raw)
+	line := fmt.Sprintf("%03x  %04x  %06x  %s", row, data, raw&0xffffff, status)
+	h, s, l := float32(140), float32(18), float32(78)
+	switch status {
+	case "corrected":
+		h, s, l = 35, 65, 68
+	case "ecc-error":
+		h, s, l = 195, 35, 66
+	case "uncorrectable":
+		h, s, l = 0, 65, 68
+	}
+	Label(line, Fonts(Monospace...), FontSize(10), TextColor(h, s, l, 1))
 }
 
 // ws2812Panel shows the last WS2812B frame decoded from the board's LED pin.
@@ -1621,7 +1804,7 @@ func main() {
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, scope, logic, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, scope, logic, otp, console")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
 	flag.Parse()
 	viewW, viewH = *winW, *winH

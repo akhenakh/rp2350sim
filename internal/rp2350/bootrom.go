@@ -21,19 +21,22 @@ import (
 // the real bus and chip state.
 
 const (
-	bootromMagicOffset     = 0x10
-	bootromFuncTablePtr    = 0x14 // 16-bit pointer to the (opaque) function table
-	bootromLookupPtr       = 0x16 // 16-bit pointer to rom_table_lookup, Thumb bit set
-	bootromSyntheticBase   = 0x7000
-	bootromSyntheticStride = 4
-	bootromDataBase        = 0x7800
-	bootromFuncTableData   = 0x7c00
-	bootromMagic           = 0x5a5a_5a5a
-	sysInfoBootRandom      = 0x0010
-	bootromOK              = 0
-	bootromErrInvalidAddr  = ^uint32(9) // -10
-	bootromErrInvalidState = ^uint32(11)
-	bootromRebootReason    = "bootrom reboot requested"
+	bootromMagicOffset       = 0x10
+	bootromFuncTablePtr      = 0x14 // 16-bit pointer to the (opaque) function table
+	bootromLookupPtr         = 0x16 // 16-bit pointer to rom_table_lookup, Thumb bit set
+	bootromSyntheticBase     = 0x7000
+	bootromSyntheticStride   = 4
+	bootromDataBase          = 0x7800
+	bootromFuncTableData     = 0x7c00
+	bootromMagic             = 0x5a5a_5a5a
+	sysInfoBootRandom        = 0x0010
+	bootromOK                = 0
+	bootromErrNotPermitted   = ^uint32(3)  // -4
+	bootromErrInvalidArg     = ^uint32(4)  // -5
+	bootromErrInvalidAddr    = ^uint32(9)  // -10
+	bootromErrInvalidState   = ^uint32(11) // -12
+	bootromErrUnsupportedMod = ^uint32(17) // -18
+	bootromRebootReason      = "bootrom reboot requested"
 )
 
 // romStub is called with the CPU at the synthetic address. It reads arguments
@@ -116,11 +119,13 @@ func installBootROM(c *Chip) *bootROM {
 	b.addFunc("GP", b.stubUnsupported)
 	b.addFunc("GU", b.stubUnsupported)
 	b.addFunc("LP", b.stubUnsupported)
-	b.addFunc("OA", b.stubUnsupported)
 	b.addFunc("RC", b.stubUnsupported)
 	b.addFunc("SC", b.stubUnsupported)
 	b.addFunc("SP", b.stubUnsupported)
 	b.addFunc("VB", b.stubUnsupported)
+
+	// OTP access: reads and writes rows through the fuse model.
+	b.addFunc("OA", b.stubOTPAccess)
 
 	// Data services.
 	b.addData("CR", b.addString("rp2350sim synthetic bootrom"))
@@ -289,6 +294,71 @@ func (b *bootROM) stubReboot(c *Chip, cpu *m33.CPU) {
 func (b *bootROM) stubUSBBoot(c *Chip, cpu *m33.CPU) {
 	c.Logger.Warn("bootrom USB boot requested (not modelled)")
 	cpu.Halt("bootrom USB boot requested")
+}
+
+// OTP command flags from the bootrom otp_access API.
+const (
+	otpCmdRowMask = 0x0000ffff
+	otpCmdWrite   = 0x00010000
+	otpCmdECC     = 0x00020000
+)
+
+// stubOTPAccess implements otp_access(buf, buf_len, row_and_flags): rows are
+// 2 bytes wide with ECC, or 4 bytes wide with the 24-bit raw value in the low
+// three bytes. Writes obey fuse semantics, and the first locked or clearing
+// row stops the transfer.
+func (b *bootROM) stubOTPAccess(c *Chip, cpu *m33.CPU) {
+	buf, bufLen, flags := cpu.R[0], cpu.R[1], cpu.R[2]
+	row := int(flags & otpCmdRowMask)
+	write := flags&otpCmdWrite != 0
+	ecc := flags&otpCmdECC != 0
+	unit := uint32(4)
+	if ecc {
+		unit = 2
+	}
+	count := int(bufLen / unit)
+	for i := range count {
+		r := row + i
+		if r >= OTPRows {
+			cpu.R[0] = bootromErrInvalidArg
+			return
+		}
+		off := buf + uint32(i)*unit
+		if write {
+			var raw uint32
+			if ecc {
+				raw = otpEncodeRow(uint16(c.Read8(off)) | uint16(c.Read8(off+1))<<8)
+			} else {
+				raw = uint32(c.Read8(off)) | uint32(c.Read8(off+1))<<8 | uint32(c.Read8(off+2))<<16
+			}
+			if code := c.otp.writeRow(r, raw); code != bootromOK {
+				c.Logger.Debug("otp write failed", slog.Int("row", r), slog.Uint64("code", uint64(code)))
+				cpu.R[0] = code
+				return
+			}
+			c.Logger.Debug("otp write", slog.Int("row", r), slog.String("raw", fmtHex(raw)))
+			continue
+		}
+		v, code := c.otp.readRow(r)
+		if code != bootromOK {
+			c.Logger.Debug("otp read failed", slog.Int("row", r), slog.Uint64("code", uint64(code)))
+			cpu.R[0] = code
+			return
+		}
+		if ecc {
+			data, ok := otpDecodeRow(v)
+			if !ok {
+				c.Logger.Warn("otp read: uncorrectable ECC error", slog.Int("row", r), slog.String("raw", fmtHex(v)))
+			}
+			c.Write8(off, byte(data))
+			c.Write8(off+1, byte(data>>8))
+			continue
+		}
+		c.Write8(off, byte(v))
+		c.Write8(off+1, byte(v>>8))
+		c.Write8(off+2, byte(v>>16))
+	}
+	cpu.R[0] = bootromOK
 }
 
 func (b *bootROM) flashRange(addr uint32, n uint32) (int, bool) {

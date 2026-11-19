@@ -214,6 +214,22 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/multicore.elf" -seconds 1 -quiet 2>&1)
 		contains "C multicore" "worker=1" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/otp.elf" -seconds 0.3 -quiet \
+			-otp-dump "$BUILD/otp-smoke.json" 2>&1)
+		contains "Pico SDK C OTP" "OTP demo: ok" "$out"
+		if grep -q '"row": 1024' "$BUILD/otp-smoke.json" &&
+			grep -q '"corrected"' "$BUILD/otp-smoke.json"; then
+			ok "OTP dump reads back programmed rows"
+		else
+			bad "OTP dump" "$(cat "$BUILD/otp-smoke.json" 2>/dev/null)"
+		fi
+		if (cd cmd/simui && go run . --board pico2 --tab otp --run 0.05 --width 1920 --height 1080 \
+			--png "../../$BUILD/otp-ui-smoke.png" "../../$BUILD/pico-c/otp.elf" >/dev/null 2>&1) &&
+			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/otp-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+			ok "UI OTP tab"
+		else
+			bad "UI OTP tab" "$(cat "$BUILD/smoke.log")"
+		fi
 		out=$("$EMU" -fw "$BUILD/pico-c/blinky.elf" -seconds 0.6 -trace-pins 25 2>&1)
 		n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
 		if [ "$n" -ge 2 ]; then ok "C blinky toggles GP25 ($n edges)"; else bad "C blinky GP25" "$out"; fi

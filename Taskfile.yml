@@ -468,6 +468,7 @@ tasks:
       - 'build/blinky.elf'
       - 'build/floatdemo.elf'
       - 'build/multicore.elf'
+      - 'build/otp.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
@@ -496,6 +497,12 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/multicore.elf -seconds 1 -quiet'
+
+  c:otp:
+    desc: Run the C OTP demo and dump the array it programmed
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/otp.elf -seconds 0.3 -quiet -expect "OTP demo: ok" -stop-on-expect -otp-dump {{.BUILD}}/otp.json'
 
   clean:
     desc: Remove build outputs

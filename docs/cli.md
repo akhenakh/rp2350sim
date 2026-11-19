@@ -162,9 +162,35 @@ rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
 | `-w6300` | W6300 on SPI0 (CS GP17) |
 | `-ch9120` | CH9120 on UART1 (GP20/21), CFG0 GP18, RST GP19, TCPCS GP17 |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
+| `-otp PATH` | seed the OTP array from a JSON dump before boot |
+| `-otp-dump PATH` | write every programmed OTP row to a JSON file at exit |
 
 `-sd-dir` and `-sd-image` are mutually exclusive. `-eth` and `-w6300` are
 mutually exclusive, as are `-lcd` and `-touch-lcd2`.
+
+## OTP
+
+The RP2350 OTP array is modelled as 4096 rows of 24 bits (16 data bits plus
+Hamming ECC), with fuse semantics: programming only sets bits and page locks
+apply until the next reset. The count is not persistent across runs; seed a
+file or dump the result:
+
+```sh
+rp2350sim -fw otp.elf -seconds 0.3 -otp-dump otp.json
+rp2350sim -fw otp.elf -seconds 0.3 -otp otp.json
+```
+
+`-otp-dump` writes `{"writes": N, "rows": [{"row": 1024, "raw": "0x096548",
+"data": "0x6548", "ecc": "ok"}], "software_locked": [...]}`. `raw` is the
+24-bit row including ECC and bit-repair bits, `ecc` is `ok`, `corrected`,
+`ecc-error` or `uncorrectable`, and `software_locked` lists pages the firmware
+locked through `SW_LOCK`. Only `rows` is read back by `-otp`; a row with `raw`
+is restored verbatim (so deliberately corrupted ECC round-trips), a row with
+only `data` gets a fresh ECC.
+
+Firmware reads and writes OTP through the bootrom `otp_access` service, as on
+hardware. Pico SDK `firmware/c/otp` exercises ECC, raw rows, fuse rules and
+page locking. The OTP tab in the UI shows the pages, locks and rows.
 
 A directory-backed card is packed into FAT16 at startup and written back after
 the firmware's writes settle; see [boards.md](boards.md).

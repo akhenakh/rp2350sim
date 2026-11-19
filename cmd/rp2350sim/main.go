@@ -127,6 +127,8 @@ func main() {
 		sdFlag     = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
 		sdImage    = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
 		sdDir      = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
+		otpIn      = flag.String("otp", "", "load OTP rows from this JSON file before boot")
+		otpOut     = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
@@ -213,6 +215,17 @@ func main() {
 
 	c := rp2350.New()
 	c.Logger = log
+	otpSeeded := 0
+	if *otpIn != "" {
+		otpSeeded, err = loadOTP(c, *otpIn)
+		if err != nil {
+			log.Error("otp load", slog.String("path", *otpIn), slog.Any("err", err))
+			os.Exit(1)
+		}
+		if !*quiet {
+			log.Info("otp seeded", slog.String("path", *otpIn), slog.Int("rows", otpSeeded))
+		}
+	}
 	if os.Getenv("RP2350SIM_DCP_LOG") != "" {
 		c.CPU0.DCPLog = func(format m33.DCPFormat, op m33.DCPOp, x, y, result float64) {
 			log.Debug("dcp", "format", format, "op", op, "x", x, "y", y, "result", result)
@@ -861,6 +874,19 @@ func main() {
 	if card != nil {
 		if err := card.Sync(); err != nil {
 			log.Warn("sd sync", slog.Any("err", err))
+		}
+	}
+	if !*quiet && (otpSeeded > 0 || c.OTPWrites() > 0) {
+		log.Info("otp",
+			slog.Int("rows", c.OTPProgrammedRows()),
+			slog.Uint64("writes", c.OTPWrites()))
+	}
+	if *otpOut != "" {
+		if err := dumpOTP(c, *otpOut); err != nil {
+			log.Error("otp dump", slog.String("path", *otpOut), slog.Any("err", err))
+			if exitCode == 0 {
+				exitCode = 1
+			}
 		}
 	}
 	if *sensorsOut {

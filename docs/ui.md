@@ -33,7 +33,7 @@ Other startup options:
 |---|---|
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
 | `--list-boards` | print board IDs, names and badges, then exit |
-| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `console` |
+| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `otp`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--png PATH` | render one settled frame and exit (headless) |
@@ -155,6 +155,12 @@ same SPI bus.
 - **LEDs** — the last WS2812B frame as large swatches with their RGB values.
 - **Scope** — see below.
 - **Logic** — see below.
+- **OTP** — the RP2350 OTP array: 64 pages of 64 rows, each page showing its
+  programmed-row count and effective secure/non-secure lock. Click a page to
+  inspect its rows (data, raw 24-bit value and ECC status). The panel follows
+  the last row the firmware programmed until you pick a page. Nothing is
+  persistent: seed rows with the runner's `-otp` flag or dump them with
+  `-otp-dump`.
 - **Console** — USB CDC + UART output. Click it to give it keyboard focus;
   typed text and Enter/Backspace/Tab/arrows are forwarded to the firmware.
   UART-over-TCP bridges are listed here.
