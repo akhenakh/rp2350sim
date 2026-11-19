@@ -72,3 +72,25 @@ func TestUF2NotMainFlash(t *testing.T) {
 		t.Fatalf("image with only a not-main-flash block loaded: %+v", img)
 	}
 }
+
+// TestValidateBootVectors accepts a plausible flash image and rejects an
+// image without a vector table.
+func TestValidateBootVectors(t *testing.T) {
+	img := &Image{Segments: []Segment{{Addr: 0x10000000, Data: []byte{
+		0x00, 0x20, 0x08, 0x20, // SP = 0x20082000
+		0x01, 0x01, 0x00, 0x10, // PC = 0x10000101
+	}}}}
+	if err := img.ValidateBoot(0x10000000, 16<<20, 0x20000000, 520<<10); err != nil {
+		t.Fatalf("valid image rejected: %v", err)
+	}
+
+	empty := &Image{Segments: []Segment{{Addr: 0x20000000, Data: []byte{1}}}}
+	if err := empty.ValidateBoot(0x10000000, 16<<20, 0x20000000, 520<<10); err == nil {
+		t.Fatal("image without vectors was accepted")
+	}
+
+	bad := &Image{Segments: []Segment{{Addr: 0x10000000, Data: make([]byte, 8)}}}
+	if err := bad.ValidateBoot(0x10000000, 16<<20, 0x20000000, 520<<10); err == nil {
+		t.Fatal("zero stack pointer was accepted")
+	}
+}

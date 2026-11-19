@@ -148,6 +148,42 @@ func (s sliceReaderAt) ReadAt(p []byte, off int64) (int, error) {
 
 func newReaderAt(b []byte) sliceReaderAt { return sliceReaderAt(b) }
 
+// ValidateBoot checks that the image starts with the vector table the
+// emulator's flash boot path expects. SRAM-resident and partition-table
+// layouts are rejected instead of being executed as if they were a flat
+// flash image.
+func (img *Image) ValidateBoot(flashBase, flashSize, sramBase, sramSize uint32) error {
+	sp, pc, ok := img.vector(flashBase)
+	if !ok {
+		return fmt.Errorf("firmware: no vector table at %#x (only flat flash images are supported)", flashBase)
+	}
+	if sp%4 != 0 || sp <= sramBase || sp > sramBase+sramSize {
+		return fmt.Errorf("firmware: initial SP %#x is outside SRAM [%#x,%#x]", sp, sramBase, sramBase+sramSize)
+	}
+	entry := pc &^ 1
+	inFlash := entry >= flashBase && entry < flashBase+flashSize
+	inSRAM := entry >= sramBase && entry < sramBase+sramSize
+	if !inFlash && !inSRAM {
+		return fmt.Errorf("firmware: reset vector %#x is outside flash and SRAM", pc)
+	}
+	return nil
+}
+
+// vector returns the eight bytes at addr when a segment covers them.
+func (img *Image) vector(addr uint32) (sp, pc uint32, ok bool) {
+	for _, s := range img.Segments {
+		end := s.Addr + uint32(len(s.Data))
+		if addr < s.Addr || addr+8 > end {
+			continue
+		}
+		off := addr - s.Addr
+		sp = binary.LittleEndian.Uint32(s.Data[off:])
+		pc = binary.LittleEndian.Uint32(s.Data[off+4:])
+		return sp, pc, true
+	}
+	return 0, 0, false
+}
+
 // MaxAddr returns the highest address written by the image.
 func (img *Image) MaxAddr() uint32 {
 	var max uint32

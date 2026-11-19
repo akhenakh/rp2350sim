@@ -664,6 +664,9 @@ func (e *Emu) loadLocked() {
 // Load reads a firmware image and starts running it.
 func (e *Emu) Load(path string) error {
 	img, err := firmware.Load(path)
+	if err == nil {
+		err = img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize)
+	}
 	if err != nil {
 		e.mu.Lock()
 		e.errText = err.Error()

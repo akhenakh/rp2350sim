@@ -44,7 +44,7 @@ else
 fi
 "$EMU" -fw "$BUILD/echo.elf" -seconds 0.2 -quiet -expect "impossible-string" >/dev/null 2>&1
 if [ $? -eq 4 ]; then ok "missing expectation exit code"; else bad "missing expectation exit code"; fi
-printf '\x00\x00\x00\x20\x09\x00\x00\x10\x00\xde\x00\xbf' >"$BUILD/fault.bin"
+printf '\x00\x10\x00\x20\x09\x00\x00\x10\x00\xde\x00\xbf' >"$BUILD/fault.bin"
 "$EMU" -fw "$BUILD/fault.bin" -seconds 0.05 -quiet >/dev/null 2>&1
 if [ $? -eq 3 ]; then ok "halt exit code"; else bad "halt exit code"; fi
 
