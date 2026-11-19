@@ -57,6 +57,7 @@ tasks:
       - firmware:cores
       - firmware:echo
       - firmware:w6300
+      - firmware:w5500
       - firmware:protocols
       - firmware:serialbridge
       - firmware:ch9120
@@ -321,6 +322,33 @@ tasks:
         kill $HOST 2>/dev/null || true
         cat {{.BUILD}}/ethhost.log
 
+  firmware:w5500:
+    desc: Build the stock TinyGo W5500 Ethernet example (breadboard wiring)
+    dir: firmware/w5500
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/w5500.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/w5500.elf .'
+
+  run:w5500:
+    desc: Run the W5500 example against a host TCP echo/UDP sink and TCP server
+    deps: [build, firmware:w5500]
+    cmds:
+      - |
+        go build -o {{.BUILD}}/ethhost ./tools/ethhost
+        {{.BUILD}}/ethhost > {{.BUILD}}/ethhost-w5500.log 2>&1 &
+        HOST=$!
+        trap 'kill $HOST 2>/dev/null' EXIT
+        sleep 0.5
+        {{.EMU}} -fw {{.BUILD}}/w5500.elf -seconds 4 -eth
+        kill $HOST 2>/dev/null || true
+        cat {{.BUILD}}/ethhost-w5500.log
+
   run:lcd:
     desc: Run the ST7789 example in the emulator (LCD attached, backlight traced)
     deps: [build, firmware:lcd]
@@ -414,6 +442,13 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board poe-eth '../../{{.BUILD}}/w6300.elf'
+
+  ui:w5500:
+    desc: Run the UI with the W5500 example on the breadboard board
+    deps: [firmware:w5500]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-w5500 '../../{{.BUILD}}/w5500.elf'
 
   ui:png:
     desc: Render the UI headlessly to build/ui.png with the LCD example

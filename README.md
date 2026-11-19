@@ -24,7 +24,8 @@ internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
 internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
 internal/firmware/  UF2 / ELF / raw image loaders
 drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
-firmware/           example TinyGo programs (blinky, lcd, piotest, ws2812, w6300)
+drivers/ch9120/     CH9120 module driver and one-socket netdev (separate module)
+firmware/           example TinyGo programs (blinky, lcd, piotest, ws2812, w5500, w6300)
 tools/              corpus generator, host Ethernet test server
 Taskfile.yml        build/run/test tasks
 ```
@@ -48,6 +49,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
 | `task run:echo` | echo injected console input through USB CDC |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
+| `task run:w5500` | run the W5500 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
 | `task ui:blinky` (`ui`) | desktop UI on the `pico2` board with the blinky firmware |
@@ -55,6 +57,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:touchlcd` | desktop UI on the `touch-lcd2` board |
 | `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
 | `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
+| `task ui:w5500` | desktop UI on the `pico2-w5500` board with the W5500 example |
 | `task run:ch9120` | CH9120 UART-to-Ethernet example against the host echo |
 | `task ui:ch9120` | desktop UI on the `rp2350-eth` board with the CH9120 example |
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
@@ -124,13 +127,18 @@ Per-stream debug switches (JSON is the default for a piped run):
 
 ## Ethernet
 
-`-eth` attaches a W5500 on SPI0 (CS GP17), the POE-ETH wiring. The emulated
-hardware sockets are backed by the host network, so TinyGo's stock
+`-eth` attaches a W5500 on SPI0 (SCK GP18, MOSI GP19, MISO GP16, CS GP17),
+the breadboard wiring used by the `pico2-w5500` UI board. The emulated hardware
+sockets are backed by the host network, so TinyGo's stock
 `tinygo.org/x/drivers/w5500` netdev driver works unchanged and can talk to
-servers running on this machine.
+servers running on this machine. `firmware/w5500` runs a TCP client, a UDP
+datagram and a twice-accepted TCP server against `tools/ethhost`
+(`task run:w5500`).
 
 TinyGo's `net.Dial("tcp", "host:port")` needs `LookupPort`, which is not
-implemented in this TinyGo build; construct the address explicitly:
+implemented in this TinyGo build; construct the address explicitly. Use a
+4-byte IP: `net.IPv4` returns a 16-byte IPv4-mapped address that the stock
+W5500 driver rejects:
 
 ```go
 conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.IP{127,0,0,1}, Port: 8080})
@@ -215,6 +223,7 @@ the tabs accordingly:
 
 The toolbar shows the selected board, a **Board…** button to return to the
 picker, the firmware path field, **Open…** (OS dialog), run/pause and reset.
+**Cmd+Q** on macOS or **Ctrl+Q** elsewhere quits the UI.
 `--board ID` skips the picker, `--tab board|lcd|eth|ws|scope|logic|console`
 chooses the initial tab, and `--width`/`--height` set the window size. For
 headless scope snapshots, `--scope-zoom` and `--scope-range` set the initial
@@ -263,7 +272,7 @@ go test ./...
 corpus (skipped when `qemu-system-arm`/`arm-none-eabi-gdb` are missing), every
 firmware example, and `tools/smoke.sh`, which asserts on observable behaviour
 (GPIO edges, console echo, PIO checks, WS2812 colours, multicore launch, LCD
-pixels, W6300 TCP/UDP against `tools/ethhost`) plus a headless UI snapshot
+pixels, W5500 and W6300 TCP/UDP against `tools/ethhost`) plus a headless UI snapshot
 checked with `tools/pngcheck`. `.github/workflows/ci.yml` runs the same target.
 
 The decoder regression gate is a differential harness that runs a generated

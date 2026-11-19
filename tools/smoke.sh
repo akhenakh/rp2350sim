@@ -96,8 +96,38 @@ else
 	bad "SD directory source" "$out"
 fi
 
+# port_busy PORT reports whether a local TCP listener already owns PORT.
+# ss is Linux-only; lsof covers macOS and the BSDs.
+port_busy() {
+	if command -v ss >/dev/null 2>&1; then
+		ss -ltn 2>/dev/null | grep -q ":$1 "
+	elif command -v lsof >/dev/null 2>&1; then
+		lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+	else
+		return 1
+	fi
+}
+
+# --- W5500 Ethernet against the host helper --------------------------------
+if port_busy 9000; then
+	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
+	exit 1
+fi
+"$BUILD/ethhost" >"$BUILD/ethhost-w5500.log" 2>&1 &
+host=$!
+trap 'kill "$host" 2>/dev/null' EXIT
+sleep 0.5
+out=$("$EMU" -fw "$BUILD/w5500.elf" -seconds 6 -eth 2>&1)
+kill "$host" 2>/dev/null || true
+trap - EXIT
+log=$(cat "$BUILD/ethhost-w5500.log")
+contains "W5500 TCP echo" "tcp echo:" "$out"
+contains "W5500 UDP" "udp: ok" "$out"
+contains "W5500 TCP server" 'server check 1: reply "pong\n"' "$log"
+contains "W5500 listener re-armed" 'server check 2: reply "pong\n"' "$log"
+
 # --- W6300 Ethernet against the host helper --------------------------------
-if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
+if port_busy 9000; then
 	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
 	exit 1
 fi
@@ -116,7 +146,7 @@ contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
 
 # --- UI headless snapshot ---------------------------------------------------
 # --- CH9120 UART-to-Ethernet ----------------------------------------------
-if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':9000 '; then
+if port_busy 9000; then
 	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
 	exit 1
 fi
@@ -172,7 +202,7 @@ else
 fi
 
 # --- Pico SDK C firmware (optional: needs the ARM toolchain and the SDK) ------
-if [ -n "$PICO_SDK_PATH" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &&
+if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &&
 	command -v cmake >/dev/null 2>&1; then
 	if cmake -S firmware/c -B "$BUILD/pico-c" -G Ninja -DPICO_BOARD=pico2 \
 		-DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release \

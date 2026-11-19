@@ -66,10 +66,20 @@ exclusive.
 ## Waveshare RP2350-POE-ETH (W6300)
 
 - W6300 on SPI0: SCK GP18, MOSI GP19, MISO GP16, CS GP17.
-- Use `-w6300` (or `-eth` for a W5500-compatible breadboard setup).
+- Use `-w6300` for the fitted controller.
 - The in-tree TinyGo netdev driver is `drivers/w6300`; the chip model is
   `internal/devices/w6300.go`.
 - Reference firmware: `firmware/w6300` (TCP client/server, UDP).
+
+## W5500 (breadboard)
+
+- W5500 on SPI0: SCK GP18, MOSI GP19, MISO GP16, CS GP17.
+- Use `-eth` (runner) or the `pico2-w5500` UI board.
+- The stock `tinygo.org/x/drivers/w5500` netdev driver runs unmodified; the
+  chip model is `internal/devices/w5500.go`.
+- Reference firmware: `firmware/w5500` (TCP client/server, UDP). The stock
+  driver rejects the 16-byte IPv4-mapped address that `net.IPv4` returns, so
+  the client passes a 4-byte `net.IP{127,0,0,1}`.
 
 ## Waveshare RP2350-ETH (CH9120, non-PoE)
 
@@ -157,6 +167,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/uart` | UART output for the logic analyzer |
 | `firmware/protocols` | UART/I2C/SPI traffic for the logic analyzer |
 | `firmware/serialbridge` | UART1 echoed over TCP |
+| `firmware/w5500` | W5500 TCP client/server and UDP (stock driver) |
 | `firmware/w6300` | W6300 TCP client/server and UDP |
 | `firmware/ch9120` | CH9120 TCP client |
 | `firmware/wifi` | virtual Wi-Fi through `netdev` |
