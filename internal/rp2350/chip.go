@@ -147,6 +147,7 @@ func New() *Chip {
 	c.addRegBlock(newBootRAM(c))
 	c.addRegBlock(newWatchdog(c))
 	c.addRegBlock(newSysInfo(c))
+	c.addRegBlock(newTBMAN(c))
 	c.addRegBlock(newROSC(c))
 	c.addRegBlock(c.io.bank0)
 	c.addRegBlock(c.io.pads)

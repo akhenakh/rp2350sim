@@ -137,8 +137,28 @@ func newWatchdog(c *Chip) *regBlock {
 func newSysInfo(c *Chip) *regBlock {
 	b := newRegBlock(0x40000000, 0x100)
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
-		if off == 0 { // CHIP_ID
-			return 0x0000_0000, true
+		switch off {
+		case 0x00: // CHIP_ID: revision A3, part RP4, manufacturer 0x926
+			return 0x3000_4927, true
+		case 0x04: // PACKAGE_SEL: 1 = QFN60 (RP2350A)
+			return 1, true
+		case 0x08: // PLATFORM: ASIC, not FPGA/SIM
+			return 0, true
+		}
+		return 0, false
+	}
+	return b
+}
+
+// ---- TBMAN ----
+
+// newTBMAN reports the ASIC platform. The SDK's running_on_fpga() consults
+// this block; a zero read is not a valid platform value.
+func newTBMAN(c *Chip) *regBlock {
+	b := newRegBlock(0x40160000, 0x100)
+	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		if off == 0 {
+			return 1, true // PLATFORM_ASIC
 		}
 		return 0, false
 	}
