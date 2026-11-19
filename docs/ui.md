@@ -11,6 +11,7 @@ go run . --board geek ../../path/to/firmware.elf
 ```
 
 The window is 1280×820 by default; `--width`/`--height` change it.
+**Cmd+Q** on macOS or **Ctrl+Q** elsewhere quits the UI.
 
 ## Startup: the board picker
 

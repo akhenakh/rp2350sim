@@ -78,7 +78,17 @@ func levelName(high bool) string {
 	return "LOW"
 }
 
+// quitRequested reports the platform quit chord: Cmd+Q on macOS and Ctrl+Q
+// elsewhere, mirroring app.PrimaryMod.
+func quitRequested() bool {
+	return ActiveCombo() == Combo(KeyQ, PrimaryMod())
+}
+
 func RootView() {
+	if quitRequested() {
+		app.Quit()
+	}
+
 	// The panels paint dark surfaces, so use the dark scheme's light text.
 	SetDarkMode(true)
 
