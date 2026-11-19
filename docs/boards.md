@@ -159,6 +159,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 |---|---|
 | `firmware/blinky` | GPIO and timing |
 | `firmware/lcd` | ST7789 over SPI |
+| `firmware/sdcard` | microSD over SPI with the stock TinyGo driver: card identity, FAT16 boot sector and root directory (long names included) |
 | `firmware/touchlcd` | Touch-LCD-2: ST7789, CST816D, QMI8658, ADC, microSD |
 | `firmware/piotest` | PIO API conformance (FIFOs, autopush/pull, IRQ, side-set) |
 | `firmware/ws2812` | WS2812B strip over PIO |

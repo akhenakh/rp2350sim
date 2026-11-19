@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -35,6 +36,9 @@ var (
 	scopeRangeIdx      = 4
 	triggerKind        string
 	triggerPause       bool
+	touchDemo          bool
+	touchDemoStart     time.Time
+	touchDemoAt        time.Time
 )
 
 // Scope voltage ranges in volts (full scale, from 0).
@@ -107,6 +111,9 @@ func RootView() {
 
 	snap := emu.Snapshot()
 	updateConsole(snap)
+	if touchDemo {
+		updateTouchDemo()
+	}
 
 	lightText := TextColor(220, 8, 92, 1)
 	Container(Attrs(Viewport, Background(220, 8, 12, 1), AmendTextStyle(lightText)), func() {
@@ -236,6 +243,24 @@ func findBoard(id string) *BoardDef {
 		}
 	}
 	return nil
+}
+
+// updateTouchDemo walks a contact around the panel so a recording shows a
+// moving touch instead of a still card. It is a UI-only demo; the emulator
+// itself stays deterministic.
+func updateTouchDemo() {
+	now := time.Now()
+	if now.Sub(touchDemoAt) < 120*time.Millisecond {
+		return
+	}
+	touchDemoAt = now
+	if touchDemoStart.IsZero() {
+		touchDemoStart = now
+	}
+	t := now.Sub(touchDemoStart).Seconds()
+	x := int(120 + 70*math.Cos(t*1.1))
+	y := int(160 + 110*math.Sin(t*0.85))
+	emu.SetTouch(x, y, true)
 }
 
 func setTab(name string) {
@@ -1804,7 +1829,9 @@ func main() {
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, scope, logic, otp, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, console")
+	touchAt := flag.String("touch", "", "inject a held touch at native panel coordinates: x,y")
+	touchDemoFlag := flag.Bool("touch-demo", false, "move a synthetic touch around the panel while the UI runs")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
 	flag.Parse()
 	viewW, viewH = *winW, *winH
@@ -1835,6 +1862,17 @@ func main() {
 		fwPath = rest[0]
 		_ = emu.Load(fwPath)
 	}
+	if *touchAt != "" {
+		xStr, yStr, ok := strings.Cut(*touchAt, ",")
+		x, xErr := strconv.Atoi(strings.TrimSpace(xStr))
+		y, yErr := strconv.Atoi(strings.TrimSpace(yStr))
+		if !ok || xErr != nil || yErr != nil {
+			fmt.Fprintln(os.Stderr, "--touch expects native panel coordinates as x,y")
+			os.Exit(2)
+		}
+		emu.SetTouch(x, y, true)
+	}
+	touchDemo = *touchDemoFlag
 	setTab(*tabName)
 	if *zFlag >= 1 {
 		scopeZoom = *zFlag

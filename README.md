@@ -25,7 +25,7 @@ internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
 internal/firmware/  UF2 / ELF / raw image loaders
 drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
 drivers/ch9120/     CH9120 module driver and one-socket netdev (separate module)
-firmware/           example TinyGo programs (blinky, lcd, piotest, ws2812, w5500, w6300)
+firmware/           example TinyGo programs (blinky, lcd, sdcard, piotest, ws2812, w5500, w6300)
 tools/              corpus generator, host Ethernet test server
 Taskfile.yml        build/run/test tasks
 ```
@@ -43,6 +43,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
+| `task run:sdcard` | read the card identity and list a host-backed FAT16 root directory |
 | `task run:touchlcd` | run the Touch-LCD-2 example with a deterministic touch |
 | `task touchlcd` | run the Touch-LCD-2 example and export its framebuffer |
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |

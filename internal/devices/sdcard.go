@@ -345,7 +345,7 @@ func (s *SDCard) writeData(tx byte) byte {
 // csd returns a CSD v2.0 structure sized for the backing image.
 func (s *SDCard) csd() []byte {
 	csd := make([]byte, 16)
-	// 512 KB units: capacity = (C_SIZE+1) * 512 KB.
+	// C_SIZE is 22 bits: (C_SIZE+1) * 512 KB = capacity.
 	size := max(s.Blocks()/1024-1, 0)
 	size = min(size, 0x3F_FFFF)
 	csd[0] = 0x40 // CSD_STRUCTURE 2.0
@@ -355,9 +355,9 @@ func (s *SDCard) csd() []byte {
 	csd[4] = 0x5B // CCC
 	csd[5] = 0x59 // READ_BL_LEN 512, flags
 	csd[6] = 0x00
-	csd[7] = byte(size>>20) & 0x3F
-	csd[8] = byte(size >> 12)
-	csd[9] = byte(size >> 4)
+	csd[7] = byte(size>>16) & 0x3F
+	csd[8] = byte(size >> 8)
+	csd[9] = byte(size)
 	csd[10] = byte(size << 4)
 	csd[11] = 0x80
 	csd[12] = 0x0A

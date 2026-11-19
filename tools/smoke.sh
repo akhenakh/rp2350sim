@@ -56,6 +56,13 @@ contains "PIO conformance" "pio: all checks passed" "$out"
 out=$("$EMU" -fw "$BUILD/ws2812.elf" -seconds 0.8 -ws2812 0 2>&1)
 contains "WS2812B colours" "#ff0000 #00ff00 #0000ff" "$out"
 
+# --- microSD: stock TinyGo driver over SPI, FAT16 backed by a host dir ------
+mkdir -p "$BUILD/sdcard-host"
+printf 'hello from the host\n' >"$BUILD/sdcard-host/hello world.txt"
+out=$("$EMU" -fw "$BUILD/sdcard.elf" -sd -sd-dir "$BUILD/sdcard-host" -seconds 4 -quiet 2>&1)
+contains "SD card identity" "SDHC/SDXC card" "$out"
+contains "SD FAT16 root directory" "file: hello world.txt 20 bytes" "$out"
+
 # --- multicore scheduler ----------------------------------------------------
 out=$("$EMU" -fw "$BUILD/cores.elf" -seconds 1.5 2>&1)
 contains "core 1 runs tasks" "cores: done" "$out"

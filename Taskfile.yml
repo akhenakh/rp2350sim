@@ -62,6 +62,7 @@ tasks:
       - firmware:serialbridge
       - firmware:ch9120
       - firmware:wifi
+      - firmware:sdcard
     cmds:
       - task: lint
       - go test ./...
@@ -113,6 +114,25 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/lcd.elf .'
+
+  firmware:sdcard:
+    desc: Build the microSD / FAT16 GEEK example firmware
+    dir: firmware/sdcard
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/sdcard.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/sdcard.elf .'
+
+  run:sdcard:
+    desc: Read the microSD card and list its FAT16 root directory
+    deps: [build, firmware:sdcard]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/sdcard.elf -sd -sd-dir {{.BUILD}}/sdcard-host -seconds 4'
 
   run:blinky:
     desc: Run the blinky firmware and trace GP25 for three virtual seconds
