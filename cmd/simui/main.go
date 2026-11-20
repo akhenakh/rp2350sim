@@ -41,6 +41,11 @@ var (
 	triggerPause       bool
 	logicSaveMsg       string
 	logicSaveErr       bool
+	busTerm            *BusTerminal
+	busTermAddr        string
+	busTermErr         string
+	busInput           string
+	busSel             int
 	touchDemo          bool
 	touchDemoStart     time.Time
 	touchDemoAt        time.Time
@@ -63,6 +68,7 @@ const (
 	tabScope
 	tabLogic
 	tabOTP
+	tabBus
 	tabConsole
 )
 
@@ -153,6 +159,8 @@ func RootView() {
 				logicPanel()
 			case tabOTP:
 				otpPanel(snap)
+			case tabBus:
+				busPanel(snap)
 			case tabConsole:
 				consolePanel(snap)
 			default:
@@ -227,6 +235,9 @@ func boardBadges(b *BoardDef) []string {
 	if len(b.Serial) > 0 {
 		out = append(out, "TCP SERIAL")
 	}
+	if len(b.I2CTCP) > 0 || len(b.SPITCP) > 0 {
+		out = append(out, "TCP BUS")
+	}
 	if b.Wifi != nil {
 		out = append(out, "WIFI (VIRTUAL)")
 	}
@@ -237,6 +248,14 @@ func boardBadges(b *BoardDef) []string {
 }
 
 func selectBoard(b *BoardDef) {
+	if busTerm != nil {
+		busTerm.Close()
+		busTerm = nil
+	}
+	busTermAddr = ""
+	busTermErr = ""
+	busInput = ""
+	busSel = 0
 	selectedBoard = b
 	activeTab = tabBoard
 	scopePins = b.ScopePins()
@@ -316,6 +335,10 @@ func setTab(name string) {
 		activeTab = tabLogic
 	case "otp":
 		activeTab = tabOTP
+	case "bus", "i2c", "spi", "bridges":
+		if boardHasBuses(selectedBoard) {
+			activeTab = tabBus
+		}
 	case "console":
 		activeTab = tabConsole
 	}
@@ -346,6 +369,9 @@ func tabsBar() {
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
 		tabButton("OTP", tabOTP)
+		if boardHasBuses(selectedBoard) {
+			tabButton("Bus", tabBus)
+		}
 		tabButton("Console", tabConsole)
 		Filler(1)
 		if selectedBoard.Description != "" {
@@ -358,6 +384,10 @@ func tabsBar() {
 // their own tab.
 func boardHasSensors(b *BoardDef) bool {
 	return b != nil && (b.Touch != nil || b.IMU != nil || b.Battery != nil || b.SD != nil)
+}
+
+func boardHasBuses(b *BoardDef) bool {
+	return b != nil && (len(b.I2CTCP) > 0 || len(b.SPITCP) > 0)
 }
 
 func tabButton(label string, tab int) {
@@ -1945,6 +1975,116 @@ func logicUSB() {
 	})
 }
 
+func busLabel(info BusBridgeInfo) string {
+	if info.Kind == "I2C" {
+		parts := make([]string, len(info.Addrs))
+		for i, a := range info.Addrs {
+			parts[i] = fmt.Sprintf("0x%02x", a)
+		}
+		return fmt.Sprintf("I2C%d %s", info.Bus, strings.Join(parts, ","))
+	}
+	return fmt.Sprintf("SPI%d CS%d", info.Bus, info.CS)
+}
+
+func busPanel(snap MachineState) {
+	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+		Container(Attrs(Row, CrossMid, Gap(10)), func() {
+			Label("I2C / SPI TCP", FontSize(16), FontWeight(700))
+			Label("Bus Pirate tokens", FontSize(12))
+			Filler(1)
+			if len(snap.Buses) > 0 {
+				Label(fmt.Sprintf("%d bridge(s)", len(snap.Buses)), FontSize(11), TextColor(140, 45, 65, 1))
+			}
+		})
+		infos := emu.BusBridges()
+		if len(infos) == 0 {
+			Label("This board has no i2c_tcp or spi_tcp entries.", FontSize(13))
+			return
+		}
+		if busSel >= len(infos) {
+			busSel = 0
+		}
+		Container(Attrs(Row, Gap(6), Wrap), func() {
+			for i, info := range infos {
+				label := busLabel(info)
+				if Button(NoIcon, label) {
+					busSel = i
+					if busTerm != nil && busTermAddr != info.Listen {
+						busTerm.Close()
+						busTerm = nil
+						busTermAddr = ""
+					}
+					RequestNextFrame()
+				}
+			}
+		})
+		sel := infos[busSel]
+		endpoint := sel.Listen
+		if endpoint == "" {
+			endpoint = sel.Connect
+		}
+		state := "listening"
+		if sel.Connected {
+			state = "client " + sel.Client
+		}
+		if sel.Connect != "" {
+			state = "connecting"
+			if sel.Connected {
+				state = "connected " + sel.Client
+			}
+		}
+		Label(fmt.Sprintf("%s · %s · %s", busLabel(sel), endpoint, state), FontSize(12), FontWeight(600))
+		if sel.Listen == "" {
+			Label("Connect mode: the external device is the server; use the CLI or a script there, not this terminal.", FontSize(12), TextColor(140, 45, 65, 1))
+			return
+		}
+		if busTerm == nil || busTermAddr != sel.Listen {
+			if Button(NoIcon, "Connect terminal") {
+				term, err := NewBusTerminal(sel.Listen)
+				if err != nil {
+					busTermErr = err.Error()
+				} else {
+					busTerm = term
+					busTermAddr = sel.Listen
+					busTermErr = ""
+				}
+				RequestNextFrame()
+			}
+			if busTermErr != "" {
+				Label(busTermErr, FontSize(11), TextColor(0, 65, 60, 1))
+			}
+			Label("The terminal is the device side: it shows the controller's requests and sends the answers you type.", FontSize(12), TextColor(140, 45, 65, 1))
+			return
+		}
+		Container(Attrs(Row, Gap(8), CrossMid), func() {
+			Label("terminal "+busTermAddr, FontSize(11), TextColor(140, 45, 65, 1))
+			Filler(1)
+			if Button(NoIcon, "Disconnect") {
+				busTerm.Close()
+				busTerm = nil
+				busTermAddr = ""
+				RequestNextFrame()
+			}
+		})
+		Container(Attrs(Grow(1), Expand, Background(220, 12, 8, 1), Corners(6), Pad(8), Clip,
+			BorderWidth(1), BorderColor(220, 25, 30, 1)), func() {
+			busTerm.Render()
+		})
+		Container(Attrs(Row, Gap(8), CrossMid), func() {
+			attrs := DefaultTextInputAttrs()
+			attrs.MinWidth = 360
+			attrs.FixedWidth = true
+			TextInputExt(&busInput, attrs)
+			if Button(NoIcon, "Send") && strings.TrimSpace(busInput) != "" {
+				busTerm.Send(busInput)
+				busInput = ""
+				RequestNextFrame()
+			}
+		})
+		Label("Type ACK, NAK or hex bytes; spaces queue one response per request (e.g. 0xEF 0x40 0x18).", FontSize(11), TextColor(140, 45, 65, 1))
+	})
+}
+
 func consolePanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		FocusOnClick()
@@ -1962,6 +2102,13 @@ func consolePanel(snap MachineState) {
 		if len(snap.Serial) > 0 {
 			Container(Attrs(Row, Gap(16)), func() {
 				for _, line := range snap.Serial {
+					Label(line, FontSize(11), TextColor(140, 45, 65, 1))
+				}
+			})
+		}
+		if len(snap.Buses) > 0 {
+			Container(Attrs(Row, Gap(16)), func() {
+				for _, line := range snap.Buses {
 					Label(line, FontSize(11), TextColor(140, 45, 65, 1))
 				}
 			})
@@ -2045,7 +2192,7 @@ func main() {
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, bus, console")
 	touchAt := flag.String("touch", "", "inject a held touch at native panel coordinates: x,y")
 	touchDemoFlag := flag.Bool("touch-demo", false, "move a synthetic touch around the panel while the UI runs")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")

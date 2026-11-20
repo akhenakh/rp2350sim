@@ -143,6 +143,8 @@ boards:
 | `analog` | `{pin, wave, hz, amplitude, offset}` | generated analog signal (scope/ADC demo) |
 | `logic` | `uart {bus,tx,rx,baud}`, `i2c {bus,sda,scl}`, `spi {bus,sck,mosi,miso,cs}` | logic analyzer protocols |
 | `serial` | `{uart, listen}` | UART TCP bridge (see below) |
+| `i2c_tcp` | `{bus, addrs, listen | connect}` | I2C TCP device (Bus tab) |
+| `spi_tcp` | `{bus, cs, listen | connect}` | SPI TCP device (Bus tab) |
 
 `listen` defaults to `127.0.0.1:0` (a free port). Two devices cannot use the
 same SPI bus.
@@ -173,9 +175,13 @@ same SPI bus.
   the last row the firmware programmed until you pick a page. Nothing is
   persistent: seed rows with the runner's `-otp` flag or dump them with
   `-otp-dump`.
+- **Bus** — the I2C/SPI TCP device bridges. Select a listening bridge and
+  **Connect terminal** to act as the device: the panel shows the Bus Pirate
+  request tokens and sends the ACK/NAK/data responses you type. Connect-mode
+  bridges are driven by their external server instead.
 - **Console** — USB CDC + UART output. Click it to give it keyboard focus;
   typed text and Enter/Backspace/Tab/arrows are forwarded to the firmware.
-  UART-over-TCP bridges are listed here.
+  UART-over-TCP and bus-bridge status lines are listed here.
 
 ## Oscilloscope
 
@@ -213,6 +219,54 @@ The assigned address appears in the Console tab, e.g.
 bytes go to the UART receive FIFO and firmware TX comes back on the same
 connection. The listener is kept across firmware resets, so the port remains
 stable while the UI is open.
+
+## I2C/SPI over TCP
+
+Add Bus Pirate devices to a board:
+
+```yaml
+i2c_tcp:
+  - bus: 0
+    addrs: [0x50, 0x51]
+    # listen: 127.0.0.1:12402   (omit for a random free port)
+spi_tcp:
+  - bus: 0
+    cs: 17
+    # listen: 127.0.0.1:12403
+```
+
+The `pico2-bus` board is the ready-made demo (I2C 0x50 and SPI0 CS GP17).
+`task ui:bus` opens it on the Bus tab with the `busmaster` firmware. Connect
+the terminal, queue the responses, then press **Reset** (or **Load**) so the
+firmware starts after the terminal is attached. `task ui:bus:png` renders the
+tab headlessly to `build/ui-bus.png`.
+Bridges listen by default; use `connect: host:port` instead to dial a device
+server. Address and chip-select conflicts with LCD, touch, IMU, SD and
+Ethernet devices are rejected when the board loads.
+
+Open the **Bus** tab, pick a bridge and **Connect terminal**. The terminal is
+the device side: requests appear as Bus Pirate tokens such as
+
+```text
+< [0xA0
+< 0x00
+< [0xA1 r:1
+< r:1
+< ]
+```
+
+and you answer with `ACK`, `NAK`, or hex bytes. Responses are queued, so you
+can type `0xEF 0x40 0x18` before a three-byte SPI read starts; each whitespace
+token answers one request. For the bundled `busmaster`, queue
+`ACK ACK 0x12 0x34` for the I2C exchange and `0xEF 0x40 0x18` for the SPI
+exchange. The bridge timeout is 500 ms in the UI; if nothing
+is queued the request returns NAK/`0xff` and the machine keeps running. The
+listener and terminal survive firmware reloads, so connect first, queue the
+answers, then reset.
+
+Connect-mode bridges have no terminal in the UI: their external server is the
+device, exactly like the CLI `=host:port` form. See `docs/cli.md` for the full
+token protocol and the two-simulator test.
 
 ## Virtual Wi-Fi
 

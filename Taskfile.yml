@@ -60,6 +60,8 @@ tasks:
       - firmware:w5500
       - firmware:protocols
       - firmware:serialbridge
+      - firmware:busmaster
+      - firmware:busdevice
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -72,6 +74,7 @@ tasks:
       - 'go build -o {{.BUILD}}/pngcheck ./tools/pngcheck'
       - 'go build -o {{.BUILD}}/pincheck ./tools/pincheck'
       - 'go build -o {{.BUILD}}/serialcheck ./tools/serialcheck'
+      - 'go build -o {{.BUILD}}/busfake ./tools/busfake'
       - 'bash tools/smoke.sh {{.BUILD}}'
 
   test:qemu:
@@ -267,6 +270,30 @@ tasks:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/serialbridge.elf .'
 
+  firmware:busmaster:
+    desc: Build the I2C/SPI TCP bridge master demo
+    dir: firmware/busmaster
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/busmaster.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/busmaster.elf .'
+
+  firmware:busdevice:
+    desc: Build the I2C/SPI TCP bridge device demo
+    dir: firmware/busdevice
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/busdevice.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/busdevice.elf .'
+
   firmware:protocols:
     desc: Build the UART/I2C/SPI logic-analyzer demo
     dir: firmware/protocols
@@ -456,6 +483,20 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-serial '../../{{.BUILD}}/serialbridge.elf'
+
+  ui:bus:
+    desc: Run the UI on the Bus Pirate board (connect the Bus terminal, queue responses, then Reset)
+    deps: [firmware:busmaster]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-bus --tab bus '../../{{.BUILD}}/busmaster.elf'
+
+  ui:bus:png:
+    desc: Render the Bus Pirate tab headlessly to build/ui-bus.png
+    deps: [firmware:busmaster]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-bus --tab bus --run 0.05 --png '../../{{.BUILD}}/ui-bus.png' '../../{{.BUILD}}/busmaster.elf'
 
   ui:w6300:
     desc: Run the UI with the W6300 example on the POE-ETH board

@@ -102,3 +102,49 @@ func TestBoardsRejectSameChipSelect(t *testing.T) {
 		t.Fatal("same CS on one bus was accepted")
 	}
 }
+
+func TestBoardsIncludeBus(t *testing.T) {
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bus *BoardDef
+	for i := range boards {
+		if boards[i].ID == "pico2-bus" {
+			bus = &boards[i]
+		}
+	}
+	if bus == nil {
+		t.Fatal("pico2-bus board is missing")
+	}
+	if len(bus.I2CTCP) != 1 || bus.I2CTCP[0].Bus != 0 ||
+		len(bus.I2CTCP[0].Addrs) != 1 || bus.I2CTCP[0].Addrs[0] != 0x50 {
+		t.Fatalf("pico2-bus i2c_tcp = %+v", bus.I2CTCP)
+	}
+	if len(bus.SPITCP) != 1 || bus.SPITCP[0].Bus != 0 || bus.SPITCP[0].CS != 17 {
+		t.Fatalf("pico2-bus spi_tcp = %+v", bus.SPITCP)
+	}
+}
+
+func TestBoardsRejectBusConflicts(t *testing.T) {
+	writeBoards(t, `
+boards:
+  - id: dup
+    touch: { bus: 0, addr: 0x50, int: 1, width: 240, height: 320 }
+    i2c_tcp:
+      - { bus: 0, addrs: [0x50] }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("duplicate I2C address was accepted")
+	}
+	writeBoards(t, `
+boards:
+  - id: dup
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    spi_tcp:
+      - { bus: 0, cs: 17 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("duplicate SPI CS was accepted")
+	}
+}

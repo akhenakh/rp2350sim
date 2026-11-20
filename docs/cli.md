@@ -287,6 +287,76 @@ Connect with any TCP client (`nc`, `socat`, Python) and exchange bytes with the
 firmware's UART as if it were wired. The listener and client survive firmware
 resets in the UI but the headless runner is one process.
 
+### I2C/SPI devices over TCP
+
+`-i2c-tcp` and `-spi-tcp` expose a bus to an external device program. The
+emulator is the controller; the TCP peer is the target. The wire format is
+Bus Pirate tokens, where `[` is start (or CS low), `]` is stop (or CS high),
+and the address byte is `addr << 1`:
+
+```text
+< [0xA0      > ACK
+< 0x00       > ACK
+< [0xA1 r:1  > 0x12
+< r:1        > 0x34
+< ]          (no response)
+```
+
+```text
+< [0x9F      > 0xEF
+< 0x9F       > 0x40
+< 0x9F       > 0x18
+< ]          (no response)
+```
+
+A compact Bus Pirate command such as `[0xA0 0x00 [0xA1 r:4]` or `[0x9F r:3]`
+is the same transaction. The bridge splits it at the controller's synchronous
+request boundaries: the firmware needs each ACK/read byte while it runs, so the
+peer sees one start/data/read token at a time rather than the whole script.
+Reads are answered with one byte per `r:1`; SPI bytes are answered with the
+MISO byte. `HELLO` and `]` never expect a response.
+
+```sh
+# listen: a script connects
+rp2350sim -fw master.elf -seconds 5 \
+  -i2c-tcp 0:0x50@127.0.0.1:0 -spi-tcp 0:17@127.0.0.1:0
+
+# connect: the emulator dials a device server (or a second simulator's UART)
+rp2350sim -fw master.elf -seconds 5 \
+  -i2c-tcp 0:0x50=127.0.0.1:9000 -spi-tcp 0:17=127.0.0.1:9001
+```
+
+- `-i2c-tcp bus:addr[,addr...]@host:port` (listen) or `=host:port` (connect).
+- `-spi-tcp bus:cs@host:port` or `=host:port`.
+- An empty endpoint listens on `127.0.0.1:0`; the assigned address is logged
+  as `bus bridge listening`.
+- `-bus-timeout` (default 1s) bounds one request. `-bus-wait` (default 2s)
+  waits for the first client once; after that a missing client NAKs/returns
+  `0xff` immediately.
+- One client per bridge. I2C address collisions with board devices and SPI CS
+  collisions are rejected. An I2C target can NAK a byte (the controller raises
+  `TX_ABRT`); a read NAK aborts the transfer.
+
+`tools/busfake` is a ready-made host device (EEPROM at 0x50, JEDEC flash on
+the CS pin). It connects to a listening bridge:
+
+```sh
+busfake -kind i2c -addr 127.0.0.1:39479
+busfake -kind spi -addr 127.0.0.1:39480
+```
+
+The repository also has `firmware/busmaster` (I2C read + SPI JEDEC ID) and
+`firmware/busdevice` (a TinyGo software device on two UARTs). Run the master
+with connect-mode bridges pointed at the device simulator's UART bridges to
+exercise two emulator instances:
+
+```sh
+rp2350sim -fw build/busdevice.elf -seconds 300 \
+  -serial-tcp 0:127.0.0.1:0,1:127.0.0.1:0
+rp2350sim -fw build/busmaster.elf -seconds 5 \
+  -i2c-tcp 0:0x50=127.0.0.1:<UART0> -spi-tcp 0:17=127.0.0.1:<UART1>
+```
+
 ## Diagnostics and debugging
 
 | flag | meaning |
@@ -314,6 +384,10 @@ resets in the UI but the headless runner is one process.
 | `-logic-rate HZ` | sample rate (default 2 MHz) |
 | `-logic-depth N` | ring depth in samples (default 16384) |
 | `-logic-board NAME` | board label for the file name and metadata |
+| `-i2c-tcp bus:addr[,addr][@listen|=connect]` | expose I2C targets over TCP (repeatable) |
+| `-spi-tcp bus:cs[@listen|=connect]` | expose an SPI device over TCP (repeatable) |
+| `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
+| `-bus-wait D` | first-client wait for an I2C/SPI bridge (default 2s) |
 
 ### Logic analyzer capture
 

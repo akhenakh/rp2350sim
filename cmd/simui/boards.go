@@ -29,6 +29,8 @@ type BoardDef struct {
 	Scope       []int          `yaml:"scope"`
 	Logic       *LogicDevice   `yaml:"logic"`
 	Serial      []SerialDevice `yaml:"serial"`
+	I2CTCP      []I2CTCPBridge `yaml:"i2c_tcp"`
+	SPITCP      []SPITCPBridge `yaml:"spi_tcp"`
 	Wifi        *WifiDevice    `yaml:"wifi"`
 }
 
@@ -36,6 +38,23 @@ type BoardDef struct {
 type SerialDevice struct {
 	UART   int    `yaml:"uart"`
 	Listen string `yaml:"listen"`
+}
+
+// I2CTCPBridge exposes one I2C bus as Bus Pirate tokens. Addrs lists the
+// 7-bit targets the external device answers.
+type I2CTCPBridge struct {
+	Bus     int    `yaml:"bus"`
+	Addrs   []int  `yaml:"addrs"`
+	Listen  string `yaml:"listen"`
+	Connect string `yaml:"connect"`
+}
+
+// SPITCPBridge exposes one SPI bus + chip select as Bus Pirate tokens.
+type SPITCPBridge struct {
+	Bus     int    `yaml:"bus"`
+	CS      int    `yaml:"cs"`
+	Listen  string `yaml:"listen"`
+	Connect string `yaml:"connect"`
 }
 
 // WifiDevice is the virtual Wi-Fi transport: a host-backed serial netdev.
@@ -268,6 +287,27 @@ func LoadBoards() ([]BoardDef, error) {
 			b.Name = b.ID
 		}
 		spi := map[spiPin]string{}
+		i2cAddrs := map[struct {
+			bus  int
+			addr int
+		}]string{}
+		addI2C := func(bus, addr int, who string) error {
+			if bus != 0 && bus != 1 {
+				return fmt.Errorf("%s: bus must be 0 or 1", who)
+			}
+			if addr < 0x08 || addr > 0x77 {
+				return fmt.Errorf("%s: address %#x is not 7-bit", who, addr)
+			}
+			key := struct {
+				bus  int
+				addr int
+			}{bus, addr}
+			if prev, ok := i2cAddrs[key]; ok {
+				return fmt.Errorf("%s and %s both use I2C%d address %#x", prev, who, bus, addr)
+			}
+			i2cAddrs[key] = who
+			return nil
+		}
 		if d := b.LCD; d != nil {
 			if err := validSPI(spi, d.SPI, d.CS, "lcd"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
@@ -277,8 +317,8 @@ func LoadBoards() ([]BoardDef, error) {
 			if d.Bus != 0 && d.Bus != 1 {
 				return nil, fmt.Errorf("boards: %s: touch bus must be 0 or 1", b.ID)
 			}
-			if d.Addr < 0x08 || d.Addr > 0x77 {
-				return nil, fmt.Errorf("boards: %s: touch address %#x is not 7-bit", b.ID, d.Addr)
+			if err := addI2C(d.Bus, d.Addr, "touch"); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 			if d.Width <= 0 || d.Height <= 0 {
 				return nil, fmt.Errorf("boards: %s: touch needs width and height", b.ID)
@@ -288,8 +328,8 @@ func LoadBoards() ([]BoardDef, error) {
 			if d.Bus != 0 && d.Bus != 1 {
 				return nil, fmt.Errorf("boards: %s: imu bus must be 0 or 1", b.ID)
 			}
-			if d.Addr < 0x08 || d.Addr > 0x77 {
-				return nil, fmt.Errorf("boards: %s: imu address %#x is not 7-bit", b.ID, d.Addr)
+			if err := addI2C(d.Bus, d.Addr, "imu"); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
 		if d := b.Battery; d != nil {
@@ -338,6 +378,28 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: serial uart must be 0 or 1", b.ID)
 			}
 			// An empty listen address means 127.0.0.1:0 (kernel-chosen port).
+		}
+		for i := range b.I2CTCP {
+			br := &b.I2CTCP[i]
+			if len(br.Addrs) == 0 {
+				return nil, fmt.Errorf("boards: %s: i2c_tcp needs at least one address", b.ID)
+			}
+			if br.Listen != "" && br.Connect != "" {
+				return nil, fmt.Errorf("boards: %s: i2c_tcp listen and connect are mutually exclusive", b.ID)
+			}
+			for _, addr := range br.Addrs {
+				if err := addI2C(br.Bus, addr, "i2c_tcp"); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+			}
+		}
+		for _, br := range b.SPITCP {
+			if err := validSPI(spi, br.Bus, br.CS, "spi_tcp"); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+			if br.Listen != "" && br.Connect != "" {
+				return nil, fmt.Errorf("boards: %s: spi_tcp listen and connect are mutually exclusive", b.ID)
+			}
 		}
 		if w := b.Wifi; w != nil {
 			if w.UART < 0 || w.UART > 1 {

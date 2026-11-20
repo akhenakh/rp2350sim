@@ -51,6 +51,7 @@ type MachineState struct {
 	Network     *devices.NetworkInfo
 	EthLog      []string
 	Serial      []string
+	Buses       []string
 
 	Touch     *TouchState
 	IMU       *IMUState
@@ -157,6 +158,12 @@ type Emu struct {
 	bridges    []*devices.UARTBridge
 	bridgeErrs []string
 	serialSig  string
+
+	i2cBuses  []*devices.I2CBridge
+	spiBuses  []*devices.SPIBridge
+	busAll    []*devices.BusBridge
+	busErrors []string
+	busSig    string
 }
 
 // UARTEvent is one byte written to (or received from) a hardware UART.
@@ -554,6 +561,8 @@ func (e *Emu) resetChip() {
 			c.CycleHooks = append(c.CycleHooks, src.Tick)
 		}
 
+		e.attachBus(c, b, attachSPI)
+
 		// A protocol without an attached chip still records bytes clocked by
 		// firmware through that SPI controller.
 		spiFallback := [2]bool{}
@@ -637,6 +646,120 @@ func (e *Emu) resetChip() {
 	e.lcdFrame = nil
 	e.lcdDuty = -1
 	e.lcdOn = false
+}
+
+// attachBus starts the Bus Pirate TCP bridges and reattaches them to a new
+// chip. Bridges survive firmware reloads when the board config is unchanged,
+// so the listener port and any connected device script stay alive.
+func (e *Emu) attachBus(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs int, fn func(byte) byte)) {
+	sig := ""
+	var i2cDefs []I2CTCPBridge
+	var spiDefs []SPITCPBridge
+	if b != nil {
+		i2cDefs = b.I2CTCP
+		spiDefs = b.SPITCP
+		sig = fmt.Sprintf("%+v|%+v", i2cDefs, spiDefs)
+	}
+	if sig != e.busSig || len(e.busAll) != len(i2cDefs)+len(spiDefs) {
+		for _, br := range e.busAll {
+			br.Close()
+		}
+		e.busAll = e.busAll[:0]
+		e.i2cBuses = e.i2cBuses[:0]
+		e.spiBuses = e.spiBuses[:0]
+		e.busErrors = e.busErrors[:0]
+		logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+		for _, d := range i2cDefs {
+			listen, connect := d.Listen, d.Connect
+			if listen == "" && connect == "" {
+				listen = "127.0.0.1:0"
+			}
+			addrs := make([]uint8, len(d.Addrs))
+			for i, a := range d.Addrs {
+				addrs[i] = uint8(a)
+			}
+			br := devices.NewI2CBridge(d.Bus, addrs, listen, connect)
+			br.Logger = logger
+			br.Timeout = 500 * time.Millisecond
+			br.Wait = 0
+			if err := br.Start(); err != nil {
+				e.busErrors = append(e.busErrors, fmt.Sprintf("I2C%d %s: %v", d.Bus, listen, err))
+				continue
+			}
+			e.i2cBuses = append(e.i2cBuses, br)
+			e.busAll = append(e.busAll, br.BusBridge)
+		}
+		for _, d := range spiDefs {
+			listen, connect := d.Listen, d.Connect
+			if listen == "" && connect == "" {
+				listen = "127.0.0.1:0"
+			}
+			br := devices.NewSPIBridge(d.Bus, d.CS, listen, connect)
+			br.Logger = logger
+			br.Timeout = 500 * time.Millisecond
+			br.Wait = 0
+			if err := br.Start(); err != nil {
+				e.busErrors = append(e.busErrors, fmt.Sprintf("SPI%d CS%d %s: %v", d.Bus, d.CS, listen, err))
+				continue
+			}
+			e.spiBuses = append(e.spiBuses, br)
+			e.busAll = append(e.busAll, br.BusBridge)
+		}
+		e.busSig = sig
+	}
+	for _, br := range e.i2cBuses {
+		for _, addr := range br.Addrs {
+			c.AttachI2C(br.Bus, addr, br)
+		}
+	}
+	for _, br := range e.spiBuses {
+		attachSPI(br.Bus, br.CS, br.Transfer)
+	}
+	if len(e.spiBuses) > 0 {
+		prev := c.Pins.OnChange
+		c.Pins.OnChange = func(pin int, level bool) {
+			if prev != nil {
+				prev(pin, level)
+			}
+			for _, br := range e.spiBuses {
+				br.SetCS(pin, level)
+			}
+		}
+	}
+}
+
+// BusBridgeInfo is the UI view of one I2C/SPI TCP bridge.
+type BusBridgeInfo struct {
+	Kind      string
+	Bus       int
+	Addrs     []uint8
+	CS        int
+	Listen    string
+	Connect   string
+	Client    string
+	Connected bool
+}
+
+// BusBridges returns the configured bridge endpoints for the Bus tab.
+func (e *Emu) BusBridges() []BusBridgeInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []BusBridgeInfo
+	for _, br := range e.i2cBuses {
+		listen, connect, client, connected := br.Status()
+		out = append(out, BusBridgeInfo{
+			Kind: "I2C", Bus: br.Bus, Addrs: append([]uint8(nil), br.Addrs...),
+			Listen: listen, Connect: connect, Client: client, Connected: connected,
+		})
+	}
+	for _, br := range e.spiBuses {
+		listen, connect, client, connected := br.Status()
+		out = append(out, BusBridgeInfo{
+			Kind: "SPI", Bus: br.Bus, CS: br.CS,
+			Listen: listen, Connect: connect, Client: client, Connected: connected,
+		})
+	}
+	return out
 }
 
 // attachSerial keeps the TCP bridges across chip resets when the board's
@@ -986,6 +1109,31 @@ func (e *Emu) Snapshot() MachineState {
 			s.Serial = append(s.Serial, fmt.Sprintf("UART%d tcp %s ← %s", br.UART, listen, client))
 		} else {
 			s.Serial = append(s.Serial, fmt.Sprintf("UART%d tcp %s · listening", br.UART, listen))
+		}
+	}
+	s.Buses = append([]string(nil), e.busErrors...)
+	for _, br := range e.i2cBuses {
+		listen, connect, client, connected := br.Status()
+		where := listen
+		if connect != "" {
+			where = connect
+		}
+		if connected {
+			s.Buses = append(s.Buses, fmt.Sprintf("I2C%d tcp %s ← %s", br.Bus, where, client))
+		} else {
+			s.Buses = append(s.Buses, fmt.Sprintf("I2C%d tcp %s · listening", br.Bus, where))
+		}
+	}
+	for _, br := range e.spiBuses {
+		listen, connect, client, connected := br.Status()
+		where := listen
+		if connect != "" {
+			where = connect
+		}
+		if connected {
+			s.Buses = append(s.Buses, fmt.Sprintf("SPI%d CS%d tcp %s ← %s", br.Bus, br.CS, where, client))
+		} else {
+			s.Buses = append(s.Buses, fmt.Sprintf("SPI%d CS%d tcp %s · listening", br.Bus, br.CS, where))
 		}
 	}
 	return s

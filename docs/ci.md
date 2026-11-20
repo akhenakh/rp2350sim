@@ -114,6 +114,35 @@ job, which never executes PR code. Pull requests from forks are skipped by the
 report step because GitHub gives `pull_request` runs from forks a read-only
 token; their checks still run and show in the PR's checks tab.
 
+## I2C/SPI device bridges
+
+The `I2C/SPI TCP bridge` smoke checks use the Bus Pirate token protocol from
+`docs/cli.md`. Two paths are covered:
+
+1. A host device (`tools/busfake`) connects to a listening bridge on a
+   `busmaster` firmware. The firmware reads two EEPROM bytes and a JEDEC ID;
+   the test asserts `i2c: 12 34` and `spi: ef 40 18`.
+2. Two simulators: `firmware/busdevice` answers on UART0/UART1, and
+   `firmware/busmaster` uses connect-mode bridges (`=UART address`) to dial the
+   second simulator's UART bridges. No relay is involved.
+
+```sh
+# second simulator: software device on UART0/UART1
+rp2350sim -fw build/busdevice.elf -seconds 300 \
+  -serial-tcp 0:127.0.0.1:0,1:127.0.0.1:0 2> busdevice.log &
+
+# first simulator: Bus Pirate controller
+rp2350sim -fw build/busmaster.elf -seconds 5 \
+  -i2c-tcp "0:0x50=127.0.0.1:<UART0>" \
+  -spi-tcp "0:17=127.0.0.1:<UART1>" \
+  -expect 'i2c: 12 34' -expect 'spi: ef 40 18' -stop-on-expect
+```
+
+Parse the `uart bridge listening` records from `busdevice.log` for the two
+ports. The bridges wait for their first client (`-bus-wait`), so starting the
+controller just after the device is enough; a missing client NAKs after the
+timeout instead of hanging forever.
+
 ## Exit codes
 
 | code | action |

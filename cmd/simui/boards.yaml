@@ -13,6 +13,9 @@
 #   sd:     { spi, cs, image | dir }
 #   ethernet: { kind: w5500|w6300, spi, cs }
 #   ws2812: { pin }
+#   serial: [{ uart, listen }]
+#   i2c_tcp: [{ bus, addrs: [0x50], listen | connect }]
+#   spi_tcp: [{ bus, cs, listen | connect }]
 #
 # RP2350SIM_BOARDS=/path/to/file.yaml replaces this embedded list.
 
@@ -23,6 +26,19 @@ boards:
     scope: [0, 1]
     logic:
       uart: { tx: 0, rx: 1, baud: 115200 }
+
+  - id: pico2-bus
+    name: RP2350 + remote I2C/SPI
+    description: I2C0 at 0x50 and SPI0 CS GP17 exposed as Bus Pirate TCP devices
+    scope: [0, 1]
+    i2c_tcp:
+      - bus: 0
+        addrs: [0x50]
+        listen: 127.0.0.1:0
+    spi_tcp:
+      - bus: 0
+        cs: 17
+        listen: 127.0.0.1:0
 
   - id: pico2-lcd
     name: RP2350 + ST7789 LCD

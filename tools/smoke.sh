@@ -205,6 +205,84 @@ else
 fi
 kill "$serialpid" 2>/dev/null || true
 
+# --- I2C/SPI TCP bridges: host fake device -------------------------------
+rm -f "$BUILD/bus-master.out" "$BUILD/bus-master.log"
+"$EMU" -fw "$BUILD/busmaster.elf" -seconds 5 \
+	-i2c-tcp '0:0x50@127.0.0.1:0' -spi-tcp '0:17@127.0.0.1:0' \
+	-expect 'i2c: 12 34' -expect 'spi: ef 40 18' -stop-on-expect \
+	>"$BUILD/bus-master.out" 2>"$BUILD/bus-master.log" &
+buspid=$!
+i2caddr=""
+spiaddr=""
+for _ in $(seq 1 50); do
+	i2caddr=$(grep '"msg":"bus bridge listening"' "$BUILD/bus-master.log" |
+		grep '"kind":"i2c"' | sed -n 's/.*"addr":"\([^"]*\)".*/\1/p' | head -1)
+	spiaddr=$(grep '"msg":"bus bridge listening"' "$BUILD/bus-master.log" |
+		grep '"kind":"spi"' | sed -n 's/.*"addr":"\([^"]*\)".*/\1/p' | head -1)
+	if [ -n "$i2caddr" ] && [ -n "$spiaddr" ]; then
+		break
+	fi
+	sleep 0.1
+done
+if [ -n "$i2caddr" ] && [ -n "$spiaddr" ]; then
+	"$BUILD/busfake" -kind i2c -addr "$i2caddr" >"$BUILD/busfake-i2c.log" 2>&1 &
+	fakei2c=$!
+	"$BUILD/busfake" -kind spi -addr "$spiaddr" >"$BUILD/busfake-spi.log" 2>&1 &
+	fakespi=$!
+	wait "$buspid"
+	busrc=$?
+	if [ "$busrc" -eq 0 ] &&
+		grep -q "i2c: 12 34" "$BUILD/bus-master.out" &&
+		grep -q "spi: ef 40 18" "$BUILD/bus-master.out"; then
+		ok "I2C/SPI TCP bridge with a host device"
+	else
+		bad "I2C/SPI TCP bridge host device" "$(cat "$BUILD/bus-master.out")" \
+			"$(tail -10 "$BUILD/bus-master.log")"
+	fi
+	kill "$fakei2c" "$fakespi" 2>/dev/null || true
+else
+	bad "I2C/SPI TCP bridge" "no bridge addresses" "$(tail -20 "$BUILD/bus-master.log")"
+	kill "$buspid" 2>/dev/null || true
+fi
+
+# --- two simulators: master <-> UART device firmware ---------------------
+rm -f "$BUILD/busdevice.out" "$BUILD/busdevice.log" "$BUILD/busmaster.out" "$BUILD/busmaster.log"
+"$EMU" -fw "$BUILD/busdevice.elf" -seconds 300 \
+	-serial-tcp '0:127.0.0.1:0,1:127.0.0.1:0' \
+	>"$BUILD/busdevice.out" 2>"$BUILD/busdevice.log" &
+bdevpid=$!
+u0=""
+u1=""
+for _ in $(seq 1 50); do
+	u0=$(grep '"msg":"uart bridge listening"' "$BUILD/busdevice.log" |
+		grep '"uart":0' | sed -n 's/.*"addr":"\([^"]*\)".*/\1/p' | head -1)
+	u1=$(grep '"msg":"uart bridge listening"' "$BUILD/busdevice.log" |
+		grep '"uart":1' | sed -n 's/.*"addr":"\([^"]*\)".*/\1/p' | head -1)
+	if [ -n "$u0" ] && [ -n "$u1" ]; then
+		break
+	fi
+	sleep 0.1
+done
+if [ -n "$u0" ] && [ -n "$u1" ]; then
+	"$EMU" -fw "$BUILD/busmaster.elf" -seconds 5 \
+		-i2c-tcp "0:0x50=$u0" -spi-tcp "0:17=$u1" \
+		-expect 'i2c: 12 34' -expect 'spi: ef 40 18' -stop-on-expect \
+		>"$BUILD/busmaster.out" 2>"$BUILD/busmaster.log"
+	rc=$?
+	if [ "$rc" -eq 0 ] &&
+		grep -q "i2c: 12 34" "$BUILD/busmaster.out" &&
+		grep -q "spi: ef 40 18" "$BUILD/busmaster.out"; then
+		ok "two sims over the I2C/SPI TCP bridges"
+	else
+		bad "two sims over the I2C/SPI TCP bridges" "$(cat "$BUILD/busmaster.out")" \
+			"$(tail -10 "$BUILD/busmaster.log")" "$(tail -10 "$BUILD/busdevice.log")"
+	fi
+else
+	bad "two sims over the I2C/SPI TCP bridges" "no UART bridge addresses" \
+		"$(tail -20 "$BUILD/busdevice.log")"
+fi
+kill "$bdevpid" 2>/dev/null || true
+
 if (cd cmd/simui && go run . --board pico2 --png "../../$BUILD/ui-smoke.png" --run 0.4 "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI headless snapshot"
@@ -391,6 +469,14 @@ if (cd cmd/simui && go run . --board pico2-analog --tab logic --run 0.05 	--png 
 	ok "UI logic analyzer tab"
 else
 	bad "UI logic analyzer tab" "$(cat "$BUILD/smoke.log")"
+fi
+
+if (cd cmd/simui && go run . --board pico2-bus --tab bus --run 0.05 \
+	--png "../../$BUILD/bus-ui-smoke.png" "../../$BUILD/busmaster.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/bus-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI I2C/SPI bus tab"
+else
+	bad "UI I2C/SPI bus tab" "$(cat "$BUILD/smoke.log")"
 fi
 
 if [ "$fail" -ne 0 ]; then

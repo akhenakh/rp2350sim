@@ -47,6 +47,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task install` | install `rp2350sim` into `$(go env GOPATH)/bin` |
 | `task firmware:blinky` | TinyGo blinky ELF for the Pico 2 |
 | `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
+| `task firmware:busmaster`, `busdevice` | TinyGo I2C/SPI TCP bridge master and device demos |
 | `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
 | `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
 | `task run:sdcard` | read the card identity and list a host-backed FAT16 root directory |
@@ -72,6 +73,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
 | `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
+| `task ui:bus` | Bus Pirate board: connect the Bus terminal, type ACK/data, then Reset |
 | `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
 | `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
@@ -123,6 +125,8 @@ Useful flags:
 | `-otp PATH`, `-otp-dump PATH` | seed / write back the OTP array (JSON) |
 | `-flash PATH`, `-flash-out PATH` | load / write back the raw 16 MiB flash image |
 | `-logic-pins 0,1`, `-logic-out PATH` | capture a logic-analyzer trace (UART/I2C/SPI taps plus pin samples) |
+| `-i2c-tcp 0:0x50@127.0.0.1:0` | expose I2C targets as Bus Pirate TCP devices |
+| `-spi-tcp 0:17@127.0.0.1:0` | expose an SPI device as a Bus Pirate TCP device |
 | `-continue-after-halt` | keep PIO/PWM/DMA running after a core halts (firmware that returns from `main`) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |

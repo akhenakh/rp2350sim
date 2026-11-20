@@ -117,6 +117,8 @@ func main() {
 		logicRate  = flag.Float64("logic-rate", 2e6, "logic analyzer sample rate in Hz")
 		logicDepth = flag.Int("logic-depth", devices.LogicDepth, "logic analyzer ring depth in samples")
 		logicBoard = flag.String("logic-board", "", "board label for the logic trace and filename")
+		busTimeout = flag.Duration("bus-timeout", time.Second, "I2C/SPI TCP bridge request timeout")
+		busWait    = flag.Duration("bus-wait", 2*time.Second, "I2C/SPI TCP bridge first-client wait")
 		stopOnMMIO = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
 		core1      = flag.Bool("core1", true, "start core 1")
 		quiet      = flag.Bool("quiet", false, "suppress the firmware header and final summary")
@@ -166,7 +168,10 @@ func main() {
 		showVer    = flag.Bool("version", false, "print the version and exit")
 	)
 	var expectFlag stringList
+	var i2cTCPFlag, spiTCPFlag stringList
 	flag.Var(&expectFlag, "expect", "fail unless this console output appears (repeatable)")
+	flag.Var(&i2cTCPFlag, "i2c-tcp", "I2C target over TCP: bus:addr[,addr][@listen|=connect] (repeatable)")
+	flag.Var(&spiTCPFlag, "spi-tcp", "SPI device over TCP: bus:cs[@listen|=connect] (repeatable)")
 	flag.Parse()
 	if *showVer {
 		fmt.Println("rp2350sim", version)
@@ -454,6 +459,35 @@ func main() {
 			spi1 = append(spi1, spiDev{25, card.Transfer})
 		}
 	}
+	i2cSpecs, err := parseBusBridgeSpecs(devices.BusI2C, i2cTCPFlag)
+	if err != nil {
+		log.Error("i2c-tcp", slog.Any("err", err))
+		os.Exit(2)
+	}
+	spiSpecs, err := parseBusBridgeSpecs(devices.BusSPI, spiTCPFlag)
+	if err != nil {
+		log.Error("spi-tcp", slog.Any("err", err))
+		os.Exit(2)
+	}
+	var busBridges []*devices.BusBridge
+	var spiBridges []*devices.SPIBridge
+	busBridges, spiBridges, err = attachBusBridges(c, log, *busTimeout, *busWait, i2cSpecs, spiSpecs,
+		func(bus, cs int, fn func(byte) byte) {
+			if bus == 0 {
+				spi0 = append(spi0, spiDev{cs, fn})
+			} else {
+				spi1 = append(spi1, spiDev{cs, fn})
+			}
+		})
+	if err != nil {
+		log.Error("bus bridge", slog.Any("err", err))
+		os.Exit(2)
+	}
+	defer func() {
+		for _, br := range busBridges {
+			br.Close()
+		}
+	}()
 	// A controller may carry several devices; each needs its own CS pin, and
 	// a pin cannot serve two controllers.
 	type spiKey struct{ bus, cs int }
@@ -600,19 +634,22 @@ func main() {
 			}
 		}()
 	}
-	if *tracePins != "" {
-		wanted := map[int]bool{}
-		for s := range strings.SplitSeq(*tracePins, ",") {
-			n, err := strconv.Atoi(strings.TrimSpace(s))
-			if err == nil {
-				wanted[n] = true
-			}
+	wanted := map[int]bool{}
+	for s := range strings.SplitSeq(*tracePins, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(s))
+		if err == nil {
+			wanted[n] = true
 		}
+	}
+	if *tracePins != "" || len(spiBridges) > 0 {
 		c.Pins.OnChange = func(pin int, level bool) {
 			if wanted[pin] {
 				log.Info("pin change",
 					slog.Int("pin", pin), slog.Bool("level", level),
 					slog.Float64("ms", float64(c.NowMicros())/1000))
+			}
+			for _, br := range spiBridges {
+				br.SetCS(pin, level)
 			}
 		}
 	}
