@@ -76,6 +76,8 @@ See [ci.md](ci.md) for the full recipe.
   See [c.md](c.md) for the C path and its current limits.
 - **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
   CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).
+- **Pico 2 + PSRAM**: optional 1–16 MiB QSPI device on QMI CS1, with a
+  configurable access latency; see [boards.md](boards.md#psram).
 - **Waveshare RP2350-GEEK**: ST7789 240×135, I2C header and microSD.
 - **Waveshare RP2350-Touch-LCD-2**: 240×320 touch LCD, CST816D, QMI8658,
   battery ADC and microSD.
