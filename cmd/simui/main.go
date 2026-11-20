@@ -423,6 +423,9 @@ func toolbar(snap MachineState) {
 		if snap.Firmware != "" {
 			name = filepath.Base(snap.Firmware)
 		}
+		if snap.FlashWrites > 0 && snap.FlashPath != "" {
+			name = filepath.Base(snap.FlashPath) + " (flash)"
+		}
 		Label(name, FontSize(12), FontWeight(600))
 		Label(fmt.Sprintf("virtual %.3fs", float64(snap.Cycles)/150_000_000), FontSize(12))
 		Label(fmt.Sprintf("PC %08x  SP %08x", snap.PC, snap.SP), FontSize(12), Fonts(Monospace...))
@@ -433,6 +436,25 @@ func toolbar(snap MachineState) {
 			Label(snap.Err, FontSize(12), TextColor(0, 70, 50, 1))
 		}
 	})
+	if snap.FlashWrites > 0 {
+		Container(Attrs(Row, CrossMid, Gap(12), Pad4(3, 10, 4, 10), Background(140, 30, 10, 1)), func() {
+			location := snap.FlashPath
+			if location == "" {
+				location = "in-memory flash (use --flash PATH to persist)"
+			}
+			if snap.Boots > 1 {
+				Label(fmt.Sprintf("now running firmware from %s", location), FontSize(12),
+					FontWeight(600), TextColor(140, 45, 72, 1))
+			} else {
+				Label(fmt.Sprintf("flash updated at %s; reset to run", location), FontSize(12),
+					FontWeight(600), TextColor(35, 65, 65, 1))
+			}
+			Filler(1)
+			Label(fmt.Sprintf("boot #%d · entry %08x · %d flash writes",
+				snap.Boots, snap.BootEntry, snap.FlashWrites), FontSize(11),
+				TextColor(140, 25, 75, 1))
+		})
+	}
 }
 
 func pinsPanel(snap MachineState) {
@@ -1902,6 +1924,7 @@ func main() {
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
+	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, console")
 	touchAt := flag.String("touch", "", "inject a held touch at native panel coordinates: x,y")
 	touchDemoFlag := flag.Bool("touch-demo", false, "move a synthetic touch around the panel while the UI runs")
@@ -1930,10 +1953,20 @@ func main() {
 		selectBoard(b)
 	}
 
-	// Allow a firmware path on the command line as a convenience.
+	if *flashPath != "" {
+		emu.SetFlashPath(*flashPath)
+	}
+	// Allow a firmware path on the command line as a convenience. Without one,
+	// a flash image can provide the boot vector directly.
 	if rest := flag.Args(); len(rest) > 0 {
 		fwPath = rest[0]
 		_ = emu.Load(fwPath)
+	} else if *flashPath != "" {
+		fwPath = *flashPath
+		if err := emu.LoadFlash(*flashPath); err != nil {
+			fmt.Fprintln(os.Stderr, "flash load:", err)
+			os.Exit(1)
+		}
 	}
 	if *touchAt != "" {
 		xStr, yStr, ok := strings.Cut(*touchAt, ",")
@@ -1980,9 +2013,11 @@ func main() {
 		if err := RenderToPNG(*png, *winW, *winH, RootView); err != nil {
 			fmt.Println("render failed:", err)
 		}
+		emu.SaveFlash()
 		return
 	}
 
 	app.SetupWindow("rp2350sim", *winW, *winH)
 	app.Run(RootView)
+	emu.SaveFlash()
 }

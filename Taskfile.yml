@@ -483,12 +483,15 @@ tasks:
     sources:
       - CMakeLists.txt
       - '*/main.c'
+      - bin2c.py
     generates:
       - 'build/hello.elf'
       - 'build/blinky.elf'
       - 'build/floatdemo.elf'
       - 'build/multicore.elf'
       - 'build/otp.elf'
+      - 'build/ota.elf'
+      - 'build/ota2.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
@@ -523,6 +526,14 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/otp.elf -seconds 0.3 -quiet -expect "OTP demo: ok" -stop-on-expect -otp-dump {{.BUILD}}/otp.json'
+
+  c:ota:
+    desc: Run the single-slot OTA demo, then boot the updated image from flash
+    deps: [build, c:build]
+    cmds:
+      - rm -f {{.BUILD}}/ota-flash.bin
+      - '{{.EMU}} -fw firmware/c/build/ota.elf -flash {{.BUILD}}/ota-flash.bin -seconds 2 -expect "ota v2 running" -stop-on-expect'
+      - '{{.EMU}} -flash {{.BUILD}}/ota-flash.bin -seconds 0.2 -quiet'
 
   clean:
     desc: Remove build outputs

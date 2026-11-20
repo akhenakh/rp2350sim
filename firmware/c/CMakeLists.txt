@@ -26,7 +26,24 @@ target_link_libraries(multicore pico_stdlib pico_multicore)
 add_executable(otp otp/main.c)
 target_link_libraries(otp pico_stdlib)
 
-foreach(app hello blinky floatdemo multicore otp)
+add_executable(ota2 ota2/main.c)
+target_link_libraries(ota2 pico_stdlib)
+
+set(OTA2_BIN ${CMAKE_CURRENT_BINARY_DIR}/ota2.bin)
+set(OTA2_IMAGE_C ${CMAKE_CURRENT_BINARY_DIR}/ota2_image.c)
+add_custom_command(
+    OUTPUT ${OTA2_IMAGE_C}
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/bin2c.py ${OTA2_BIN} ${OTA2_IMAGE_C} ota2_bin
+    DEPENDS ota2 ${OTA2_BIN}
+    COMMENT "Embedding ota2.bin in the OTA updater"
+    VERBATIM)
+set_source_files_properties(${OTA2_IMAGE_C} PROPERTIES GENERATED TRUE)
+
+add_executable(ota ota/main.c ${OTA2_IMAGE_C})
+target_link_libraries(ota pico_stdlib hardware_flash)
+add_dependencies(ota ota2)
+
+foreach(app hello blinky floatdemo multicore otp ota ota2)
     pico_enable_stdio_uart(${app} 1)
     pico_enable_stdio_usb(${app} 0)
     pico_add_extra_outputs(${app})

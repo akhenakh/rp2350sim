@@ -28,23 +28,28 @@ type PinInfo struct {
 
 // MachineState is a consistent copy of the machine state for one UI frame.
 type MachineState struct {
-	Pins       [48]PinInfo
-	Cycles     uint64
-	PC, SP     uint32
-	Halted     bool
-	Running    bool
-	Firmware   string
-	Err        string
-	LCD        *image.RGBA
-	Console    string
-	ConsolePos int64
-	WSColors   []color.RGBA
-	WSFrames   uint64
-	WSEnabled  bool
-	EthKind    string
-	Network    *devices.NetworkInfo
-	EthLog     []string
-	Serial     []string
+	Pins        [48]PinInfo
+	Cycles      uint64
+	PC, SP      uint32
+	Halted      bool
+	Running     bool
+	Firmware    string
+	FlashPath   string
+	Boots       uint64
+	FlashWrites uint64
+	BootEntry   uint32
+	ResetReason string
+	Err         string
+	LCD         *image.RGBA
+	Console     string
+	ConsolePos  int64
+	WSColors    []color.RGBA
+	WSFrames    uint64
+	WSEnabled   bool
+	EthKind     string
+	Network     *devices.NetworkInfo
+	EthLog      []string
+	Serial      []string
 
 	Touch     *TouchState
 	IMU       *IMUState
@@ -111,6 +116,8 @@ type Emu struct {
 	lcd        *devices.ST7789
 	img        *firmware.Image
 	fwPath     string
+	flashPath  string
+	lastBoots  uint64
 	errText    string
 	running    bool
 	console    []byte
@@ -219,7 +226,11 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	if b != nil {
 		e.scopePins = b.ScopePins()
 	}
-	e.loadLocked()
+	if e.img != nil || e.fwPath != "" {
+		e.rebootLocked()
+	} else {
+		e.loadLocked()
+	}
 }
 
 // SetTouch injects a touch point in panel coordinates (the CST816D's own
@@ -696,8 +707,80 @@ func (e *Emu) loadLocked() {
 		e.chip.LoadSegment(seg.Addr, seg.Data)
 	}
 	e.chip.Boot()
+	e.lastBoots = e.chip.BootCount()
 	e.console = e.console[:0]
 	e.consolePos = 0
+}
+
+// rebootLocked restarts the current flash image, preserving any self-update.
+func (e *Emu) rebootLocked() {
+	var flash []byte
+	if e.chip != nil {
+		flash = e.chip.FlashCopy()
+	}
+	e.resetChip()
+	if flash != nil {
+		copy(e.chip.Flash, flash)
+	}
+	e.chip.Boot()
+	e.lastBoots = e.chip.BootCount()
+	e.console = e.console[:0]
+	e.consolePos = 0
+}
+
+// SetFlashPath sets the raw flash backing file used to persist self-updates.
+func (e *Emu) SetFlashPath(path string) {
+	e.mu.Lock()
+	e.flashPath = path
+	e.mu.Unlock()
+}
+
+// SaveFlash writes the current flash array to the configured backing file.
+func (e *Emu) SaveFlash() {
+	e.mu.Lock()
+	path := e.flashPath
+	if path == "" || e.chip == nil {
+		e.mu.Unlock()
+		return
+	}
+	data := e.chip.FlashCopy()
+	e.mu.Unlock()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		slog.Error("flash save", slog.String("path", path), slog.Any("err", err))
+	}
+}
+
+// LoadFlash boots the vector table from a raw flash image without loading an
+// ELF. It is used to resume after a previous self-update.
+func (e *Emu) LoadFlash(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(data) > rp2350.FlashSize {
+		return fmt.Errorf("flash image is %d bytes, limit is %d", len(data), rp2350.FlashSize)
+	}
+	if len(data) < 8 {
+		return fmt.Errorf("flash image is too small to hold a vector table")
+	}
+	head := append([]byte(nil), data[:8]...)
+	check := &firmware.Image{Format: "flash", Segments: []firmware.Segment{{Addr: rp2350.FlashBase, Data: head}}}
+	if err := check.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.img = nil
+	e.fwPath = path
+	e.errText = ""
+	e.resetChip()
+	e.chip.LoadFlashImage(data)
+	e.chip.Boot()
+	e.lastBoots = e.chip.BootCount()
+	e.console = e.console[:0]
+	e.consolePos = 0
+	e.running = true
+	return nil
 }
 
 // Load reads a firmware image and starts running it.
@@ -735,11 +818,11 @@ func (e *Emu) RunFor(cycles uint64) {
 	}
 }
 
-// Reset restarts the loaded firmware from its initial state.
+// Reset restarts the current flash image, preserving any self-update.
 func (e *Emu) Reset() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.loadLocked()
+	e.rebootLocked()
 }
 
 // SetRunning starts or pauses execution.
@@ -770,12 +853,18 @@ func (e *Emu) loop() {
 		// The picker screen has no board yet; keep the machine idle so an
 		// empty reset vector is not executed in the background.
 		running := e.running && e.board != nil && e.chip != nil && !e.chip.Halted
+		boots := e.lastBoots
 		if running {
 			e.chip.Run(chunk)
+			boots = e.chip.BootCount()
 		}
 		e.mu.Unlock()
 		if running {
 			shirei.RequestNextFrame()
+		}
+		if boots != e.lastBoots {
+			e.lastBoots = boots
+			e.SaveFlash()
 		}
 	}
 }
@@ -791,6 +880,11 @@ func (e *Emu) Snapshot() MachineState {
 	s.Halted = e.chip.Halted
 	s.Running = e.running
 	s.Firmware = e.fwPath
+	s.FlashPath = e.flashPath
+	s.Boots = e.chip.BootCount()
+	s.FlashWrites = e.chip.FlashWrites()
+	s.BootEntry = e.chip.BootEntry()
+	s.ResetReason = e.chip.LastResetReason()
 	s.Err = e.errText
 	for i := range 48 {
 		s.Pins[i] = PinInfo{

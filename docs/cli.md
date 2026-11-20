@@ -164,9 +164,45 @@ rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 | `-otp PATH` | seed the OTP array from a JSON dump before boot |
 | `-otp-dump PATH` | write every programmed OTP row to a JSON file at exit |
+| `-flash PATH` | load a raw 16 MiB flash image and write it back after self-updates |
+| `-flash-out PATH` | write the final flash image to this path without loading one |
 
 `-sd-dir` and `-sd-image` are mutually exclusive. `-eth` and `-w6300` are
 mutually exclusive, as are `-lcd` and `-touch-lcd2`.
+
+## Flash and self-update
+
+Flash is a 16 MiB array that starts erased (`0xFF`) and implements page
+programming (`1 -> 0`) and 4 KiB sector erase. The Pico SDK's
+`flash_range_erase`/`flash_range_program` reach it through the synthetic
+bootrom services (`RE`, `RP`; `FO` for `flash_op`). A reset from the bootrom
+`reboot`, `AIRCR.SYSRESETREQ`, or the watchdog reboots the vector table at
+`0x10000000`.
+
+- `-flash PATH` loads a raw flash image if it exists and writes the final image
+  back after a reset and at exit. Without `-fw`, the runner boots the vector
+  table from the image, which is how a previous self-update is resumed.
+- `-flash-out PATH` only writes the final image, useful when the input is an
+  ELF and you want to compare the programmed bytes.
+- A self-update normally writes the new image over the first sectors. The
+  updating code must execute from SRAM (as the SDK flash routines do) because
+  the running image is erased.
+- The flash image is the full 16 MiB array; compare the application prefix with
+  the source image, for example:
+
+```sh
+size=$(wc -c < build/pico-c/ota2.bin)
+dd if=build/ota-flash.bin of=/tmp/prefix.bin bs=1 count="$size" 2>/dev/null
+cmp /tmp/prefix.bin build/pico-c/ota2.bin
+```
+
+The runner logs each reset (`reason`, `boot`, `entry`) and `flash saved`. The
+summary JSON includes `flash_path`, `boots`, `flash_writes`, `reset_reason` and
+`boot_entry`. `task c:ota` runs the single-slot demo in `firmware/c/ota`.
+
+This models a **single flat slot**. A/B slots, rollback and secure-boot
+validation are not implemented; the loader still requires a vector table at
+`0x10000000`.
 
 ## Network endpoints
 

@@ -126,12 +126,6 @@ func newTicks(c *Chip) *regBlock {
 	return newRegBlock(0x40108000, 0x100)
 }
 
-// ---- WATCHDOG ----
-
-func newWatchdog(c *Chip) *regBlock {
-	return newRegBlock(0x400D8000, 0x1000)
-}
-
 // ---- SYSINFO ----
 
 func newSysInfo(c *Chip) *regBlock {

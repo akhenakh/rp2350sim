@@ -258,8 +258,7 @@ func (n *NVIC) write(off, v uint32) {
 		n.aircr = v & 0xFFFF
 		if v&(1<<2) != 0 {
 			// SYSRESETREQ
-			n.chip.Reset()
-			n.chip.Boot()
+			n.chip.requestReset("software", 0)
 		}
 	case off == 0xD10:
 		n.scr = v

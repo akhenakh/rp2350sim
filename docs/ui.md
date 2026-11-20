@@ -37,6 +37,7 @@ Other startup options:
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--png PATH` | render one settled frame and exit (headless) |
+| `--flash PATH` | raw flash backing image; self-updates are written back here |
 | `--touch x,y` | inject a held touch at native panel coordinates |
 | `--touch-demo` | move a synthetic touch around the panel while the UI runs |
 | `--scope-zoom N`, `--scope-range V` | initial scope time zoom / full-scale volts |
@@ -150,7 +151,10 @@ same SPI bus.
 - **Board** — a stylised Pico 2 header diagram and the live GPIO table
   (function, direction, level). Click a GPIO chip in the scope to add it.
   Panels size themselves to the window: the board card list widens and the LCD
-  view scales with the window instead of sitting at a fixed size.
+  view scales with the window instead of sitting at a fixed size. After a
+  firmware self-update and reset, a banner names the flash image the session is
+  now running from and shows its boot number and entry point; the status line
+  replaces the initial ELF name with `(flash)`.
 - **LCD** — the ST7789 framebuffer, only for boards with `lcd`.
 - **Ethernet / Wi-Fi** — the guest identity (IP, mask, gateway, MAC), one row
   per socket and a live log for W5500, W6300, CH9120 or the virtual Wi-Fi
@@ -224,6 +228,8 @@ go run . --board pico2-analog --tab scope --run 0.02 --png ../../scope.png
 go run . --board pico2-analog --tab logic --run 0.05 --png ../../logic.png ../../build/protocols.elf
 go run . --board touch-lcd2 --tab sensors --touch-demo --width 1920 --height 1080 \
   --png ../../sensors.png ../../build/touchlcd.elf
+go run . --board pico2 --flash /tmp/ota-flash.bin --run 0.5 --png ../../ota.png \
+  ../../firmware/c/build/ota.elf
 ```
 
 `--run` advances virtual time synchronously (the UI does not step in the

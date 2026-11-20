@@ -129,6 +129,8 @@ func main() {
 		sdDir      = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
 		otpIn      = flag.String("otp", "", "load OTP rows from this JSON file before boot")
 		otpOut     = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
+		flashIn    = flag.String("flash", "", "load a raw flash image and write it back (enables self-update)")
+		flashOut   = flag.String("flash-out", "", "write the final raw flash image to this path")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
@@ -190,31 +192,57 @@ func main() {
 		}
 		defer pprof.StopCPUProfile()
 	}
-	if *path == "" {
+	if *path == "" && *flashIn == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	img, err := firmware.Load(*path)
-	if err != nil {
-		log.Error("firmware load failed", slog.String("path", *path), slog.Any("err", err))
-		os.Exit(1)
-	}
-	if err := img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
-		log.Error("unsupported firmware layout", slog.String("path", *path), slog.Any("err", err))
-		os.Exit(1)
-	}
-	if !*quiet {
-		log.Info("firmware loaded",
-			slog.String("path", *path),
-			slog.String("format", img.Format),
-			slog.Int("segments", len(img.Segments)),
-			slog.Int("bytes", img.Size()),
-			slog.String("entry", hex(img.Entry)))
+	var img *firmware.Image
+	format = "flash"
+	if *path != "" {
+		img, err = firmware.Load(*path)
+		if err != nil {
+			log.Error("firmware load failed", slog.String("path", *path), slog.Any("err", err))
+			os.Exit(1)
+		}
+		if err := img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
+			log.Error("unsupported firmware layout", slog.String("path", *path), slog.Any("err", err))
+			os.Exit(1)
+		}
+		format = img.Format
+		if !*quiet {
+			log.Info("firmware loaded",
+				slog.String("path", *path),
+				slog.String("format", img.Format),
+				slog.Int("segments", len(img.Segments)),
+				slog.Int("bytes", img.Size()),
+				slog.String("entry", hex(img.Entry)))
+		}
 	}
 
 	c := rp2350.New()
 	c.Logger = log
+	if *flashIn != "" {
+		data, ferr := os.ReadFile(*flashIn)
+		switch {
+		case ferr == nil:
+			if len(data) > len(c.Flash) {
+				log.Error("flash image too large", slog.String("path", *flashIn), slog.Int("bytes", len(data)))
+				os.Exit(1)
+			}
+			c.LoadFlashImage(data)
+			if !*quiet {
+				log.Info("flash loaded", slog.String("path", *flashIn), slog.Int("bytes", len(data)))
+			}
+		case os.IsNotExist(ferr) && img != nil:
+			if !*quiet {
+				log.Info("flash image missing; starting erased", slog.String("path", *flashIn))
+			}
+		default:
+			log.Error("flash load", slog.String("path", *flashIn), slog.Any("err", ferr))
+			os.Exit(1)
+		}
+	}
 	otpSeeded := 0
 	if *otpIn != "" {
 		otpSeeded, err = loadOTP(c, *otpIn)
@@ -234,13 +262,46 @@ func main() {
 	if os.Getenv("RP2350SIM_USB_LOG") != "" || os.Getenv("RP2350SIM_PIO_LOG") != "" {
 		c.Logger = debugLog()
 	}
-	for _, seg := range img.Segments {
-		c.LoadSegment(seg.Addr, seg.Data)
+	if img != nil {
+		for _, seg := range img.Segments {
+			c.LoadSegment(seg.Addr, seg.Data)
+		}
+	} else {
+		// Booting straight from a flash image: validate the vector table the
+		// same way a host-loaded firmware is validated.
+		head := append([]byte(nil), c.Flash[:8]...)
+		bootImg := &firmware.Image{Format: "flash", Segments: []firmware.Segment{{Addr: rp2350.FlashBase, Data: head}}}
+		if err := bootImg.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
+			log.Error("unsupported flash image", slog.String("path", *flashIn), slog.Any("err", err))
+			os.Exit(1)
+		}
 	}
 	c.Boot()
 	if !*core1 {
 		c.CPU1.Parked = true
 	}
+	flashPath := *flashOut
+	if flashPath == "" {
+		flashPath = *flashIn
+	}
+	savedWrites := ^uint64(0)
+	saveFlash := func() {
+		if flashPath == "" || c.FlashWrites() == savedWrites {
+			return
+		}
+		if err := os.WriteFile(flashPath, c.FlashCopy(), 0o644); err != nil {
+			log.Error("flash save", slog.String("path", flashPath), slog.Any("err", err))
+			return
+		}
+		savedWrites = c.FlashWrites()
+		if !*quiet {
+			log.Info("flash saved",
+				slog.String("path", flashPath),
+				slog.Int("bytes", len(c.Flash)),
+				slog.Uint64("writes", c.FlashWrites()))
+		}
+	}
+	lastBoot := c.BootCount()
 
 	var lcd *devices.ST7789
 	var lcdSPI = 1
@@ -564,9 +625,12 @@ func main() {
 			n, _ := strconv.Atoi(*regStr)
 			watchReg = n
 		}
-		maxAddr := img.MaxAddr()
+		maxAddr := uint32(0)
+		if img != nil {
+			maxAddr = img.MaxAddr()
+		}
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
-			if pc >= maxAddr && pc < rp2350.FlashBase+rp2350.FlashSize {
+			if img != nil && pc >= maxAddr && pc < rp2350.FlashBase+rp2350.FlashSize {
 				log.Error("pc outside image",
 					slog.String("pc", hex(pc)), slog.String("lr", hex(cpu.R[14])), slog.String("sp", hex(cpu.R[13])))
 				start := 0
@@ -801,6 +865,14 @@ func main() {
 			c.Run(n)
 			runCycles -= n
 			netLog.report(w5500, w6300, ch9120)
+			if b := c.BootCount(); b != lastBoot {
+				lastBoot = b
+				log.Info("reset",
+					slog.Uint64("boot", b),
+					slog.String("reason", c.LastResetReason()),
+					slog.String("entry", hex(c.BootEntry())))
+				saveFlash()
+			}
 			flushUSB()
 			if *stdinFlag {
 				drainStdin()
@@ -811,6 +883,14 @@ func main() {
 		for i := 0; i < *sampleN; i++ {
 			c.Run(10_000_000)
 			netLog.report(w5500, w6300, ch9120)
+			if b := c.BootCount(); b != lastBoot {
+				lastBoot = b
+				log.Info("reset",
+					slog.Uint64("boot", b),
+					slog.String("reason", c.LastResetReason()),
+					slog.String("entry", hex(c.BootEntry())))
+				saveFlash()
+			}
 			log.Info("sample",
 				slog.Int("index", i),
 				slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])),
@@ -822,6 +902,7 @@ func main() {
 		}
 	}
 	netLog.report(w5500, w6300, ch9120)
+	saveFlash()
 	wall := time.Since(start)
 	halted := c.CPU0.Halted || c.CPU1.Halted || c.Halted
 	missing := expects.missing()
@@ -949,9 +1030,14 @@ func main() {
 			TimedOut       bool                  `json:"wall_timed_out"`
 			ExitCode       int                   `json:"exit_code"`
 			Network        []devices.NetworkInfo `json:"network,omitempty"`
+			FlashPath      string                `json:"flash_path,omitempty"`
+			Boots          uint64                `json:"boots"`
+			FlashWrites    uint64                `json:"flash_writes"`
+			ResetReason    string                `json:"reset_reason,omitempty"`
+			BootEntry      uint32                `json:"boot_entry,omitempty"`
 		}{
 			Firmware:       *path,
-			Format:         img.Format,
+			Format:         format,
 			Cycles:         c.Cycles,
 			VirtualSeconds: float64(c.Cycles) / 150e6,
 			WallSeconds:    wall.Seconds(),
@@ -968,6 +1054,11 @@ func main() {
 			TimedOut:       timedOut,
 			ExitCode:       exitCode,
 			Network:        netLog.infos(w5500, w6300, ch9120),
+			FlashPath:      flashPath,
+			Boots:          c.BootCount(),
+			FlashWrites:    c.FlashWrites(),
+			ResetReason:    c.LastResetReason(),
+			BootEntry:      c.BootEntry(),
 		}
 		if c.CPU0.Halted {
 			sum.HaltReason = c.CPU0.HaltReason

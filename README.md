@@ -1,9 +1,9 @@
 # rp2350sim
 
-A Go emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodified
-`tinygo build -target=pico2` firmware, with a desktop UI showing the board state.
+An emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodified
+Pico C SDK and `tinygo build -target=pico2` firmware, with a desktop UI showing the board state.
 
-Status: runs real TinyGo programs end to end — package initialisation, the task
+Status: runs real programs end to end, package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
 DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a
 CST816D touch controller, a QMI8658 IMU, a microSD card model that can be
@@ -11,6 +11,12 @@ backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE
 firmware boots through the same vector table and runs its runtime, UART stdio,
 GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33
 interpreter is checked against QEMU instruction by instruction.
+
+Fully tested on Linux & Mac OSX.
+
+## Use of AI
+This project was created using AI, cross checked against existing implementations, unit tested and smoke tested , CI guards.  
+Your best bet is to try and see if it's running your code properly, send bug reports if you want the tool to improve.
 
 ## Layout
 
@@ -72,6 +78,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
 | `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
 | `task c:otp` | run the C OTP demo and dump the programmed array |
+| `task c:ota` | run the single-slot self-update demo and reboot the new image |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task clean` | remove `build/` |
 
@@ -109,6 +116,7 @@ Useful flags:
 | `-peek ADDR` | print a memory word at exit |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 | `-otp PATH`, `-otp-dump PATH` | seed / write back the OTP array (JSON) |
+| `-flash PATH`, `-flash-out PATH` | load / write back the raw 16 MiB flash image |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
@@ -183,8 +191,6 @@ register map and status/interrupt registers differ from the W5500, and it has
 32 KB of TX and RX buffer per direction. UDP firmware must call the driver's
 `Socket`/`Bind`/`Connect`/`Send` directly: TinyGo's `net.DialUDP` loses the
 destination address on its second netdev call in this build (TCP is fine).
-
-See `.operator/specs/hardware.md` for the board wiring and the remaining gaps.
 
 ## Desktop UI
 
@@ -297,10 +303,10 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 - The default `pico2` build does not launch core 1. With
   `tinygo build -scheduler=cores` the runtime starts core 1 through the SIO
   FIFO; both cores then run tasks (see `firmware/cores` and `task run:cores`).
-- Time is virtual and one instruction is one cycle; throughput is about 160M
-  cycles/s (faster than the emulated 150 MHz clock), so firmware runs at or
-  above real time. `-cpuprofile` writes a Go CPU profile.
-- Hardware notes, board wiring and design contracts live in `.operator/specs/`.
+- Time is virtual and one instruction is one cycle. Idle firmware fast-forwards
+  to the next microsecond tick, so sleeps cost almost nothing; a compute-bound
+  loop runs at about 90M instructions/s, and blinky's 2s program finishes in
+  ~0.06s of wall time. `-cpuprofile` writes a Go CPU profile.
 
 ## References
 

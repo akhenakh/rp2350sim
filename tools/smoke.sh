@@ -248,6 +248,28 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		else
 			bad "UI OTP tab" "$(cat "$BUILD/smoke.log")"
 		fi
+		rm -f "$BUILD/ota-flash.bin" "$BUILD/ota-prefix.bin" "$BUILD/ota-ui-flash.bin"
+		out=$("$EMU" -fw "$BUILD/pico-c/ota.elf" -flash "$BUILD/ota-flash.bin" -seconds 2 \
+			-expect "ota v2 running" -stop-on-expect 2>&1)
+		contains "OTA self-update boots v2" "ota v2 running" "$out"
+		contains "OTA reset logged" '"msg":"reset"' "$out"
+		size=$(wc -c <"$BUILD/pico-c/ota2.bin" | tr -d ' ')
+		dd if="$BUILD/ota-flash.bin" of="$BUILD/ota-prefix.bin" bs=1 count="$size" 2>/dev/null
+		if cmp -s "$BUILD/ota-prefix.bin" "$BUILD/pico-c/ota2.bin"; then
+			ok "OTA flash image matches v2"
+		else
+			bad "OTA flash image" "first $size bytes differ"
+		fi
+		out=$("$EMU" -flash "$BUILD/ota-flash.bin" -seconds 0.2 -quiet 2>&1)
+		contains "OTA flash boots without ELF" "ota v2 running" "$out"
+		if (cd cmd/simui && go run . --board pico2 --flash "../../$BUILD/ota-ui-flash.bin" --run 0.5 \
+			--width 1920 --height 1080 --png "../../$BUILD/ota-ui-smoke.png" \
+			"../../$BUILD/pico-c/ota.elf" >/dev/null 2>&1) &&
+			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/ota-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+			ok "UI self-update banner"
+		else
+			bad "UI self-update banner" "$(cat "$BUILD/smoke.log")"
+		fi
 		out=$("$EMU" -fw "$BUILD/pico-c/blinky.elf" -seconds 0.6 -trace-pins 25 2>&1)
 		n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
 		if [ "$n" -ge 2 ]; then ok "C blinky toggles GP25 ($n edges)"; else bad "C blinky GP25" "$out"; fi

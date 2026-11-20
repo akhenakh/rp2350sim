@@ -73,6 +73,7 @@ type Chip struct {
 	uart [2]*uartBlock
 	dma  *dmaBlock
 	otp  *otpBlock
+	wd   *watchdogBlock
 	// pioActive has a bit per PIO block with at least one enabled state
 	// machine, so the per-cycle tick skips idle blocks.
 	pioActive uint8
@@ -107,6 +108,16 @@ type Chip struct {
 	rom      *bootROM
 	booted   bool
 
+	// Flash programming counters and reset bookkeeping for OTA self-updates.
+	flashWrites        uint64
+	boots              uint64
+	resetReason        string
+	bootEntry          uint32
+	bootSP             uint32
+	pendingReset       bool
+	pendingResetAt     uint64
+	pendingResetReason string
+
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
 	// OnUnhandled is called for each unmapped access (may be nil).
@@ -127,13 +138,18 @@ func fmtHex(v uint32) string { return fmt.Sprintf("%#08x", v) }
 
 // New creates a chip with zeroed memories.
 func New() *Chip {
+	flash := make([]byte, FlashSize)
+	for i := range flash {
+		flash[i] = flashErased
+	}
 	c := &Chip{
-		Flash:     make([]byte, FlashSize),
-		SRAM:      make([]byte, SRAMSize),
-		ROM:       make([]byte, ROMSize),
-		Logger:    slog.New(slog.DiscardHandler),
-		Unhandled: map[uint32]uint32{},
-		byBase:    map[uint32]*regBlock{},
+		Flash:       flash,
+		SRAM:        make([]byte, SRAMSize),
+		ROM:         make([]byte, ROMSize),
+		Logger:      slog.New(slog.DiscardHandler),
+		Unhandled:   map[uint32]uint32{},
+		byBase:      map[uint32]*regBlock{},
+		resetReason: "power-on",
 	}
 	c.rom = installBootROM(c)
 	c.Pins = NewPinState()
@@ -156,7 +172,8 @@ func New() *Chip {
 	c.addRegBlock(newPLL(c, 0x40058000))
 	c.addRegBlock(newTicks(c))
 	c.addRegBlock(newBootRAM(c))
-	c.addRegBlock(newWatchdog(c))
+	c.wd = newWatchdog(c)
+	c.addRegBlock(c.wd.block)
 	c.addRegBlock(newSysInfo(c))
 	c.addRegBlock(newTBMAN(c))
 	c.addRegBlock(newROSC(c))
@@ -245,6 +262,10 @@ func (c *Chip) canIdleSkip() bool {
 
 // Step advances the machine by one cycle.
 func (c *Chip) Step() {
+	if c.pendingReset && c.Cycles >= c.pendingResetAt {
+		c.applyReset()
+		return
+	}
 	if c.Halted {
 		return
 	}
@@ -327,6 +348,9 @@ func (c *Chip) tickPeripherals() {
 		if c.pwm != nil {
 			c.pwm.tick(now)
 		}
+		if c.wd != nil {
+			c.wd.tick(now)
+		}
 	}
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
@@ -365,6 +389,7 @@ func (c *Chip) Reset() {
 	c.Cycles = 0
 	c.Halted = false
 	c.core = 0
+	c.pendingReset = false
 	c.CPU0.Reset()
 	c.CPU1.Reset()
 	c.CPU0.Parked = false
@@ -376,8 +401,49 @@ func (c *Chip) Reset() {
 	}
 	c.io.reset()
 	c.sio.reset()
+	if c.dma != nil {
+		c.dma.active = 0
+	}
+	c.pioActive = 0
+	for _, p := range c.pio {
+		if p != nil {
+			p.writeCtrl(0)
+		}
+	}
+	for _, u := range c.uart {
+		if u != nil {
+			u.irqPending.Store(false)
+		}
+	}
+	if c.wd != nil {
+		c.wd.running = false
+		c.wd.deadline = 0
+	}
 	if c.otp != nil {
 		c.otp.resetLockState()
+	}
+}
+
+// requestReset schedules a chip reset. reason is reported to the UI and CLI;
+// delayCycles lets the bootrom's reboot(delay_ms) behave like hardware.
+func (c *Chip) requestReset(reason string, delayCycles uint64) {
+	at := c.Cycles + delayCycles
+	if c.pendingReset && at >= c.pendingResetAt {
+		return
+	}
+	c.pendingReset = true
+	c.pendingResetAt = at
+	c.pendingResetReason = reason
+}
+
+// applyReset performs a pending reset and boots from the vector table in flash.
+func (c *Chip) applyReset() {
+	reason := c.pendingResetReason
+	c.pendingReset = false
+	c.Boot()
+	c.resetReason = reason
+	if reason == "watchdog" && c.wd != nil {
+		c.wd.reason |= wdReasonTimer
 	}
 }
 
@@ -387,7 +453,20 @@ func (c *Chip) Boot() {
 	c.booted = true
 	c.CPU0.SetVectorTable(FlashBase)
 	c.CPU1.Parked = true
+	c.boots++
+	c.bootSP = c.CPU0.MSP
+	c.bootEntry = c.CPU0.R[15]
 }
+
+// BootCount is the number of times the chip has booted, including self-updates.
+func (c *Chip) BootCount() uint64 { return c.boots }
+
+// LastResetReason describes the most recent boot.
+func (c *Chip) LastResetReason() string { return c.resetReason }
+
+// BootEntry and BootSP are the vector table values of the current boot.
+func (c *Chip) BootEntry() uint32 { return c.bootEntry }
+func (c *Chip) BootSP() uint32    { return c.bootSP }
 
 // LoadImage copies a flat binary into flash at offset 0.
 func (c *Chip) LoadImage(data []byte) {

@@ -101,14 +101,14 @@ func installBootROM(c *Chip) *bootROM {
 	// need to update the backing array.
 	b.addFunc("RE", b.stubFlashErase)
 	b.addFunc("RP", b.stubFlashProgram)
-	b.addFunc("FC", b.stubOK) // flush cache
-	b.addFunc("CX", b.stubOK) // enter command XIP
-	b.addFunc("EX", b.stubOK) // exit XIP
-	b.addFunc("IF", b.stubOK) // connect internal flash
-	b.addFunc("FO", b.stubOK) // flash op
-	b.addFunc("FA", b.stubOK) // runtime to storage address
-	b.addFunc("RA", b.stubOK) // reset address translation
-	b.addFunc("XM", b.stubOK) // select XIP read mode
+	b.addFunc("FC", b.stubOK)      // flush cache
+	b.addFunc("CX", b.stubOK)      // enter command XIP
+	b.addFunc("EX", b.stubOK)      // exit XIP
+	b.addFunc("IF", b.stubOK)      // connect internal flash
+	b.addFunc("FO", b.stubFlashOp) // flash op
+	b.addFunc("FA", b.stubOK)      // runtime to storage address
+	b.addFunc("RA", b.stubOK)      // reset address translation
+	b.addFunc("XM", b.stubOK)      // select XIP read mode
 
 	// Partition and secure-boot services are not modelled; report them as
 	// unsupported rather than returning garbage.
@@ -286,9 +286,14 @@ func (b *bootROM) stubGetSysInfo(c *Chip, cpu *m33.CPU) {
 }
 
 func (b *bootROM) stubReboot(c *Chip, cpu *m33.CPU) {
-	flags := cpu.R[0]
-	c.Logger.Warn("bootrom reboot requested", slog.String("flags", fmt.Sprintf("%#08x", flags)))
-	cpu.Halt(bootromRebootReason)
+	flags, delayMS := cpu.R[0], cpu.R[1]
+	if flags != 0 {
+		c.Logger.Debug("bootrom reboot type not modelled; resetting to flash",
+			slog.String("flags", fmtHex(flags)))
+	}
+	c.Logger.Debug("bootrom reboot", slog.Uint64("delay_ms", uint64(delayMS)))
+	c.requestReset("bootrom", uint64(delayMS)*cyclesPerMicrosecond)
+	cpu.R[0] = bootromOK
 }
 
 func (b *bootROM) stubUSBBoot(c *Chip, cpu *m33.CPU) {
@@ -361,41 +366,88 @@ func (b *bootROM) stubOTPAccess(c *Chip, cpu *m33.CPU) {
 	cpu.R[0] = bootromOK
 }
 
-func (b *bootROM) flashRange(addr uint32, n uint32) (int, bool) {
-	if addr < FlashBase {
-		return 0, false
-	}
-	off := int(addr - FlashBase)
-	if off < 0 || off > len(b.chip.Flash) || n > uint32(len(b.chip.Flash)-off) {
-		return 0, false
-	}
-	return off, true
-}
-
+// The RP2350 flash ROM services take flash offsets, not bus addresses:
+//
+//	flash_range_erase(offset, count, block_size, erase_cmd)
+//	flash_range_program(offset, src, count)
+//
+// Sizes are validated against the 16 MiB array; the block size and erase
+// command are advisory because every erase here produces 0xFF.
 func (b *bootROM) stubFlashErase(c *Chip, cpu *m33.CPU) {
-	addr, count := cpu.R[0], cpu.R[1]
-	off, ok := b.flashRange(addr, count)
-	if !ok {
-		c.Logger.Warn("bootrom flash erase out of range", slog.String("addr", fmt.Sprintf("%#08x", addr)), slog.Uint64("bytes", uint64(count)))
+	offset, count := cpu.R[0], cpu.R[1]
+	if !c.eraseFlashRange(offset, count) {
+		c.Logger.Warn("bootrom flash erase out of range",
+			slog.String("offset", fmtHex(offset)), slog.Uint64("bytes", uint64(count)))
 		cpu.R[0] = bootromErrInvalidAddr
 		return
 	}
-	for i := 0; i < int(count); i++ {
-		c.Flash[off+i] = 0xFF
-	}
+	c.Logger.Debug("flash erase", slog.String("offset", fmtHex(offset)), slog.Uint64("bytes", uint64(count)))
 	cpu.R[0] = bootromOK
 }
 
 func (b *bootROM) stubFlashProgram(c *Chip, cpu *m33.CPU) {
-	addr, src, count := cpu.R[0], cpu.R[1], cpu.R[2]
-	off, ok := b.flashRange(addr, count)
-	if !ok {
-		c.Logger.Warn("bootrom flash program out of range", slog.String("addr", fmt.Sprintf("%#08x", addr)), slog.Uint64("bytes", uint64(count)))
+	offset, src, count := cpu.R[0], cpu.R[1], cpu.R[2]
+	if count == 0 {
+		cpu.R[0] = bootromOK
+		return
+	}
+	if count > uint32(len(c.Flash)) || offset > uint32(len(c.Flash))-count {
+		c.Logger.Warn("bootrom flash program out of range",
+			slog.String("offset", fmtHex(offset)), slog.Uint64("bytes", uint64(count)))
 		cpu.R[0] = bootromErrInvalidAddr
 		return
 	}
-	for i := 0; i < int(count); i++ {
-		c.Flash[off+i] = c.Read8(src + uint32(i))
+	data := make([]byte, count)
+	for i := range data {
+		data[i] = c.Read8(src + uint32(i))
+	}
+	if !c.programFlashRange(offset, data) {
+		cpu.R[0] = bootromErrInvalidAddr
+		return
+	}
+	c.Logger.Debug("flash program", slog.String("offset", fmtHex(offset)), slog.Uint64("bytes", uint64(count)))
+	cpu.R[0] = bootromOK
+}
+
+// stubFlashOp implements the bootrom flash_op(flags, addr, size, buf) service
+// used by picotool-style code: flags.bit0 selects runtime vs storage
+// addresses and bits 16:18 select erase, program or read.
+func (b *bootROM) stubFlashOp(c *Chip, cpu *m33.CPU) {
+	flags, addr, size, buf := cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3]
+	op := (flags >> 16) & 0x7
+	if flags&1 != 0 { // runtime address
+		if addr < FlashBase || addr > FlashBase+uint32(len(c.Flash)) {
+			cpu.R[0] = bootromErrInvalidAddr
+			return
+		}
+		addr -= FlashBase
+	}
+	if addr > uint32(len(c.Flash)) || size > uint32(len(c.Flash))-addr {
+		cpu.R[0] = bootromErrInvalidAddr
+		return
+	}
+	switch op {
+	case 0: // erase
+		if !c.eraseFlashRange(addr, size) {
+			cpu.R[0] = bootromErrInvalidAddr
+			return
+		}
+	case 1: // program
+		data := make([]byte, size)
+		for i := range data {
+			data[i] = c.Read8(buf + uint32(i))
+		}
+		if !c.programFlashRange(addr, data) {
+			cpu.R[0] = bootromErrInvalidAddr
+			return
+		}
+	case 2: // read
+		for i := range size {
+			c.Write8(buf+i, c.Flash[addr+i])
+		}
+	default:
+		cpu.R[0] = bootromErrInvalidArg
+		return
 	}
 	cpu.R[0] = bootromOK
 }
