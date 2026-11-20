@@ -107,3 +107,19 @@ func TestPIOWS2812PulseWidths(t *testing.T) {
 		t.Fatalf("pulse widths not distinguishable: min=%d max=%d all=%v", min, max, pulses)
 	}
 }
+
+// TestPIORestartBitsSelfClear checks the write-only restart strobes, which
+// the SDK sets without clearing; leaving them latched re-restarts the machine
+// on a later read-modify-write and loses the program entry point.
+func TestPIORestartBitsSelfClear(t *testing.T) {
+	c := New()
+	c.Write32(pioBase0, 1<<4) // SM0 restart
+	if got := c.Read32(pioBase0); got&(1<<4) != 0 {
+		t.Fatalf("restart bit latched: %#x", got)
+	}
+	c.pio[0].sm[0].pc = 24
+	c.Write32(pioBase0+0x2000, 1) // SET enable SM0
+	if pc := c.pio[0].sm[0].pc; pc != 24 {
+		t.Fatalf("enable restarted SM0 to wrap target %d, want 24", pc)
+	}
+}

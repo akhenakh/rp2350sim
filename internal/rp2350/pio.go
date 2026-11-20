@@ -206,6 +206,11 @@ func (p *pioBlock) writeCtrl(v uint32) {
 			s.acc = 0
 		}
 	}
+	// SM_RESTART and CLKDIV_RESTART are self-clearing strobes. Leaving them
+	// set makes a later read-modify-write (SET alias) re-restart the machine
+	// and jump back to the wrap target, losing the program's entry point.
+	v &^= 0xFF0 // bits 4..11
+	p.block.regs[0] = v
 	p.active = active
 	bit := uint8(1) << uint(p.id)
 	if active != 0 {
