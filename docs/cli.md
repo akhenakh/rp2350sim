@@ -126,8 +126,10 @@ relevant.
 | `-expect TEXT` | fail (code 4) unless this console text appears; repeatable |
 | `-stop-on-expect` | stop as soon as all `-expect` strings have appeared |
 
-`-input`/`-input-file` are useful for firmware that waits for a command after
-boot; `-stdin` is for scripted sessions:
+`-input` sends the literal bytes you pass; it does not expand `\n`. Use the
+shell's ANSI-C quoting (`$'status\n'`), `-input-file`, or `-stdin` for a
+line ending. `-input`/`-input-file` are useful for firmware that waits for a
+command after boot; `-stdin` is for scripted sessions:
 
 ```sh
 printf 'help\nstatus\n' | rp2350sim -fw fw.elf -seconds 3 -stdin
@@ -143,7 +145,7 @@ Matching is streaming, so it works across chunk boundaries. Combined with
 `-stop-on-expect` it gives fast CI assertions:
 
 ```sh
-rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
+rp2350sim -fw fw.elf -seconds 5 -input $'status\n' \
   -expect 'status: ok' -stop-on-expect -quiet > fw.log
 ```
 
@@ -278,8 +280,12 @@ file or dump the result:
 
 ```sh
 rp2350sim -fw otp.elf -seconds 0.3 -otp-dump otp.json
-rp2350sim -fw otp.elf -seconds 0.3 -otp otp.json
+rp2350sim -fw reader.elf -seconds 0.3 -otp otp.json
 ```
+
+`firmware/c/otp` expects blank rows on its demo run; after a dump, rerunning
+that same demo reports that its rows are no longer blank. Use the dump to seed
+firmware that reads the rows instead.
 
 `-otp-dump` writes `{"writes": N, "rows": [{"row": 1024, "raw": "0x096548",
 "data": "0x6548", "ecc": "ok"}], "software_locked": [...]}`. `raw` is the
@@ -330,12 +336,15 @@ The address format is `uart:host:port` (multiple entries comma-separated). Port
 `0` asks the kernel for a free port; the assigned address is printed on stderr:
 
 ```
-uart bridge: uart1 listening on 127.0.0.1:39479
+msg="uart bridge listening" uart=1 addr=127.0.0.1:39479
 ```
 
 Connect with any TCP client (`nc`, `socat`, Python) and exchange bytes with the
-firmware's UART as if it were wired. The listener and client survive firmware
-resets in the UI but the headless runner is one process.
+firmware's UART as if it were wired. Start the client promptly: `-seconds` is
+virtual, so the headless process can finish its budget before a person gets
+around to connecting. Use the UI's `task ui:serial` for an interactive session.
+The listener and client survive firmware resets in the UI; the headless runner
+is one process.
 
 ### I2C/SPI devices over TCP
 

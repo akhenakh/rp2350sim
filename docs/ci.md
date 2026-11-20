@@ -46,12 +46,14 @@ For a command that must arrive after a slow boot:
 
 ```sh
 rp2350sim -fw firmware.elf -seconds 3 \
-  -input 'status\n' -input-at 800ms \
+  -input $'status\n' -input-at 800ms \
   -expect "status: ok" -quiet
 ```
 
-`-input-file` sends a file; `-input` and `-input-file` are concatenated. Input
-goes to both USB CDC and UART0, and USB delivery waits for enumeration.
+`-input-file` sends a file; `-input` and `-input-file` are concatenated. `-input`
+does not expand escapes, so use `$'status\n'`, a file, or `-stdin` for a line
+ending. Input goes to both USB CDC and UART0, and USB delivery waits for
+enumeration.
 
 For a serial protocol (or a firmware whose console is UART1), use a TCP bridge:
 

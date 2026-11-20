@@ -78,13 +78,14 @@ Expose either UART as a TCP server:
 ```sh
 rp2350sim -fw build/serialbridge.elf -seconds 30 \
   -serial-tcp 1:127.0.0.1:0
-# stderr: uart bridge listening uart=1 addr=127.0.0.1:39479
+# stderr: msg="uart bridge listening" uart=1 addr=127.0.0.1:39479
 nc 127.0.0.1 39479
 ```
 
 The format is `uart:host:port`, repeatable and comma-separated. Port `0`
 picks a free port and logs it. Bytes written to the socket enter the UART RX
-FIFO; firmware TX returns on the same connection.
+FIFO; firmware TX returns on the same connection. Connect promptly: virtual
+time runs fast, so use `task ui:serial` for an interactive session.
 
 `-logic-uart tx[,rx],baud` decodes a pin trace. Hardware UART traffic is also
 tapped automatically in the logic trace.
