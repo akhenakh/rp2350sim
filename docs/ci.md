@@ -96,6 +96,24 @@ This is how CI validates the PIO square wave (15 MHz, 50%), blink (2 Hz),
 the PIO blink frequencies and the PWM duty cycles. Build the subset on its own
 with `task picoexamples:build` (or `bash tools/picoexamples.sh build/pico-examples`).
 
+## Pull request reports
+
+The `ci` workflow runs on every pull request. It captures the full `task ci`
+output to `ci.log`, uploads it as the `ci-log` artifact, and a separate
+`report` job updates one PR comment (marked with
+`<!-- rp2350sim-smoke-report -->`) with:
+
+- the passed/failed counts and the CI job result;
+- a link to the workflow run and the head commit;
+- the failed checks;
+- a collapsed table of every smoke check.
+
+The comment is updated in place on each push, so a PR keeps a single report.
+The test job only has `contents: read`; the write token lives in the `report`
+job, which never executes PR code. Pull requests from forks are skipped by the
+report step because GitHub gives `pull_request` runs from forks a read-only
+token; their checks still run and show in the PR's checks tab.
+
 ## Exit codes
 
 | code | action |

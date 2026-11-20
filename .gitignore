@@ -10,3 +10,5 @@ sdcards/
 logic-analyze-trace-*.txt
 
 dist/
+
+ci.log
