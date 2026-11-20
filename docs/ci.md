@@ -68,6 +68,11 @@ firmware expects first (for example `go run ./tools/ethhost`).
 
 ## Pico SDK examples and signal checks
 
+The SDK builds `pico_cxx_options` even for C-only programs, so the ARM
+toolchain needs its C++ headers. On Ubuntu install
+`libstdc++-arm-none-eabi-newlib` (the headers come with its `-dev` dependency);
+`--no-install-recommends` alone leaves `<cassert>` missing.
+
 `tools/picoexamples.sh` downloads a pinned `raspberrypi/pico-examples` snapshot
 (SDK 2.3.1, commit `0d62f75`) and builds the subset the emulator supports:
 hello world over UART, blink, UART, timer, multicore, DMA, PIO, PWM, ADC,

@@ -14,6 +14,14 @@ TAG=${PICO_EXAMPLES_TAG:-sdk-2.3.1}
 : "${PICO_SDK_PATH:?PICO_SDK_PATH is not set}"
 export PICO_SDK_PATH
 
+# The SDK compiles pico_cxx_options even for C-only programs, so the ARM
+# toolchain needs its C++ headers. Ubuntu's libstdc++-arm-none-eabi-newlib is
+# skipped by --no-install-recommends unless it is named explicitly.
+if ! printf '#include <cassert>\n' | arm-none-eabi-g++ -x c++ -E - >/dev/null 2>&1; then
+	echo "picoexamples: arm-none-eabi-g++ cannot find its C++ headers; install libstdc++-arm-none-eabi-newlib" >&2
+	exit 1
+fi
+
 case "$TAG" in
 sdk-2.3.1) SHA=0d62f75bafc2c8120d3276c3343d1a9195e909e9 ;;
 *) SHA=$TAG ;; # allow a raw commit sha

@@ -33,7 +33,9 @@ jobs:
       - name: Install ARM toolchain and Pico SDK
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib
           git clone --depth 1 --branch 2.3.1 https://github.com/raspberrypi/pico-sdk.git "$HOME/pico-sdk"
           git -C "$HOME/pico-sdk" submodule update --init --depth 1
           echo "PICO_SDK_PATH=$HOME/pico-sdk" >> "$GITHUB_ENV"
