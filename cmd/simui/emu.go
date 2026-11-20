@@ -42,7 +42,7 @@ type MachineState struct {
 	WSFrames   uint64
 	WSEnabled  bool
 	EthKind    string
-	EthStatus  string
+	Network    *devices.NetworkInfo
 	EthLog     []string
 	Serial     []string
 
@@ -130,6 +130,8 @@ type Emu struct {
 	blPin   int
 	ethKind string
 	ethLog  panelLog
+	w5500   *devices.W5500
+	w6300   *devices.W6300
 	ch9120  *devices.CH9120
 
 	scopePins  []int
@@ -420,6 +422,9 @@ func (e *Emu) resetChip() {
 	e.blPin = -1
 	e.ch9120 = nil
 	e.ethKind = ""
+	e.w5500 = nil
+	e.w6300 = nil
+	e.ch9120 = nil
 	e.ethLog.reset()
 	e.frozen = frozenLogic{}
 	e.usbEvents = e.usbEvents[:0]
@@ -499,10 +504,12 @@ func (e *Emu) resetChip() {
 				if d.Kind == "w6300" {
 					eth := devices.NewW6300(c, d.CS)
 					eth.Logger = logEth
+					e.w6300 = eth
 					transfer, tick = eth.Transfer, eth.Tick
 				} else {
 					eth := devices.NewW5500(c, d.CS)
 					eth.Logger = logEth
+					e.w5500 = eth
 					transfer, tick = eth.Transfer, eth.Tick
 				}
 				attachSPI(d.SPI, d.CS, transfer)
@@ -859,8 +866,19 @@ func (e *Emu) Snapshot() MachineState {
 		s.WSFrames = e.ws.Frames()
 	}
 	s.EthKind = strings.ToUpper(e.ethKind)
-	if e.ch9120 != nil {
-		s.EthStatus = e.ch9120.Status()
+	switch {
+	case e.w5500 != nil:
+		info := e.w5500.NetworkInfo()
+		s.Network = &info
+	case e.w6300 != nil:
+		info := e.w6300.NetworkInfo()
+		s.Network = &info
+	case e.ch9120 != nil:
+		info := e.ch9120.NetworkInfo()
+		if e.ethKind == "wifi" {
+			info.Kind = "Wi-Fi (virtual)"
+		}
+		s.Network = &info
 	}
 	s.EthLog = e.ethLog.snapshot()
 	s.Serial = append([]string(nil), e.bridgeErrs...)

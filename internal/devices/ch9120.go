@@ -50,12 +50,13 @@ type CH9120 struct {
 	frame []byte
 	txBuf []byte
 
-	listener  net.Listener
-	conn      net.Conn
-	udp       *net.UDPConn
-	udpPeer   *net.UDPAddr
-	connected bool
-	gen       uint64
+	listener   net.Listener
+	conn       net.Conn
+	udp        *net.UDPConn
+	udpPeer    *net.UDPAddr
+	connected  bool
+	configured bool
+	gen        uint64
 
 	nextTick uint64
 	lastRST  bool
@@ -265,6 +266,12 @@ func (d *CH9120) handleCommand(cmd byte, p []byte) {
 		d.send([]byte{0x84, 0xc2, 0xe4, 0x05, 0x06, 0x07})
 	default:
 		d.send([]byte{0xaa})
+	}
+	switch cmd {
+	case 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16:
+		// The firmware has described a network; reports and the UI may now
+		// show it instead of the module defaults.
+		d.configured = true
 	}
 }
 

@@ -132,6 +132,7 @@ contains "W5500 TCP echo" "tcp echo:" "$out"
 contains "W5500 UDP" "udp: ok" "$out"
 contains "W5500 TCP server" 'server check 1: reply "pong\n"' "$log"
 contains "W5500 listener re-armed" 'server check 2: reply "pong\n"' "$log"
+contains "W5500 network advertised" "tcp/9002 listen host=127.0.0.1:9002" "$out"
 
 # --- W6300 Ethernet against the host helper --------------------------------
 if port_busy 9000; then
@@ -143,13 +144,21 @@ host=$!
 trap 'kill "$host" 2>/dev/null' EXIT
 sleep 0.5
 out=$("$EMU" -fw "$BUILD/w6300.elf" -seconds 6 -w6300 2>&1)
-kill "$host" 2>/dev/null || true
-trap - EXIT
 log=$(cat "$BUILD/ethhost-smoke.log")
 contains "W6300 TCP echo" "tcp echo:" "$out"
 contains "W6300 UDP" "udp: ok" "$out"
 contains "W6300 TCP server" 'server check 1: reply "pong\n"' "$log"
 contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
+contains "W6300 network advertised" "tcp/9002 listen host=127.0.0.1:9002" "$out"
+if (cd cmd/simui && go run . --board poe-eth --tab eth --run 0.5 \
+	--png "../../$BUILD/eth-ui-smoke.png" "../../$BUILD/w6300.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/eth-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI Ethernet tab"
+else
+	bad "UI Ethernet tab" "$(cat "$BUILD/smoke.log")"
+fi
+kill "$host" 2>/dev/null || true
+trap - EXIT
 
 # --- UI headless snapshot ---------------------------------------------------
 # --- CH9120 UART-to-Ethernet ----------------------------------------------
@@ -163,6 +172,7 @@ sleep 0.5
 out=$("$EMU" -fw "$BUILD/ch9120.elf" -seconds 1.5 -ch9120 2>&1)
 kill "$chhost" 2>/dev/null || true
 contains "CH9120 TCP echo" "echo: hello ch9120" "$out"
+contains "CH9120 network advertised" "tcp/2000 established" "$out"
 
 # --- virtual Wi-Fi netdev --------------------------------------------------
 "$BUILD/ethhost" >"$BUILD/ethhost-wifi.log" 2>&1 &
@@ -171,6 +181,7 @@ sleep 0.5
 out=$("$EMU" -fw "$BUILD/wifi.elf" -seconds 3 -ch9120 2>&1)
 kill "$wifihost" 2>/dev/null || true
 contains "virtual Wi-Fi netdev" "wifi echo: hello wifi" "$out"
+contains "virtual Wi-Fi network" "ip=10.0.0.5" "$out"
 
 # --- UART over TCP ----------------------------------------------------------
 "$EMU" -fw "$BUILD/serialbridge.elf" -seconds 4 -serial-tcp 1:127.0.0.1:0 \

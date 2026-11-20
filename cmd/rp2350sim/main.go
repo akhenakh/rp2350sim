@@ -305,6 +305,7 @@ func main() {
 
 	var w5500 *devices.W5500
 	var w6300 *devices.W6300
+	var ch9120 *devices.CH9120
 	if *w6300Flag {
 		w6300 = devices.NewW6300(c, 17)
 		c.CycleHooks = append(c.CycleHooks, w6300.Tick)
@@ -451,11 +452,11 @@ func main() {
 	}
 
 	if *ch9120Flag {
-		ch := devices.NewCH9120(c, 1, 18, 19, 17)
+		ch9120 = devices.NewCH9120(c, 1, 18, 19, 17)
 		if os.Getenv("RP2350SIM_CH9120_LOG") != "" {
-			ch.Logger = debugLog()
+			ch9120.Logger = debugLog()
 		}
-		ch.Attach()
+		ch9120.Attach()
 	}
 
 	var bridges []*devices.UARTBridge
@@ -764,6 +765,7 @@ func main() {
 		inputCycles = uint64(float64(*inputAt) / float64(time.Second) * 150_000_000)
 	}
 
+	netLog := &networkReporter{log: log}
 	start := time.Now()
 	timedOut := false
 	if *sampleN == 0 {
@@ -798,6 +800,7 @@ func main() {
 			n := min(runCycles, chunk)
 			c.Run(n)
 			runCycles -= n
+			netLog.report(w5500, w6300, ch9120)
 			flushUSB()
 			if *stdinFlag {
 				drainStdin()
@@ -807,6 +810,7 @@ func main() {
 	} else {
 		for i := 0; i < *sampleN; i++ {
 			c.Run(10_000_000)
+			netLog.report(w5500, w6300, ch9120)
 			log.Info("sample",
 				slog.Int("index", i),
 				slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])),
@@ -817,6 +821,7 @@ func main() {
 			}
 		}
 	}
+	netLog.report(w5500, w6300, ch9120)
 	wall := time.Since(start)
 	halted := c.CPU0.Halted || c.CPU1.Halted || c.Halted
 	missing := expects.missing()
@@ -925,24 +930,25 @@ func main() {
 
 	if *summaryOut != "" {
 		sum := struct {
-			Firmware       string   `json:"firmware"`
-			Format         string   `json:"format"`
-			Cycles         uint64   `json:"cycles"`
-			VirtualSeconds float64  `json:"virtual_seconds"`
-			WallSeconds    float64  `json:"wall_seconds"`
-			Halted         bool     `json:"halted"`
-			HaltReason     string   `json:"halt_reason,omitempty"`
-			Core0PC        uint32   `json:"core0_pc"`
-			Core0SP        uint32   `json:"core0_sp"`
-			Core1PC        uint32   `json:"core1_pc"`
-			Core1SP        uint32   `json:"core1_sp"`
-			Core1Parked    bool     `json:"core1_parked"`
-			IRQs           uint64   `json:"irqs"`
-			Core1Launches  uint64   `json:"core1_launches"`
-			ExpectMatched  bool     `json:"expectations_matched"`
-			ExpectMissing  []string `json:"missing_expectations,omitempty"`
-			TimedOut       bool     `json:"wall_timed_out"`
-			ExitCode       int      `json:"exit_code"`
+			Firmware       string                `json:"firmware"`
+			Format         string                `json:"format"`
+			Cycles         uint64                `json:"cycles"`
+			VirtualSeconds float64               `json:"virtual_seconds"`
+			WallSeconds    float64               `json:"wall_seconds"`
+			Halted         bool                  `json:"halted"`
+			HaltReason     string                `json:"halt_reason,omitempty"`
+			Core0PC        uint32                `json:"core0_pc"`
+			Core0SP        uint32                `json:"core0_sp"`
+			Core1PC        uint32                `json:"core1_pc"`
+			Core1SP        uint32                `json:"core1_sp"`
+			Core1Parked    bool                  `json:"core1_parked"`
+			IRQs           uint64                `json:"irqs"`
+			Core1Launches  uint64                `json:"core1_launches"`
+			ExpectMatched  bool                  `json:"expectations_matched"`
+			ExpectMissing  []string              `json:"missing_expectations,omitempty"`
+			TimedOut       bool                  `json:"wall_timed_out"`
+			ExitCode       int                   `json:"exit_code"`
+			Network        []devices.NetworkInfo `json:"network,omitempty"`
 		}{
 			Firmware:       *path,
 			Format:         img.Format,
@@ -961,6 +967,7 @@ func main() {
 			ExpectMissing:  missing,
 			TimedOut:       timedOut,
 			ExitCode:       exitCode,
+			Network:        netLog.infos(w5500, w6300, ch9120),
 		}
 		if c.CPU0.Halted {
 			sum.HaltReason = c.CPU0.HaltReason

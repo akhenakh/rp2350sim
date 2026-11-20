@@ -152,8 +152,11 @@ same SPI bus.
   Panels size themselves to the window: the board card list widens and the LCD
   view scales with the window instead of sitting at a fixed size.
 - **LCD** — the ST7789 framebuffer, only for boards with `lcd`.
-- **Ethernet / Wi-Fi** — socket state and a live log for W5500, W6300, CH9120
-  or the virtual Wi-Fi transport.
+- **Ethernet / Wi-Fi** — the guest identity (IP, mask, gateway, MAC), one row
+  per socket and a live log for W5500, W6300, CH9120 or the virtual Wi-Fi
+  transport. A listening socket shows both the emulated device address and the
+  **host address to connect to** (for example `connect to 127.0.0.1:9002`), so
+  the firmware can be exercised with `nc` or a browser.
 - **LEDs** — the last WS2812B frame as large swatches with their RGB values.
 - **Scope** — see below.
 - **Logic** — see below.

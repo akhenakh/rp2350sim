@@ -1091,8 +1091,8 @@ func ethPanel(snap MachineState) {
 			Filler(1)
 			Label(fmt.Sprintf("%d events", len(snap.EthLog)), FontSize(11))
 		})
-		if snap.EthStatus != "" {
-			Label(snap.EthStatus, FontSize(11), TextColor(140, 40, 65, 1))
+		if n := snap.Network; n != nil {
+			networkCard(n)
 		}
 		Container(Attrs(Grow(1), Expand, Gap(2), Pad(10), Corners(6), Clip,
 			Background(220, 12, 8, 1), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
@@ -1105,6 +1105,57 @@ func ethPanel(snap MachineState) {
 				Label(line, Fonts(Monospace...), FontSize(12), TextColor(140, 12, 80, 1))
 			}
 		})
+	})
+}
+
+// networkCard shows the guest identity and the host addresses that reach it.
+func networkCard(n *devices.NetworkInfo) {
+	Container(Attrs(Gap(4), Pad(12), Corners(6), Background(220, 12, 8, 1),
+		BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+		Container(Attrs(Row, CrossMid, Gap(12)), func() {
+			Label(n.Kind, FontSize(13), FontWeight(700))
+			if n.Mode != "" {
+				Label(n.Mode, FontSize(12), TextColor(140, 35, 70, 1))
+			}
+			Filler(1)
+			if n.IP != "" {
+				Label("ip "+n.IP, Fonts(Monospace...), FontSize(13))
+			}
+			if n.Mask != "" {
+				Label("mask "+n.Mask, Fonts(Monospace...), FontSize(12), TextColor(220, 6, 68, 1))
+			}
+			if n.Gateway != "" {
+				Label("gw "+n.Gateway, Fonts(Monospace...), FontSize(12), TextColor(220, 6, 68, 1))
+			}
+			if n.MAC != "" {
+				Label(n.MAC, Fonts(Monospace...), FontSize(11), TextColor(220, 6, 68, 1))
+			}
+		})
+		if !n.Configured {
+			Label("waiting for the firmware to configure the interface", FontSize(12), TextColor(220, 6, 62, 1))
+			return
+		}
+		if len(n.Sockets) == 0 {
+			Label("no sockets open yet", FontSize(12), TextColor(220, 6, 62, 1))
+			return
+		}
+		for _, s := range n.Sockets {
+			Container(Attrs(Row, CrossMid, Gap(12)), func() {
+				Label(s.Label(), Fonts(Monospace...), FontSize(13))
+				Label(s.State, FontSize(11), TextColor(220, 8, 72, 1))
+				if s.GuestAddr != "" {
+					Label("device "+s.GuestAddr, Fonts(Monospace...), FontSize(12), TextColor(220, 6, 68, 1))
+				}
+				if s.Peer != "" {
+					Label("peer "+s.Peer, Fonts(Monospace...), FontSize(12), TextColor(220, 6, 68, 1))
+				}
+				Filler(1)
+				if s.HostAddr != "" {
+					Label("connect to "+s.HostAddr, Fonts(Monospace...), FontSize(14),
+						FontWeight(600), TextColor(140, 45, 72, 1))
+				}
+			})
+		}
 	})
 }
 

@@ -63,6 +63,16 @@ The UI uses `sdcards/<board>` relative to its working directory by default.
 `-sd-image PATH` uses a raw FAT image instead; `image` and `dir` are mutually
 exclusive.
 
+## Network endpoints
+
+Ethernet and Wi-Fi sockets are backed by host sockets. A server firmware's
+listener binds the host's wildcard address on the guest's source port, so it is
+reachable at `127.0.0.1:<port>` (or a LAN address); the configured guest IP
+(`10.0.2.15` in the examples) is an emulated identity, not a host route. The
+runner logs `host=` and `guest=` addresses whenever the state changes, and the
+Ethernet/Wi-Fi tab shows the same per socket with the host address to connect
+to.
+
 ## Waveshare RP2350-POE-ETH (W6300)
 
 - W6300 on SPI0: SCK GP18, MOSI GP19, MISO GP16, CS GP17.

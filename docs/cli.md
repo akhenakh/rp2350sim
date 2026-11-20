@@ -168,6 +168,34 @@ rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
 `-sd-dir` and `-sd-image` are mutually exclusive. `-eth` and `-w6300` are
 mutually exclusive, as are `-lcd` and `-touch-lcd2`.
 
+## Network endpoints
+
+The W5500, W6300 and CH9120 models bind their TCP/UDP listeners on the host, so
+a server firmware is reachable from this machine even though its guest IP is
+emulated. Whenever the network state changes (firmware configuration, listen,
+connect, accept, close), the runner logs one line:
+
+```json
+{"msg":"network","status":"W6300 ip=10.0.2.15 mask=255.255.255.0 gw=10.0.2.2 mac=02:11:22:33:44:55 tcp/9002 listen host=127.0.0.1:9002 guest=10.0.2.15:9002"}
+```
+
+- `host=` is the address to connect to from this machine. A wildcard listener
+  is reported as `127.0.0.1:<port>`; the guest IP is not routable from the host.
+- `guest=` is the emulated device's `IP:port`, useful when matching firmware
+  logs or board documentation.
+- `peer=` appears on outbound or accepted connections.
+- The CH9120 line includes `mode=tcp-server`, `tcp-client`, `udp-server` or
+  `udp-client`; the virtual Wi-Fi transport uses the same module.
+
+The line is logged at info level, so `-log-level warn` suppresses it. The
+`-summary-file` JSON includes the same data under `network`:
+
+```json
+"network": [{"kind":"W6300","configured":true,"ip":"10.0.2.15",
+  "sockets":[{"proto":"tcp","state":"listen","local_port":9002,
+  "guest_addr":"10.0.2.15:9002","host_addr":"127.0.0.1:9002"}]}]
+```
+
 ## OTP
 
 The RP2350 OTP array is modelled as 4096 rows of 24 bits (16 data bits plus
