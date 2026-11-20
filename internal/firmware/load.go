@@ -5,6 +5,7 @@ import (
 	"debug/elf"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -60,7 +61,6 @@ func loadUF2(data []byte) (*Image, error) {
 		return nil, fmt.Errorf("uf2: size %d is not a multiple of 512", len(data))
 	}
 	img := &Image{Format: "uf2"}
-	seen := map[uint32]bool{}
 	for off := 0; off < len(data); off += 512 {
 		blk := data[off : off+512]
 		if binary.LittleEndian.Uint32(blk[0:]) != uf2MagicStart0 ||
@@ -100,12 +100,10 @@ func loadUF2(data []byte) (*Image, error) {
 			last := &img.Segments[n-1]
 			if last.Addr+uint32(len(last.Data)) == addr {
 				last.Data = append(last.Data, payload...)
-				seen[addr] = true
 				continue
 			}
 		}
 		img.Segments = append(img.Segments, Segment{Addr: addr, Data: append([]byte(nil), payload...)})
-		seen[addr] = true
 	}
 	if len(img.Segments) == 0 {
 		return nil, fmt.Errorf("uf2: no data blocks")
@@ -140,9 +138,12 @@ type sliceReaderAt []byte
 
 func (s sliceReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	if off < 0 || off > int64(len(s)) {
-		return 0, fmt.Errorf("read past end")
+		return 0, io.EOF
 	}
 	n := copy(p, s[off:])
+	if n < len(p) {
+		return n, io.EOF
+	}
 	return n, nil
 }
 
