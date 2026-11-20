@@ -45,6 +45,8 @@ var (
 	busTermErrs        = map[string]string{}
 	busInput           string
 	busSel             int
+	busAutoConnect     bool
+	busAnswers         = map[string]string{}
 	touchDemo          bool
 	touchDemoStart     time.Time
 	touchDemoAt        time.Time
@@ -264,7 +266,57 @@ func selectBoard(b *BoardDef) {
 	activeTab = tabBoard
 	scopePins = b.ScopePins()
 	emu.SetBoard(b)
+	if busAutoConnect {
+		autoConnectBusTerminals()
+	}
 	RequestNextFrame()
+}
+
+// autoConnectBusTerminals attaches the Bus tab's device side to every bridge
+// listener. It exists for headless snapshots and scripted demos, where there is
+// no pointer to press "Connect terminal"; normal sessions stay manual.
+func autoConnectBusTerminals() {
+	for _, info := range emu.BusBridges() {
+		if info.Listen == "" {
+			continue
+		}
+		if _, ok := busTerms[info.Listen]; ok {
+			continue
+		}
+		t, err := NewBusTerminal(info.Listen)
+		if err != nil {
+			busTermErrs[info.Listen] = err.Error()
+			continue
+		}
+		busTerms[info.Listen] = t
+		delete(busTermErrs, info.Listen)
+		if answer := busAnswers[strings.ToLower(info.Kind)]; answer != "" {
+			t.Send(answer)
+		}
+	}
+}
+
+type busAnswerFlags map[string]string
+
+func (f busAnswerFlags) String() string {
+	var parts []string
+	for kind, answer := range f {
+		parts = append(parts, kind+"="+answer)
+	}
+	return strings.Join(parts, ",")
+}
+
+// Set accepts kind=response, where kind is i2c or spi and response is a list of
+// Bus Pirate tokens. Answers are queued as soon as the terminal connects, so a
+// headless run can show a complete request/response session.
+func (f busAnswerFlags) Set(v string) error {
+	kind, answer, ok := strings.Cut(v, "=")
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if !ok || (kind != "i2c" && kind != "spi") || strings.TrimSpace(answer) == "" {
+		return fmt.Errorf("expected i2c=TOKENS or spi=TOKENS, got %q", v)
+	}
+	f[kind] = strings.TrimSpace(answer)
+	return nil
 }
 
 func findBoard(id string) *BoardDef {
@@ -2048,6 +2100,10 @@ func busPanel(snap MachineState) {
 			return
 		}
 		term := busTerms[sel.Listen]
+		if term == nil && busAutoConnect {
+			autoConnectBusTerminals()
+			term = busTerms[sel.Listen]
+		}
 		if term == nil {
 			if Button(NoIcon, "Connect terminal") {
 				t, err := NewBusTerminal(sel.Listen)
@@ -2211,14 +2267,24 @@ func main() {
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, bus, debug, console")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
+	debugTab := flag.String("debug-tab", "registers", "debug inspector tab: registers, memory, variables")
+	busConnect := flag.Bool("bus-connect", false, "auto-connect the Bus tab terminal to every bridge listener")
+	flag.Var(busAnswerFlags(busAnswers), "bus-answer", "queue Bus Pirate answers for a bridge: i2c=TOKENS or spi=TOKENS (repeatable)")
 	touchAt := flag.String("touch", "", "inject a held touch at native panel coordinates: x,y")
 	touchDemoFlag := flag.Bool("touch-demo", false, "move a synthetic touch around the panel while the UI runs")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
 	showVer := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	busAutoConnect = *busConnect
 	if *showVer {
 		fmt.Println("rp2350sim-ui", version)
 		return
+	}
+	switch strings.ToLower(*debugTab) {
+	case "memory", "mem":
+		debugInspectorTab = 1
+	case "variables", "vars":
+		debugInspectorTab = 2
 	}
 	viewW, viewH = *winW, *winH
 

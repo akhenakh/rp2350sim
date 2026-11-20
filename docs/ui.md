@@ -51,6 +51,9 @@ Startup flags:
 | `--logic-trigger KIND` | arm the logic analyzer at startup: `off`, `any`, `uart`, `i2c`, `spi` |
 | `--logic-pause` | pause the machine when the startup logic trigger fires |
 | `--break SPEC` | add a breakpoint (address or symbol) after loading the firmware |
+| `--debug-tab TAB` | debug inspector tab at startup: `registers`, `memory`, `variables` |
+| `--bus-connect` | connect the Bus tab terminal to every bridge listener automatically |
+| `--bus-answer KIND=TOKENS` | queue Bus Pirate responses for `i2c` or `spi`; repeatable |
 
 For headless use, `--run` executes synchronously before the frame is rendered
 (the UI does not step in the background), and the system font scan is awaited
@@ -287,6 +290,11 @@ rp2350sim-ui --board touch-lcd2 --tab sensors --touch 120,200 --run 0.6 \
   --png sensors.png build/touchlcd.elf
 rp2350sim-ui --board pico2 --flash /tmp/ota-flash.bin --run 0.5 --png ota.png \
   firmware/c/build/ota.elf
+rp2350sim-ui --board pico2 --tab debug --break main.marker --debug-tab variables \
+  --run 0.6 --png debug.png build/debugvars.elf
+rp2350sim-ui --board pico2-bus --tab bus --bus-connect \
+  --bus-answer 'i2c=ACK ACK 0x12 0x34' --bus-answer 'spi=0xEF 0x40 0x18' \
+  --run 1 --png bus.png build/busmaster.elf
 ```
 
 `task ui:ota` opens the same setup live; `task ui:ota-png` writes

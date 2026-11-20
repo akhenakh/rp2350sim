@@ -33,6 +33,16 @@ The UI equivalent is a board with `i2c_tcp`/`spi_tcp`, for example
 in [peripherals.md](peripherals.md#bus-pirate-i2c-and-spi-targets) and
 [ui.md](ui.md).
 
+For a scripted or headless session, `--bus-connect` attaches the terminal to
+every listener and `--bus-answer kind=TOKENS` queues the device responses:
+
+```sh
+rp2350sim-ui --board pico2-bus --tab bus --bus-connect \
+  --bus-answer 'i2c=ACK ACK 0x12 0x34' \
+  --bus-answer 'spi=0xEF 0x40 0x18' \
+  --run 1 --png bus.png build/busmaster.elf
+```
+
 ## Token reference
 
 | request | meaning | response |

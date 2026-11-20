@@ -166,3 +166,21 @@ func TestBusTerminalsDriveBusmaster(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestBusAnswerFlags(t *testing.T) {
+	f := busAnswerFlags{}
+	if err := f.Set("i2c=ACK ACK 0x12 0x34"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := f["i2c"]; got != "ACK ACK 0x12 0x34" {
+		t.Fatalf("i2c answer = %q", got)
+	}
+	if err := f.Set("spi=0xEF 0x40 0x18"); err != nil {
+		t.Fatalf("Set spi: %v", err)
+	}
+	for _, bad := range []string{"", "i2c", "uart=ACK", "i2c="} {
+		if err := f.Set(bad); err == nil {
+			t.Errorf("Set(%q) succeeded, want error", bad)
+		}
+	}
+}

@@ -10,6 +10,10 @@ DWARF source lines and the variables the compiler left locations for.
 # UI: open the tab, stop at a symbol, and show the machine there
 rp2350sim-ui --board pico2 --tab debug --break debug_marker firmware.elf
 
+# UI: open the inspector on Variables (or memory) instead of registers
+rp2350sim-ui --board pico2 --tab debug --break main.marker \
+  --debug-tab variables build/debugvars.elf
+
 # Headless: log a breakpoint and continue
 rp2350sim -fw firmware.elf -seconds 2 -bp debug_marker
 
