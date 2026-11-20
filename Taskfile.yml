@@ -477,6 +477,22 @@ tasks:
     cmds:
       - go run . --board geek --tab lcd --png '../../{{.BUILD}}/ui.png' --run 0.6 '../../{{.BUILD}}/lcd.elf'
 
+  ui:ota:
+    desc: Run the UI with the OTA demo and a persistent flash image (self-update banner)
+    deps: [build, c:build]
+    dir: cmd/simui
+    cmds:
+      - rm -f '../../{{.BUILD}}/ui-ota-flash.bin'
+      - go run . --board pico2 --flash '../../{{.BUILD}}/ui-ota-flash.bin' --run 0.5 '../../firmware/c/build/ota.elf'
+
+  ui:ota-png:
+    desc: Render the OTA self-update banner headlessly to build/ui-ota.png
+    deps: [build, c:build]
+    dir: cmd/simui
+    cmds:
+      - rm -f '../../{{.BUILD}}/ui-ota-flash.bin'
+      - go run . --board pico2 --flash '../../{{.BUILD}}/ui-ota-flash.bin' --run 0.5 --width 1920 --height 1080 --png '../../{{.BUILD}}/ui-ota.png' '../../firmware/c/build/ota.elf'
+
   c:build:
     desc: Build the Pico SDK C examples (requires PICO_SDK_PATH)
     dir: firmware/c

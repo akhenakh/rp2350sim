@@ -72,6 +72,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
 | `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
+| `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
+| `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |

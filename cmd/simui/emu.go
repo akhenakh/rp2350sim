@@ -5,6 +5,7 @@ import (
 	"image"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -730,6 +731,9 @@ func (e *Emu) rebootLocked() {
 
 // SetFlashPath sets the raw flash backing file used to persist self-updates.
 func (e *Emu) SetFlashPath(path string) {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	e.mu.Lock()
 	e.flashPath = path
 	e.mu.Unlock()

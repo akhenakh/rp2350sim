@@ -232,6 +232,9 @@ go run . --board pico2 --flash /tmp/ota-flash.bin --run 0.5 --png ../../ota.png 
   ../../firmware/c/build/ota.elf
 ```
 
+`task ui:ota` opens the same setup live; `task ui:ota-png` writes
+`build/ui-ota.png` for a quick visual check of the self-update banner.
+
 `--run` advances virtual time synchronously (the UI does not step in the
 background in headless mode), making snapshots deterministic. The system font
 scan is awaited before rendering.

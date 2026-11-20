@@ -1999,6 +1999,9 @@ func main() {
 	if *runTo > 0 {
 		emu.SetRunning(false)
 		emu.RunFor(uint64(*runTo * 150_000_000))
+		// A self-update during the warm-up has already produced a new flash
+		// image; persist it before the live window starts.
+		emu.SaveFlash()
 		// A live window keeps running after the warm-up; only the headless
 		// snapshot needs the machine frozen.
 		if *png == "" {
