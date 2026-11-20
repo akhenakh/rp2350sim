@@ -485,7 +485,7 @@ tasks:
       - go run . --board pico2-serial '../../{{.BUILD}}/serialbridge.elf'
 
   ui:bus:
-    desc: Run the UI on the Bus Pirate board (connect the Bus terminal, queue responses, then Reset)
+    desc: Run the UI on the Bus Pirate board (connect the Bus terminals, queue responses, then Reset)
     deps: [firmware:busmaster]
     dir: cmd/simui
     cmds:

@@ -41,9 +41,8 @@ var (
 	triggerPause       bool
 	logicSaveMsg       string
 	logicSaveErr       bool
-	busTerm            *BusTerminal
-	busTermAddr        string
-	busTermErr         string
+	busTerms           = map[string]*BusTerminal{}
+	busTermErrs        = map[string]string{}
 	busInput           string
 	busSel             int
 	touchDemo          bool
@@ -248,12 +247,11 @@ func boardBadges(b *BoardDef) []string {
 }
 
 func selectBoard(b *BoardDef) {
-	if busTerm != nil {
-		busTerm.Close()
-		busTerm = nil
+	for _, term := range busTerms {
+		term.Close()
 	}
-	busTermAddr = ""
-	busTermErr = ""
+	busTerms = map[string]*BusTerminal{}
+	busTermErrs = map[string]string{}
 	busInput = ""
 	busSel = 0
 	selectedBoard = b
@@ -2009,11 +2007,6 @@ func busPanel(snap MachineState) {
 				label := busLabel(info)
 				if Button(NoIcon, label) {
 					busSel = i
-					if busTerm != nil && busTermAddr != info.Listen {
-						busTerm.Close()
-						busTerm = nil
-						busTermAddr = ""
-					}
 					RequestNextFrame()
 				}
 			}
@@ -2038,37 +2031,36 @@ func busPanel(snap MachineState) {
 			Label("Connect mode: the external device is the server; use the CLI or a script there, not this terminal.", FontSize(12), TextColor(140, 45, 65, 1))
 			return
 		}
-		if busTerm == nil || busTermAddr != sel.Listen {
+		term := busTerms[sel.Listen]
+		if term == nil {
 			if Button(NoIcon, "Connect terminal") {
-				term, err := NewBusTerminal(sel.Listen)
+				t, err := NewBusTerminal(sel.Listen)
 				if err != nil {
-					busTermErr = err.Error()
+					busTermErrs[sel.Listen] = err.Error()
 				} else {
-					busTerm = term
-					busTermAddr = sel.Listen
-					busTermErr = ""
+					busTerms[sel.Listen] = t
+					delete(busTermErrs, sel.Listen)
 				}
 				RequestNextFrame()
 			}
-			if busTermErr != "" {
-				Label(busTermErr, FontSize(11), TextColor(0, 65, 60, 1))
+			if msg := busTermErrs[sel.Listen]; msg != "" {
+				Label(msg, FontSize(11), TextColor(0, 65, 60, 1))
 			}
-			Label("The terminal is the device side: it shows the controller's requests and sends the answers you type.", FontSize(12), TextColor(140, 45, 65, 1))
+			Label("The terminal is the device side: it shows the controller's requests and sends the answers you type. Connect each bridge you want to answer.", FontSize(12), TextColor(140, 45, 65, 1))
 			return
 		}
 		Container(Attrs(Row, Gap(8), CrossMid), func() {
-			Label("terminal "+busTermAddr, FontSize(11), TextColor(140, 45, 65, 1))
+			Label("terminal "+sel.Listen, FontSize(11), TextColor(140, 45, 65, 1))
 			Filler(1)
 			if Button(NoIcon, "Disconnect") {
-				busTerm.Close()
-				busTerm = nil
-				busTermAddr = ""
+				term.Close()
+				delete(busTerms, sel.Listen)
 				RequestNextFrame()
 			}
 		})
 		Container(Attrs(Grow(1), Expand, Background(220, 12, 8, 1), Corners(6), Pad(8), Clip,
 			BorderWidth(1), BorderColor(220, 25, 30, 1)), func() {
-			busTerm.Render()
+			term.Render()
 		})
 		Container(Attrs(Row, Gap(8), CrossMid), func() {
 			attrs := DefaultTextInputAttrs()
@@ -2076,7 +2068,7 @@ func busPanel(snap MachineState) {
 			attrs.FixedWidth = true
 			TextInputExt(&busInput, attrs)
 			if Button(NoIcon, "Send") && strings.TrimSpace(busInput) != "" {
-				busTerm.Send(busInput)
+				term.Send(busInput)
 				busInput = ""
 				RequestNextFrame()
 			}

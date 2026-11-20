@@ -237,14 +237,16 @@ spi_tcp:
 
 The `pico2-bus` board is the ready-made demo (I2C 0x50 and SPI0 CS GP17).
 `task ui:bus` opens it on the Bus tab with the `busmaster` firmware. Connect
-the terminal, queue the responses, then press **Reset** (or **Load**) so the
-firmware starts after the terminal is attached. `task ui:bus:png` renders the
+the terminal for **each** bridge you want to answer (the I2C and SPI terminals
+stay open independently), queue the responses, then press **Reset** (or
+**Load**) so the firmware starts after the terminals are attached. `task ui:bus:png` renders the
 tab headlessly to `build/ui-bus.png`.
 Bridges listen by default; use `connect: host:port` instead to dial a device
 server. Address and chip-select conflicts with LCD, touch, IMU, SD and
 Ethernet devices are rejected when the board loads.
 
-Open the **Bus** tab, pick a bridge and **Connect terminal**. The terminal is
+Open the **Bus** tab, pick a bridge and **Connect terminal**. Each bridge keeps
+its own terminal, so the I2C and SPI devices can both be armed. The terminal is
 the device side: requests appear as Bus Pirate tokens such as
 
 ```text
