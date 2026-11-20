@@ -13,6 +13,7 @@
 #   sd:     { spi, cs, image | dir }
 #   ethernet: { kind: w5500|w6300, spi, cs }
 #   ws2812: { pin }
+#   psram:  { size_mb, cs, latency }
 #   serial: [{ uart, listen }]
 #   i2c_tcp: [{ bus, addrs: [0x50], listen | connect }]
 #   spi_tcp: [{ bus, cs, listen | connect }]
@@ -24,6 +25,17 @@ boards:
     name: Raspberry Pi Pico 2
     description: RP2350A · USB CDC console · on-board LED on GP25
     scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+
+  - id: pico2-psram
+    name: RP2350 + PSRAM
+    description: RP2350A · 8 MB QSPI PSRAM on QMI CS1 (GP8) · slower than SRAM
+    scope: [0, 1]
+    psram:
+      size_mb: 8
+      cs: 8
+      latency: 6
     logic:
       uart: { tx: 0, rx: 1, baud: 115200 }
 

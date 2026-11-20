@@ -74,6 +74,10 @@ func installBootROM(c *Chip) *bootROM {
 		c.ROM[off+3] = byte(v >> 24)
 	}
 	put32(bootromMagicOffset, bootromMagic)
+	// ROM_DATA_FLASH_DEVINFO16_PTR is a pointer literal to the boot RAM copy
+	// of the flash/PSRAM device sizes. The SDK dereferences it during PSRAM
+	// initialisation and flash programming.
+	put32(bootromDevinfoPtr, bootramBase+bootramFlashDevinfo)
 	// The SDK does not inspect the table contents, but keep a plausible
 	// header so a firmware that dumps it sees something.
 	for i := range 16 {
@@ -130,7 +134,7 @@ func installBootROM(c *Chip) *bootROM {
 	// Data services.
 	b.addData("CR", b.addString("rp2350sim synthetic bootrom"))
 	b.addData("GR", b.addString("rp2350sim"))
-	b.addData("FD", 0)
+	b.addData("FD", bootromDevinfoPtr)
 	b.addData("PT", 0)
 	b.addData("XF", 0)
 	copy(c.ROM[bootromDataBase:], b.strings)

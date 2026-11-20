@@ -21,6 +21,7 @@ and reference firmware. In short:
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` |
 | `pico2-analog` | `-logic-*` (the generated waveform is UI-only) |
+| `pico2-psram` | `-psram 8` |
 
 ## Raspberry Pi Pico 2 (RP2350A)
 
@@ -66,7 +67,26 @@ UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
 - Reference firmware: `firmware/touchlcd`, which initialises the panel, touch,
   IMU, backlight and ADC, prints deterministic values and draws touch points.
 
-## SD card backing
+## PSRAM
+
+QMI chip select 1 can carry a QSPI PSRAM device at `0x11000000`. The
+`pico2-psram` UI board attaches an 8 MiB part on GP8 with a 6-cycle access
+stall; the headless equivalent is:
+
+```sh
+rp2350sim -fw firmware/c/build/psram.elf -seconds 2 \
+  -psram 8 -psram-cs 8 -psram-latency 6
+```
+
+The RP2350A QMI CS1 pin must be GP0, GP8 or GP19 (the RP2350B adds GP47).
+`-psram` writes the `FLASH_DEVINFO` boot-RAM field the SDK reads, sets up the
+QMI window and answers the APS6404 JEDEC ID. Window 1 is read-only until
+firmware enables `XIP_CTRL.WRITABLE_M1`; the uncached mirrors
+(`0x15000000`, `0x19000000`, `0x1d000000`) alias the same bytes. `latency` is
+the extra virtual time per access; raise it to model a slower part, or use 0
+for SRAM-like timing. The C example `firmware/c/psram` verifies the size and a
+1 MiB pattern.
+
 
 A card can be backed by a host directory (`sd.dir` in `boards.yaml`, or
 `-sd-dir PATH`). The directory is packed into a 16 MiB FAT16 image at startup
@@ -177,7 +197,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 - **High-speed peripheral buses:** UART/SPI/I2C traffic is tapped at the
   controller-model level for the logic analyzer; the emulated GPIO pins do not
   toggle at bus bit rates. PIO/bit-banged traffic is decoded from pins.
-- **PSRAM/QSPI:** not modelled.
+- **PSRAM/QSPI:** the QMI CS1 PSRAM model covers memory-mapped data and the
+  SDK setup/ID path; it is not a cycle-accurate QSPI bus, and PSRAM is only
+  attached when a board or `-psram` asks for it.
 - **Network tests** depend on host servers and wall-clock timing; see
   [ci.md](ci.md).
 

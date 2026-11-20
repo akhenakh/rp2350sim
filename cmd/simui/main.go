@@ -228,6 +228,9 @@ func boardBadges(b *BoardDef) []string {
 	if b.WS2812 != nil {
 		out = append(out, "WS2812B")
 	}
+	if b.PSRAM != nil {
+		out = append(out, fmt.Sprintf("PSRAM %d MB", b.PSRAM.SizeMB))
+	}
 	if len(b.Analog) > 0 {
 		out = append(out, "ANALOG")
 	}
@@ -462,6 +465,10 @@ func toolbar(snap MachineState) {
 		Label(name, FontSize(12), FontWeight(600))
 		Label(fmt.Sprintf("virtual %.3fs", float64(snap.Cycles)/150_000_000), FontSize(12))
 		Label(fmt.Sprintf("PC %08x  SP %08x", snap.PC, snap.SP), FontSize(12), Fonts(Monospace...))
+		if snap.PSRAMBytes > 0 {
+			Label(fmt.Sprintf("PSRAM %d MB · %d cyc", snap.PSRAMBytes>>20, snap.PSRAMLatency),
+				FontSize(12), FontWeight(600), TextColor(140, 40, 70, 1))
+		}
 		if snap.Halted {
 			Label("HALTED", FontSize(12), TextColor(0, 70, 50, 1), FontWeight(700))
 		}

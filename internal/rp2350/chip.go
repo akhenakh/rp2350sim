@@ -17,12 +17,13 @@ const (
 	ROMSize   = 32 * 1024
 	FlashBase = 0x10000000
 	FlashSize = 16 * 1024 * 1024
-	// XIP aliases over the same flash. The RP2350 no longer has the RP2040
-	// cache-as-SRAM window at 0x15000000; all three are flash views.
+	// XIP device windows. Each 64 MiB region holds a flash view followed by a
+	// PSRAM view (the RP2350 no longer has the RP2040 cache-as-SRAM window at
+	// 0x15000000).
 	XIPNoCacheBase     = 0x14000000
 	XIPMaintenanceBase = 0x18000000
 	XIPNoTranslateBase = 0x1c000000
-	XIPAliasWindowSize = 0x04000000
+	XIPDeviceWindow    = 0x01000000
 	SRAMBase           = 0x20000000
 	SRAMSize           = 520 * 1024
 	SIOBase            = 0xD0000000
@@ -44,6 +45,12 @@ type Chip struct {
 	Flash []byte
 	SRAM  []byte
 	ROM   []byte
+	// PSRAM is the QMI window-1 backing store; nil when no device is attached.
+	PSRAM         []byte
+	psramSize     uint32
+	psramLatency  uint32
+	psramCS       int
+	psramWritable bool
 
 	CPU0 *m33.CPU
 	CPU1 *m33.CPU
@@ -82,8 +89,10 @@ type Chip struct {
 	// machine, so the per-cycle tick skips idle blocks.
 	pioActive uint8
 
-	regs   []*regBlock
-	byBase map[uint32]*regBlock
+	regs    []*regBlock
+	byBase  map[uint32]*regBlock
+	qmi     *qmiBlock
+	xipCtrl *regBlock
 
 	// OnDMA reports DMA transfers (diagnostics).
 	OnDMA func(ch int, readAddr, writeAddr, count, ctrl uint32)
@@ -181,6 +190,10 @@ func New() *Chip {
 	c.addRegBlock(newSysInfo(c))
 	c.addRegBlock(newTBMAN(c))
 	c.addRegBlock(newROSC(c))
+	c.xipCtrl = newXIPCtrl(c)
+	c.addRegBlock(c.xipCtrl)
+	c.qmi = newQMI(c)
+	c.addRegBlock(c.qmi.block)
 	c.addRegBlock(c.io.bank0)
 	c.addRegBlock(c.io.pads)
 	c.addRegBlock(c.tmr[0].block)
@@ -225,17 +238,17 @@ func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 
 // Run executes n cycles across both cores.
 func (c *Chip) Run(n uint64) {
-	for i := uint64(0); i < n && (!c.Halted || c.ContinueAfterHalt); i++ {
+	target := c.Cycles + n
+	for c.Cycles < target && (!c.Halted || c.ContinueAfterHalt) {
 		// With both cores asleep and nothing that needs per-cycle attention,
 		// only timers can make progress; jump to the next microsecond tick
 		// instead of executing 150 empty cycles.
-		if i&7 == 0 && c.canIdleSkip() {
+		if c.Cycles&7 == 0 && c.canIdleSkip() {
 			skip := cyclesPerMicrosecond - c.Cycles%cyclesPerMicrosecond
-			skip = min(skip, n-i)
+			skip = min(skip, target-c.Cycles)
 			c.Cycles += skip
 			c.usbPoll = 7 // check host input on this tick
 			c.tickPeripherals()
-			i += skip - 1
 			continue
 		}
 		c.Step()
@@ -428,6 +441,7 @@ func (c *Chip) Reset() {
 	if c.otp != nil {
 		c.otp.resetLockState()
 	}
+	c.resetPSRAM()
 }
 
 // requestReset schedules a chip reset. reason is reported to the UI and CLI;
@@ -484,11 +498,11 @@ func (c *Chip) LoadImage(data []byte) {
 // past the flash is an unmapped access.
 func flashAlias(addr uint32) (uint32, bool) {
 	switch {
-	case addr >= XIPNoCacheBase && addr < XIPNoCacheBase+XIPAliasWindowSize:
+	case addr >= XIPNoCacheBase && addr < XIPNoCacheBase+XIPDeviceWindow:
 		return addr - XIPNoCacheBase, true
-	case addr >= XIPMaintenanceBase && addr < XIPMaintenanceBase+XIPAliasWindowSize:
+	case addr >= XIPMaintenanceBase && addr < XIPMaintenanceBase+XIPDeviceWindow:
 		return addr - XIPMaintenanceBase, true
-	case addr >= XIPNoTranslateBase && addr < XIPNoTranslateBase+XIPAliasWindowSize:
+	case addr >= XIPNoTranslateBase && addr < XIPNoTranslateBase+XIPDeviceWindow:
 		return addr - XIPNoTranslateBase, true
 	}
 	return 0, false
@@ -505,6 +519,10 @@ func (c *Chip) LoadSegment(addr uint32, data []byte) {
 	case addr < ROMSize:
 		copy(c.ROM[addr:], data)
 	default:
+		if off, ok := psramAlias(addr); ok && c.psramSize > 0 && off < c.psramSize {
+			copy(c.PSRAM[off:], data)
+			return
+		}
 		for i, b := range data {
 			c.Write8(addr+uint32(i), b)
 		}
@@ -525,6 +543,16 @@ func (c *Chip) Read8(addr uint32) uint8 {
 			return c.Flash[off]
 		}
 		return c.unhandledRead8(addr)
+	}
+	if off, ok := psramAlias(addr); ok {
+		if c.psramSize == 0 || off >= c.psramSize {
+			return c.unhandledRead8(addr)
+		}
+		c.psramAccess()
+		return c.PSRAM[off]
+	}
+	if xipMaintenance(addr) {
+		return 0
 	}
 	if addr < ROMSize {
 		return c.ROM[addr]
@@ -553,6 +581,16 @@ func (c *Chip) Read16(addr uint32) uint16 {
 		}
 		return c.unhandledRead16(addr)
 	}
+	if off, ok := psramAlias(addr); ok {
+		if c.psramSize < 2 || off >= c.psramSize-1 {
+			return c.unhandledRead16(addr)
+		}
+		c.psramAccess()
+		return binary.LittleEndian.Uint16(c.PSRAM[off:])
+	}
+	if xipMaintenance(addr) {
+		return 0
+	}
 	if addr < ROMSize-1 {
 		return binary.LittleEndian.Uint16(c.ROM[addr:])
 	}
@@ -580,6 +618,16 @@ func (c *Chip) Read32(addr uint32) uint32 {
 			return binary.LittleEndian.Uint32(c.Flash[off:])
 		}
 		return c.unhandledRead32(addr)
+	}
+	if off, ok := psramAlias(addr); ok {
+		if c.psramSize < 4 || off >= c.psramSize-3 {
+			return c.unhandledRead32(addr)
+		}
+		c.psramAccess()
+		return binary.LittleEndian.Uint32(c.PSRAM[off:])
+	}
+	if xipMaintenance(addr) {
+		return 0
 	}
 	if addr < ROMSize-3 {
 		return binary.LittleEndian.Uint32(c.ROM[addr:])
@@ -610,6 +658,20 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		// maintenance writes as no-ops.
 		return
 	}
+	if off, ok := psramAlias(addr); ok {
+		if c.psramSize == 0 || off >= c.psramSize {
+			c.unhandledWrite(addr, uint32(v))
+			return
+		}
+		c.psramAccess()
+		if c.psramWritable {
+			c.PSRAM[off] = v
+		}
+		return
+	}
+	if xipMaintenance(addr) {
+		return
+	}
 	if addr >= PeriphBase {
 		c.writeMMIO8(addr, v)
 		return
@@ -634,6 +696,21 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		if off >= FlashSize-1 {
 			c.unhandledWrite(addr, uint32(v))
 		}
+		return
+	}
+	if off, ok := psramAlias(addr); ok {
+		if c.psramSize < 2 || off >= c.psramSize-1 {
+			c.unhandledWrite(addr, uint32(v))
+			return
+		}
+		c.psramAccess()
+		if c.psramWritable {
+			c.PSRAM[off] = byte(v)
+			c.PSRAM[off+1] = byte(v >> 8)
+		}
+		return
+	}
+	if xipMaintenance(addr) {
 		return
 	}
 	if addr >= PeriphBase {
@@ -662,6 +739,23 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		if off >= FlashSize-3 {
 			c.unhandledWrite(addr, v)
 		}
+		return
+	}
+	if off, ok := psramAlias(addr); ok {
+		if c.psramSize < 4 || off >= c.psramSize-3 {
+			c.unhandledWrite(addr, v)
+			return
+		}
+		c.psramAccess()
+		if c.psramWritable {
+			c.PSRAM[off] = byte(v)
+			c.PSRAM[off+1] = byte(v >> 8)
+			c.PSRAM[off+2] = byte(v >> 16)
+			c.PSRAM[off+3] = byte(v >> 24)
+		}
+		return
+	}
+	if xipMaintenance(addr) {
 		return
 	}
 	if addr >= PeriphBase {

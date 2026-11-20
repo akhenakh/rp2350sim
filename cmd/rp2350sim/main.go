@@ -145,6 +145,9 @@ func main() {
 		otpOut     = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
 		flashIn    = flag.String("flash", "", "load a raw flash image and write it back (enables self-update)")
 		flashOut   = flag.String("flash-out", "", "write the final raw flash image to this path")
+		psramMB    = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
+		psramLat   = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
+		psramCS    = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
 		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
@@ -179,6 +182,18 @@ func main() {
 	}
 	if *sdImage != "" && *sdDir != "" {
 		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
+		os.Exit(2)
+	}
+	if *psramMB < 0 || *psramMB > 16 || *psramMB&(*psramMB-1) != 0 {
+		fmt.Fprintln(os.Stderr, "-psram must be 0, 1, 2, 4, 8 or 16 MiB")
+		os.Exit(2)
+	}
+	if *psramLat < 0 {
+		fmt.Fprintln(os.Stderr, "-psram-latency must not be negative")
+		os.Exit(2)
+	}
+	if *psramCS < 0 || *psramCS > 47 {
+		fmt.Fprintln(os.Stderr, "-psram-cs must be a GPIO number")
 		os.Exit(2)
 	}
 	logicEnabled := *logicPins != "" || *logicOut != "" || *logicUART != "" || *logicI2C != "" || *logicSPI != ""
@@ -263,6 +278,13 @@ func main() {
 
 	c := rp2350.New()
 	c.Logger = log
+	c.ConfigurePSRAM(uint32(*psramMB)<<20, uint32(*psramLat), *psramCS)
+	if *psramMB > 0 && !*quiet {
+		log.Info("psram attached",
+			slog.Int("mib", *psramMB),
+			slog.Int("cs", *psramCS),
+			slog.Int("latency_cycles", *psramLat))
+	}
 	if *flashIn != "" {
 		data, ferr := os.ReadFile(*flashIn)
 		switch {
@@ -1130,6 +1152,8 @@ func main() {
 			FlashWrites    uint64                `json:"flash_writes"`
 			ResetReason    string                `json:"reset_reason,omitempty"`
 			BootEntry      uint32                `json:"boot_entry,omitempty"`
+			PSRAMBytes     uint32                `json:"psram_bytes,omitempty"`
+			PSRAMLatency   uint32                `json:"psram_latency_cycles,omitempty"`
 		}{
 			Firmware:       *path,
 			Format:         format,
@@ -1155,6 +1179,8 @@ func main() {
 			FlashWrites:    c.FlashWrites(),
 			ResetReason:    c.LastResetReason(),
 			BootEntry:      c.BootEntry(),
+			PSRAMBytes:     c.PSRAMSize(),
+			PSRAMLatency:   c.PSRAMLatency(),
 		}
 		if c.CPU0.Halted {
 			sum.HaltReason = c.CPU0.HaltReason

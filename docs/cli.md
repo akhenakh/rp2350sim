@@ -105,6 +105,8 @@ may take less than 3 s of wall time.
   "core1_launches": 0,
   "expectations_matched": false,
   "wall_timed_out": false,
+  "psram_bytes": 8388608,
+  "psram_latency_cycles": 6,
   "exit_code": 0
 }
 ```
@@ -169,6 +171,9 @@ every UI board to its flags and demo firmware. The flags are:
 | `-otp-dump PATH` | write every programmed OTP row to a JSON file at exit |
 | `-flash PATH` | load a raw 16 MiB flash image and write it back after self-updates |
 | `-flash-out PATH` | write the final flash image to this path without loading one |
+| `-psram MIB` | attach PSRAM on QMI CS1 (1, 2, 4, 8 or 16 MiB; 0 disables) |
+| `-psram-latency CYCLES` | extra virtual time per PSRAM access (default 4) |
+| `-psram-cs GPIO` | QMI CS1 GPIO reported to firmware (default 8) |
 
 `-sd-dir` and `-sd-image` are mutually exclusive. `-eth` and `-w6300` are
 mutually exclusive, as are `-lcd` and `-touch-lcd2`.
@@ -206,6 +211,35 @@ summary JSON includes `flash_path`, `boots`, `flash_writes`, `reset_reason` and
 This models a **single flat slot**. A/B slots, rollback and secure-boot
 validation are not implemented; the loader still requires a vector table at
 `0x10000000`.
+
+## PSRAM
+
+QMI chip select 1 is an optional QSPI PSRAM device mapped at `0x11000000`,
+with uncached mirrors at `0x15000000`, `0x19000000` and `0x1d000000`. Attach
+one with `-psram`:
+
+```sh
+rp2350sim -fw firmware/c/build/psram.elf -seconds 2 \
+  -psram 8 -psram-cs 8 -psram-latency 6 \
+  -expect 'psram: ok' -stop-on-expect
+```
+
+- The SDK's `hardware_psram` sees the size and chip select through boot RAM
+  `FLASH_DEVINFO`, so `psram_is_available()` and `psram_get_size()` work
+  without board-header overrides.
+- Window 1 is read-only until firmware sets `XIP_CTRL.WRITABLE_M1`, exactly as
+  on hardware. Writes before that are dropped.
+- `-psram-latency` is an extra stall added to every PSRAM access (in 150 MHz
+  cycles). `0` makes it SRAM-fast; the default 4 models an external QSPI part,
+  and `6` is what the `pico2-psram` board uses. The virtual clock, timers and
+  DMA see the stall, so `time_us_64()` measures it.
+- The QMI block answers the `0x9F` JEDEC ID as an APS6404 (KGD `0x5D`, EID
+  `0x26` = 8 MiB) and accepts the SDK's quad-enable/M1 setup. Accesses past the
+  configured size are reported as unmapped, like a real bus error.
+
+The C demo `firmware/c/psram` checks the reported size, writes and verifies
+1 MiB, and reports the read time so the latency is visible. Use `task c:psram`
+or the UI's `pico2-psram` board (`task ui:psram`).
 
 ## Network endpoints
 

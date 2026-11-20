@@ -88,6 +88,7 @@ addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
 | `ethernet` | `kind` (`w5500`/`w6300`), `spi`, `cs`; or `kind: ch9120` with `uart`, `cfg0`, `rst`, `tcpcs` | Ethernet |
 | `wifi` | `uart`, `cfg0`, `rst`, `tcpcs` | Wi-Fi |
 | `ws2812` | `pin` | LEDs |
+| `psram` | `size_mb`, `cs`, `latency` (extra cycles per access) | Board status |
 | `scope` | list of GPIO pins | default scope channels |
 | `analog` | list of `{pin, wave, hz, amplitude, offset}` | generated signal (Scope/ADC) |
 | `logic` | `uart {bus,tx,rx,baud}`, `i2c {bus,sda,scl}`, `spi {bus,sck,mosi,miso,cs}` | Logic |
@@ -106,6 +107,10 @@ boards:
     scope: [0, 1]
     logic:
       uart: { bus: 0, tx: 0, rx: 1, baud: 115200 }
+
+  - id: pico2-psram
+    name: RP2350 + PSRAM
+    psram: { size_mb: 8, cs: 8, latency: 6 }
 
   - id: pico2-bus
     name: RP2350 + remote I2C/SPI
@@ -143,6 +148,7 @@ its headless flags and demo firmware.
 
 The Pico 2 header diagram and the live GPIO table (function, direction, level).
 Panels size themselves to the window. Click a GPIO chip in the scope to add it.
+A board with `psram` shows its size and per-access stall in the status line.
 
 ![Board tab](images/board.png)
 

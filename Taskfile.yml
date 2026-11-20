@@ -456,6 +456,13 @@ tasks:
     cmds:
       - go run . --board pico2-analog --tab scope
 
+  ui:psram:
+    desc: Run the UI on the PSRAM board with the Pico SDK PSRAM demo
+    deps: [c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-psram '../../firmware/c/build/psram.elf'
+
   ui:logic:
     desc: Run the UI logic analyzer with the UART/I2C/SPI demo
     deps: [firmware:protocols]
@@ -548,6 +555,7 @@ tasks:
       - 'build/floatdemo.elf'
       - 'build/multicore.elf'
       - 'build/otp.elf'
+      - 'build/psram.elf'
       - 'build/ota.elf'
       - 'build/ota2.elf'
     cmds:
@@ -584,6 +592,12 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/otp.elf -seconds 0.3 -quiet -expect "OTP demo: ok" -stop-on-expect -otp-dump {{.BUILD}}/otp.json'
+
+  c:psram:
+    desc: Run the C PSRAM demo with an 8 MiB PSRAM on QMI CS1
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/psram.elf -seconds 2 -quiet -psram 8 -psram-cs 8 -psram-latency 6 -expect "psram: ok" -stop-on-expect'
 
   c:ota:
     desc: Run the single-slot OTA demo, then boot the updated image from flash

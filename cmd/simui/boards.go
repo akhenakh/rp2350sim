@@ -25,6 +25,7 @@ type BoardDef struct {
 	SD          *SDDevice      `yaml:"sd"`
 	Ethernet    *EthDevice     `yaml:"ethernet"`
 	WS2812      *LEDDevice     `yaml:"ws2812"`
+	PSRAM       *PSRAMDevice   `yaml:"psram"`
 	Analog      []SignalDef    `yaml:"analog"`
 	Scope       []int          `yaml:"scope"`
 	Logic       *LogicDevice   `yaml:"logic"`
@@ -153,6 +154,22 @@ type EthDevice struct {
 
 type LEDDevice struct {
 	Pin int `yaml:"pin"`
+}
+
+// PSRAMDevice is an external QSPI PSRAM on QMI chip select 1. Latency is the
+// extra virtual cycles charged per access; 0 makes it as fast as SRAM.
+type PSRAMDevice struct {
+	SizeMB  int `yaml:"size_mb"`
+	CS      int `yaml:"cs"`
+	Latency int `yaml:"latency"`
+}
+
+// LatencyCycles returns the configured access stall.
+func (d *PSRAMDevice) LatencyCycles() int {
+	if d.Latency < 0 {
+		return 0
+	}
+	return d.Latency
 }
 
 // SignalDef describes a generated analog waveform on a pin (scope demo).
@@ -404,6 +421,17 @@ func LoadBoards() ([]BoardDef, error) {
 		if w := b.Wifi; w != nil {
 			if w.UART < 0 || w.UART > 1 {
 				return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
+			}
+		}
+		if p := b.PSRAM; p != nil {
+			if p.SizeMB <= 0 || p.SizeMB > 16 || p.SizeMB&(p.SizeMB-1) != 0 {
+				return nil, fmt.Errorf("boards: %s: psram size_mb must be 1, 2, 4, 8 or 16", b.ID)
+			}
+			if p.CS < 0 || p.CS > 47 {
+				return nil, fmt.Errorf("boards: %s: psram cs must be a GPIO number", b.ID)
+			}
+			if p.Latency < 0 {
+				return nil, fmt.Errorf("boards: %s: psram latency must not be negative", b.ID)
 			}
 		}
 	}

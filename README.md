@@ -43,7 +43,7 @@ cmd/simui/          Shirei desktop UI (separate module)
 firmware/c/         Pico SDK C examples (CMake)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
-                    UART, SPI, DMA, PWM, ADC, I2C, OTP
+                    UART, SPI, DMA, PWM, ADC, I2C, OTP, QMI/PSRAM
 internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
 internal/firmware/  UF2 / ELF / raw image loaders
 drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
@@ -88,6 +88,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
+| `task ui:psram` | PSRAM board with the Pico SDK PSRAM demo |
 | `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
 | `task ui:bus` | Bus Pirate board paused: connect terminals, queue ACK/data, then Run |
@@ -101,6 +102,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task picoexamples:build` | build the pinned pico-examples subset (needs `PICO_SDK_PATH`) |
 | `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
 | `task c:otp` | run the C OTP demo and dump the programmed array |
+| `task c:psram` | run the Pico SDK PSRAM demo with an 8 MiB device |
 | `task c:ota` | run the single-slot self-update demo and reboot the new image |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task release:check` | validate the GoReleaser configuration |
@@ -145,6 +147,7 @@ Useful flags:
 | `-peek ADDR` | print a memory word at exit |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 | `-otp PATH`, `-otp-dump PATH` | seed / write back the OTP array (JSON) |
+| `-psram MiB`, `-psram-latency N`, `-psram-cs GPIO` | attach QSPI PSRAM on QMI CS1 and set its per-access stall |
 | `-flash PATH`, `-flash-out PATH` | load / write back the raw 16 MiB flash image |
 | `-logic-pins 0,1`, `-logic-out PATH` | capture a logic-analyzer trace (UART/I2C/SPI taps plus pin samples) |
 | `-i2c-tcp 0:0x50@127.0.0.1:0` | expose I2C targets as Bus Pirate TCP devices |
@@ -333,7 +336,7 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 
 - The emulated CPU is the Cortex-M33 (thumbv8m.main); there is no RISC-V path.
   TinyGo `-target=pico2` emits Arm, and that is the contract.
-- Missing peripherals: USB host, PSRAM.
+- Missing peripherals: USB host.
 - The default `pico2` build does not launch core 1. With
   `tinygo build -scheduler=cores` the runtime starts core 1 through the SIO
   FIFO; both cores then run tasks (see `firmware/cores` and `task run:cores`).

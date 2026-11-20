@@ -40,6 +40,8 @@ type MachineState struct {
 	FlashWrites uint64
 	BootEntry   uint32
 	ResetReason string
+	PSRAMBytes  uint32
+	PSRAMLatency uint32
 	Err         string
 	LCD         *image.RGBA
 	Console     string
@@ -456,6 +458,9 @@ func (e *Emu) resetChip() {
 	logEth := e.ethLog.logger()
 
 	if b := e.board; b != nil {
+		if p := b.PSRAM; p != nil {
+			c.ConfigurePSRAM(uint32(p.SizeMB)<<20, uint32(p.LatencyCycles()), p.CS)
+		}
 		type spiClient struct {
 			cs int
 			fn func(byte) byte
@@ -1012,6 +1017,8 @@ func (e *Emu) Snapshot() MachineState {
 	s.FlashWrites = e.chip.FlashWrites()
 	s.BootEntry = e.chip.BootEntry()
 	s.ResetReason = e.chip.LastResetReason()
+	s.PSRAMBytes = e.chip.PSRAMSize()
+	s.PSRAMLatency = e.chip.PSRAMLatency()
 	s.Err = e.errText
 	for i := range 48 {
 		s.Pins[i] = PinInfo{

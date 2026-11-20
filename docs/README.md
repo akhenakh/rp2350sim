@@ -71,7 +71,8 @@ See [ci.md](ci.md) for the full recipe.
 ## Supported targets at a glance
 
 - **Raspberry Pi Pico 2** (RP2350A), TinyGo and **Pico SDK C**: GPIO, UART,
-  SPI, I2C, PWM, ADC, PIO, USB CDC console (TinyGo), DMA, timers, multicore.
+  SPI, I2C, PWM, ADC, PIO, USB CDC console (TinyGo), DMA, timers, multicore,
+  OTP and optional QSPI PSRAM on QMI CS1.
   See [c.md](c.md) for the C path and its current limits.
 - **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
   CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).

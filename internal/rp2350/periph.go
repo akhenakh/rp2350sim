@@ -199,6 +199,10 @@ const (
 
 func newBootRAM(c *Chip) *regBlock {
 	b := newRegBlock(bootramBase, 0x1000)
+	// The bootrom stages a boot2 stub at the base of boot RAM. The SDK copies
+	// it to SRAM and calls it from flash_start_xip(); a bare bx lr is enough
+	// because XIP is always usable in this model.
+	b.regs[0] = 0x0000_4770
 	unclaimed := uint8(bootramUnclaimed)
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
 		switch {

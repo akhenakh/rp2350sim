@@ -29,6 +29,7 @@ commands and UI steps; the register-level wiring lives in
 | CH9120 Ethernet | `-ch9120` | `ethernet: ch9120`, Ethernet | `ch9120` |
 | Virtual Wi-Fi | `-ch9120` transport | `wifi`, Wi-Fi | `wifi` |
 | WS2812B strip | `-ws2812 GPIO` | `ws2812`, LEDs | `ws2812` |
+| QSPI PSRAM | `-psram 8 -psram-latency 6` | `psram`, Board status | `firmware/c/psram` |
 | OTP fuses | `-otp`, `-otp-dump` | OTP | `firmware/c/otp` |
 | Flash / OTA | `-flash`, `-flash-out` | `--flash`, Board banner | `firmware/c/ota` |
 | Logic analyzer | `-logic-*` | Logic | `protocols` |
@@ -291,6 +292,33 @@ hex values. Boards declare `ws2812: {pin}`.
 
 Reference board: `pico2-ws2812`. Task: `task ui:ws2812`.
 
+## QSPI PSRAM
+
+**Headless.** Attach the optional QMI chip-select-1 device with `-psram`; the
+size is in MiB and `-psram-latency` is the extra virtual time per access:
+
+```sh
+rp2350sim -fw firmware/c/build/psram.elf -seconds 2 \
+  -psram 8 -psram-cs 8 -psram-latency 6 \
+  -expect 'psram: ok' -stop-on-expect
+```
+
+The Pico SDK sees the device through boot RAM `FLASH_DEVINFO`, so
+`psram_is_available()` and `psram_get_size()` work; window 1 stays read-only
+until the SDK sets `XIP_CTRL.WRITABLE_M1`. `-psram-latency 0` makes it
+SRAM-fast, while higher values slow the virtual clock for every access (timers
+and DMA see the stall too). Accesses past the configured size are reported as
+unmapped.
+
+**UI.** The `pico2-psram` board declares `psram: {size_mb: 8, cs: 8, latency:
+6}`; the Board status line shows `PSRAM 8 MB · 6 cyc`. `task ui:psram` loads
+the C demo.
+
+![PSRAM board](images/psram.png)
+
+Reference firmware: `firmware/c/psram`. Tasks: `task c:psram`,
+`task ui:psram`.
+
 ## OTP fuses
 
 **Headless.** The OTP array is 4096 rows of 24 bits with fuse semantics and
@@ -417,6 +445,7 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2` | none | `task ui:blinky` |
 | `pico2-lcd` | `-lcd` | `task ui:lcd` |
 | `pico2-ws2812` | `-ws2812 0` | `task ui:ws2812` |
+| `pico2-psram` | `-psram 8 -psram-cs 8 -psram-latency 6` | `task ui:psram` |
 | `geek` | `-lcd -sd -sd-dir build/sdcard-host` | `task ui:lcd`, `task run:sdcard` |
 | `touch-lcd2` | `-touch-lcd2 -touch x,y` | `task ui:touchlcd` |
 | `pico2-w5500` | `-eth` | `task ui:w5500` |
