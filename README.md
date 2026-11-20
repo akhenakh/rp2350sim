@@ -118,10 +118,14 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 
 ## Running firmware
 
+`firmware.elf` can be a TinyGo or Pico SDK C image; both use the same runner.
+
 ```sh
 rp2350sim -fw firmware.elf -seconds 1 -trace-pins 25
-# or, building and running the bundled blinky example:
+# or, building and running the bundled TinyGo blinky example:
 task run:blinky
+# or a Pico SDK C example:
+task c:hello
 ```
 
 The default USB console and UART both write to stdout, so `println` output

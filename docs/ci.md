@@ -9,6 +9,7 @@ input, and a JSON summary.
 ```sh
 set -eu
 
+# TinyGo example; replace this build step with your Pico SDK C CMake build.
 tinygo build -target=pico2 -o firmware.elf .
 
 rp2350sim -fw firmware.elf -seconds 3 -quiet \
@@ -27,6 +28,10 @@ rp2350sim -fw firmware.elf -seconds 3 -quiet \
 - `summary.json` records cycles, PC/SP, halt state and the exit code.
 - stderr is JSON (one `slog` object per line) because a CI run is not a
   terminal; `-log-format text` opts back into `key=value` for a person.
+
+Pico SDK C projects keep the same `rp2350sim` invocation after their
+`cmake --build`; only the build step differs. The GitHub Actions example below
+installs TinyGo; a C job installs the ARM toolchain and `PICO_SDK_PATH` instead.
 
 ## Interacting with the firmware
 

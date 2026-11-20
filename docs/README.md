@@ -48,15 +48,19 @@ go install github.com/akhenakh/rp2350sim/cmd/rp2350sim@latest
 ## Quick start
 
 ```sh
-# Build any TinyGo program for the Pico 2
+# Build firmware for the Pico 2 with TinyGo...
 tinygo build -target=pico2 -o firmware.elf .
+# ... or build a Pico SDK C project for PICO_BOARD=pico2 (see c.md).
 
-# Run it for three virtual seconds
+# Run the resulting ELF for three virtual seconds
 rp2350sim -fw firmware.elf -seconds 3
 
 # Or inspect it in the UI
 rp2350sim-ui --board pico2 firmware.elf
 ```
+
+Both TinyGo and Pico SDK C images are first-class inputs; the rest of this
+guide applies to either unless a section is explicitly about one toolchain.
 
 Firmware console output goes to **stdout**; emulator diagnostics and the final
 summary go to **stderr**, so `rp2350sim ... > firmware.log` captures only what

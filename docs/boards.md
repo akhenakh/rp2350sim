@@ -1,8 +1,8 @@
 # Supported boards and peripherals
 
-The emulated CPU is the ARM Cortex-M33 (`thumbv8m.main`), matching TinyGo's
-`-target=pico2` output. Board wiring below matches the headless flags and the
-UI board definitions.
+The emulated CPU is the ARM Cortex-M33 (`thumbv8m.main`), matching both
+`tinygo build -target=pico2` and Pico SDK C `PICO_BOARD=pico2` output. Board
+wiring below matches the headless flags and the UI board definitions.
 
 [peripherals.md](peripherals.md) maps each board to its headless flags, UI tab
 and reference firmware. In short:
@@ -25,10 +25,11 @@ and reference firmware. In short:
 
 ## Raspberry Pi Pico 2 (RP2350A)
 
-No device flags are needed. The core brings up the RP2350 peripherals TinyGo
-uses: GPIO/IO_BANK0/PADS, SIO, NVIC/SCB, timers, clocks/PLL/XOSC, watchdog,
-UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device + CDC console, and PIO0/1/2.
-`tinygo build -target=pico2 -scheduler=cores` boots core 1.
+No device flags are needed. The core brings up the RP2350 peripherals the
+TinyGo and Pico SDK runtimes use: GPIO/IO_BANK0/PADS, SIO, NVIC/SCB, timers,
+clocks/PLL/XOSC, watchdog, UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device
++ CDC console, and PIO0/1/2. TinyGo `-scheduler=cores` and Pico SDK
+`multicore_launch_core1` both boot core 1.
 
 ## Waveshare RP2350-GEEK
 
