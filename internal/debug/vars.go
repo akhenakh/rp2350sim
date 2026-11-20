@@ -272,20 +272,22 @@ func evalAddressWithFrame(expr []byte, regs *[16]uint32, frame uint64, cfa *uint
 		case op >= opLit0 && op <= opLit31:
 			push(uint64(op-opLit0), false)
 		case op >= opReg0 && op <= opReg31:
-			if regs == nil {
+			reg := int(op - opReg0)
+			if regs == nil || reg >= 16 {
 				return 0, false, false
 			}
-			push(uint64((*regs)[op-opReg0]), false)
+			push(uint64((*regs)[reg]), false)
 		case op >= opBreg0 && op <= opBreg31:
-			if regs == nil {
+			reg := int(op - opBreg0)
+			if regs == nil || reg >= 16 {
 				return 0, false, false
 			}
-			n, next, ok := uleb(expr, pc)
+			n, next, ok := sleb(expr, pc)
 			if !ok {
 				return 0, false, false
 			}
 			pc = next
-			push(uint64((*regs)[op-opBreg0])+uint64(int64(n)), true)
+			push(uint64((*regs)[reg])+uint64(n), true)
 		case op == opAddr:
 			if pc+4 > len(expr) {
 				return 0, false, false
@@ -305,7 +307,7 @@ func evalAddressWithFrame(expr []byte, regs *[16]uint32, frame uint64, cfa *uint
 				return 0, false, false
 			}
 			n, next2, ok := sleb(expr, next)
-			if !ok || regs == nil {
+			if !ok || regs == nil || reg >= 16 {
 				return 0, false, false
 			}
 			pc = next2
@@ -473,11 +475,13 @@ func evalAddressWithFrame(expr []byte, regs *[16]uint32, frame uint64, cfa *uint
 			_ = a
 			return 0, false, false
 		case op == opSkip:
-			_, next, ok := uleb(expr, pc)
-			if !ok {
+			if pc+2 > len(expr) {
 				return 0, false, false
 			}
-			pc = next
+			pc += 2 + int(int16(binary.LittleEndian.Uint16(expr[pc:])))
+			if pc < 0 || pc > len(expr) {
+				return 0, false, false
+			}
 		default:
 			return 0, false, false
 		}
