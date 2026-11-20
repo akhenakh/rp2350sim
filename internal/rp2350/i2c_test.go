@@ -47,7 +47,7 @@ func TestI2CEmptyBusNacks(t *testing.T) {
 	c.Write32(base+i2cENABLE, 1)
 	c.Write32(base+i2cTAR, 0x50)
 	c.Write32(base+i2cDATA, 0x10)
-	if got := c.Read32(base + i2cTXABRTSRC); got&(1<<3) == 0 {
-		t.Fatalf("abort source = %#x, want address NACK", got)
+	if got := c.Read32(base + i2cTXABRTSRC); got&i2cABRT7BAddrNoAck == 0 {
+		t.Fatalf("abort source = %#x, want ABRT_7B_ADDR_NOACK", got)
 	}
 }

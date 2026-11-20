@@ -24,6 +24,21 @@ type I2CDevice interface {
 	Read() byte
 }
 
+// I2CAddressable is implemented by targets that need the latched TAR (the TCP
+// bridge, which may serve several addresses through one object).
+type I2CAddressable interface {
+	SetAddress(addr uint8)
+}
+
+// I2CWireDevice is implemented by targets that can NAK a byte or report that
+// a read has no data (a remote bridge, for example). The controller falls back
+// to the legacy I2CDevice interface when this is not implemented.
+type I2CWireDevice interface {
+	I2CDevice
+	WriteAck(b byte) bool
+	ReadAck() (byte, bool)
+}
+
 // I2CTransaction is implemented by targets that need transaction boundaries
 // (a register pointer that survives a repeated start, or state cleared by the
 // STOP). Begin runs when the address is latched; End runs on STOP.
@@ -60,6 +75,12 @@ const (
 	i2cTXEmpty = 1 << 4
 	i2cTXAbrt  = 1 << 6
 	i2cStopDet = 1 << 9
+)
+
+// TX_ABRT_SOURCE reasons.
+const (
+	i2cABRT7BAddrNoAck = 1 << 0
+	i2cABRTTXDataNoAck = 1 << 3
 )
 
 func newI2C(c *Chip, base uint32, id int) *i2cBlock {
@@ -121,6 +142,9 @@ func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 			i.addr = uint8(v & 0x7F)
 			i.write = i.write[:0]
 			if dev, ok := i.devices[i.addr]; ok {
+				if a, ok := dev.(I2CAddressable); ok {
+					a.SetAddress(i.addr)
+				}
 				if t, ok := dev.(I2CTransaction); ok {
 					t.BeginTransaction()
 				}
@@ -175,16 +199,33 @@ func (i *i2cBlock) dataCmd(v uint32) {
 	read := v&(1<<8) != 0
 	stop := v&(1<<9) != 0
 	if read {
-		if _, found := i.devices[i.addr]; !found {
+		if dev, found := i.devices[i.addr]; !found {
 			// Empty bus: the address phase is NACKed, which aborts the
 			// transfer before any data is clocked.
-			i.block.regs[i2cTXABRTSRC/4] = 1 << 3 // ABRT_7B_ADDR_NOACK
+			i.block.regs[i2cTXABRTSRC/4] = i2cABRT7BAddrNoAck
 			i.raw |= i2cTXAbrt
 			if i.chip.OnI2C != nil {
 				i.chip.OnI2C(i.id, i.chip.Cycles, "addr", i.addr, 0, false)
 			}
+		} else if wd, ok := dev.(I2CWireDevice); ok {
+			b, ack := wd.ReadAck()
+			if !ack {
+				i.block.regs[i2cTXABRTSRC/4] = i2cABRTTXDataNoAck
+				i.raw |= i2cTXAbrt
+				if i.chip.OnI2C != nil {
+					i.chip.OnI2C(i.id, i.chip.Cycles, "read", i.addr, 0, false)
+				}
+			} else {
+				i.rx = append(i.rx, b)
+				if i.chip.OnI2C != nil {
+					i.chip.OnI2C(i.id, i.chip.Cycles, "read", i.addr, b, true)
+				}
+				if len(i.rx) >= 16 {
+					i.raw |= 1 << 5 // RX_FULL
+				}
+			}
 		} else {
-			b := i.readByte()
+			b := dev.Read()
 			i.rx = append(i.rx, b)
 			if i.chip.OnI2C != nil {
 				i.chip.OnI2C(i.id, i.chip.Cycles, "read", i.addr, b, true)
@@ -197,11 +238,19 @@ func (i *i2cBlock) dataCmd(v uint32) {
 		b := byte(v)
 		ok := true
 		if dev, found := i.devices[i.addr]; found {
-			dev.Write(b)
+			if wd, wire := dev.(I2CWireDevice); wire {
+				ok = wd.WriteAck(b)
+			} else {
+				dev.Write(b)
+			}
+			if !ok {
+				i.block.regs[i2cTXABRTSRC/4] = i2cABRTTXDataNoAck
+				i.raw |= i2cTXAbrt
+			}
 		} else {
 			// NACK: no target.
 			ok = false
-			i.block.regs[i2cTXABRTSRC/4] = 1 << 3 // ABRT_7B_ADDR_NOACK
+			i.block.regs[i2cTXABRTSRC/4] = i2cABRT7BAddrNoAck
 			i.raw |= i2cTXAbrt
 		}
 		if i.chip.OnI2C != nil {
@@ -222,17 +271,18 @@ func (i *i2cBlock) dataCmd(v uint32) {
 	}
 }
 
-func (i *i2cBlock) readByte() byte {
-	if dev, ok := i.devices[i.addr]; ok {
-		return dev.Read()
-	}
-	// Empty bus: a read after a NACK still has to make progress.
-	return 0xFF
-}
-
 // AttachI2C registers a device at a 7-bit address on one of the controllers.
 func (c *Chip) AttachI2C(id int, addr uint8, dev I2CDevice) {
 	if c.i2c[id] != nil {
 		c.i2c[id].devices[addr] = dev
 	}
+}
+
+// HasI2CDevice reports whether an address already has a target.
+func (c *Chip) HasI2CDevice(id int, addr uint8) bool {
+	if id < 0 || id >= len(c.i2c) || c.i2c[id] == nil {
+		return false
+	}
+	_, ok := c.i2c[id].devices[addr]
+	return ok
 }
