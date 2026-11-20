@@ -12,3 +12,10 @@ logic-analyze-trace-*.txt
 dist/
 
 ci.log
+
+# Generated Hugo documentation content and build output
+site/content/docs/
+site/static/docs/
+site/public/
+site/resources/
+site/.hugo_build.lock

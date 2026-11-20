@@ -8,7 +8,9 @@ scope, a logic analyzer and Bus Pirate terminals.
 
 ![Board picker](images/picker.png)
 
-This directory is the user guide:
+This directory is the user guide. The same pages are rendered with Hugo and
+the [Hextra](https://themes.gohugo.io/themes/hextra/) theme at
+<https://akhenakh.github.io/rp2350sim/>; preview locally with `task docs:serve`.
 
 | Document | Contents |
 |---|---|

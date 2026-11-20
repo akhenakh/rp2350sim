@@ -69,6 +69,31 @@ jobs:
           path: ci.log
           if-no-files-found: ignore
 
+  docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: site/go.mod
+          cache: true
+
+      - name: Install Task
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: "0.170.1"
+          extended: true
+
+      - name: Build documentation
+        run: task docs:build
+
   # The report job never runs PR code: it only reads the log artifact and
   # writes a comment. That keeps the write token out of the test job. Fork PRs
   # are skipped because GitHub downgrades the token for pull_request runs from

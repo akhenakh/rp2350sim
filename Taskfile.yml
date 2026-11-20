@@ -659,6 +659,25 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean --skip=publish,announce
 
+  docs:site:
+    desc: Generate the Hugo content tree from docs/
+    cmds:
+      - python3 tools/gen_docs_site.py
+
+  docs:serve:
+    desc: Preview the Hextra documentation locally at http://localhost:1313
+    deps: [docs:site]
+    dir: site
+    cmds:
+      - 'HUGO_MODULE_PROXY=https://proxy.golang.org hugo server --buildDrafts --disableFastRender --bind 127.0.0.1 --port 1313 --baseURL http://localhost:1313/'
+
+  docs:build:
+    desc: Build the Hextra documentation site into site/public
+    deps: [docs:site]
+    dir: site
+    cmds:
+      - 'HUGO_MODULE_PROXY=https://proxy.golang.org hugo --minify'
+
   clean:
     desc: Remove build outputs
     cmds:
