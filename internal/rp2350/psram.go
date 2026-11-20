@@ -39,15 +39,14 @@ const (
 // qmiBlock holds the QMI direct-mode state in addition to the register file.
 type qmiBlock struct {
 	block   *regBlock
-	c       *Chip
 	enabled bool
 	idMode  bool
 	idIndex int
 	rx      []byte
 }
 
-func newQMI(c *Chip) *qmiBlock {
-	q := &qmiBlock{c: c, block: newRegBlock(qmiBase, 0x1000)}
+func newQMI() *qmiBlock {
+	q := &qmiBlock{block: newRegBlock(qmiBase, 0x1000)}
 	q.block.regs[0] = 0x01800000      // DIRECT_CSR reset
 	q.block.regs[0x20/4] = 0x40000004 // M1_TIMING reset
 	q.block.regs[0x24/4] = 0x00001000 // M1_RFMT reset

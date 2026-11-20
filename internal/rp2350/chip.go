@@ -192,7 +192,7 @@ func New() *Chip {
 	c.addRegBlock(newROSC(c))
 	c.xipCtrl = newXIPCtrl(c)
 	c.addRegBlock(c.xipCtrl)
-	c.qmi = newQMI(c)
+	c.qmi = newQMI()
 	c.addRegBlock(c.qmi.block)
 	c.addRegBlock(c.io.bank0)
 	c.addRegBlock(c.io.pads)
