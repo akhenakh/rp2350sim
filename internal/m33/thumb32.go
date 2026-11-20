@@ -337,17 +337,35 @@ func (c *CPU) exec32DataProc(hw1, hw2 uint16, _ bool) {
 		return
 	}
 
-	carry := s && shift != 0
+	// The five-bit shift field encodes 0 as 32 for LSR and ASR; ROR #0 is
+	// RRX, and only LSL #0 is "no shift". Getting this wrong leaves C stale,
+	// which breaks the compiler's `bics ... asr #32` boolean-select idiom.
+	amount := shift
+	if (typ == 1 || typ == 2) && amount == 0 {
+		amount = 32
+	}
+	carry := s && (typ != 0 || shift != 0)
 	var v uint32
 	switch typ {
 	case 0:
-		v = shiftLSL(c, c.R[rm], shift, carry)
+		v = shiftLSL(c, c.R[rm], amount, carry)
 	case 1:
-		v = shiftLSR(c, c.R[rm], shift, carry)
+		v = shiftLSR(c, c.R[rm], amount, carry)
 	case 2:
-		v = shiftASR(c, c.R[rm], shift, carry)
+		v = shiftASR(c, c.R[rm], amount, carry)
 	case 3:
-		v = shiftROR(c, c.R[rm], shift, carry)
+		if amount == 0 { // RRX
+			cIn := uint32(0)
+			if c.flag(flagC) {
+				cIn = 1
+			}
+			v = c.R[rm]>>1 | cIn<<31
+			if carry && !c.itNoFlags {
+				c.setFlag(flagC, c.R[rm]&1 != 0)
+			}
+		} else {
+			v = shiftROR(c, c.R[rm], amount, carry)
+		}
 	}
 
 	a := c.R[rn]

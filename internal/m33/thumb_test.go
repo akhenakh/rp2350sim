@@ -270,3 +270,34 @@ func TestITBlock(t *testing.T) {
 		t.Fatalf("it ne: r1=%d want 0", c.R[1])
 	}
 }
+
+// TestBICShiftedASR32Carry covers the compiler's boolean-select idiom
+// `bics r0, r0, r2, asr #32`, where the carry is the sign of r2.
+func TestBICShiftedASR32Carry(t *testing.T) {
+	run := func(r2 uint32) *CPU {
+		bus := newTestBus()
+		bus.Write16(0, 0xEA30) // bics.w r0, r0, r2, asr #32
+		bus.Write16(2, 0x0022)
+		bus.Write16(4, 0xBF00)
+		c := New(bus)
+		c.R[15] = 0
+		c.R[0] = 0x1000
+		c.R[2] = r2
+		c.Step()
+		return c
+	}
+	neg := run(0xFFFFFFFF)
+	if neg.R[0] != 0 {
+		t.Fatalf("negative select: r0 = %#x, want 0", neg.R[0])
+	}
+	if !neg.flag(flagC) {
+		t.Fatal("negative select did not set carry")
+	}
+	pos := run(1)
+	if pos.R[0] != 0x1000 {
+		t.Fatalf("positive select: r0 = %#x, want 0x1000", pos.R[0])
+	}
+	if pos.flag(flagC) {
+		t.Fatal("positive select set carry")
+	}
+}
