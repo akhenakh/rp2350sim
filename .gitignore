@@ -18,4 +18,5 @@ site/content/docs/
 site/static/docs/
 site/public/
 site/resources/
+site/themes/
 site/.hugo_build.lock

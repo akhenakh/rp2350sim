@@ -76,11 +76,15 @@ def main() -> None:
         if not src.exists():
             continue
         text = src.read_text()
-        # Drop the original H1: Hextra renders the title from front matter.
+        # Drop the original H1: Geekdoc renders the title from front matter.
         text = re.sub(r"\A# .*\n+", "", text)
         index = name == "README.md"
         text = rewrite_links(text, index)
-        out = CONTENT / ("_index.md" if index else name)
+        if index:
+            out = CONTENT / "_index.md"
+        else:
+            out = CONTENT / name.removesuffix(".md") / "index.md"
+            out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
             f"---\ntitle: {title!r}\nweight: {weight}\ntoc: true\n---\n\n{text.lstrip()}"
         )

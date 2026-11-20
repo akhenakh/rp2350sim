@@ -112,8 +112,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task release:check` | validate the GoReleaser configuration |
 | `task release:snapshot` | build all release archives under `dist/` (no publish) |
-| `task docs:serve` | preview the Hextra documentation at <http://localhost:1313> |
-| `task docs:build` | build the Hextra site into `site/public` |
+| `task docs:serve` | preview the Geekdoc documentation at <http://localhost:1313> |
+| `task docs:build` | build the Geekdoc site into `site/public` |
 | `task clean` | remove `build/` |
 
 ## Running firmware
@@ -318,7 +318,7 @@ The user guide lives in [`docs/`](docs/README.md):
 - [`docs/c.md`](docs/c.md) — C firmware with the Pico SDK, examples and current gaps
 - [`docs/release.md`](docs/release.md) — release archives, GoReleaser and supported platforms
 
-The same pages are published as a Hextra site at
+The same pages are published as a Geekdoc site at
 <https://akhenakh.github.io/rp2350sim/>. Preview it locally with
 `task docs:serve`; `site/` contains the Hugo configuration and
 `tools/gen_docs_site.py` generates its content from `docs/`.

@@ -1,51 +1,31 @@
 baseURL: https://akhenakh.github.io/rp2350sim/
-locale: en-us
 title: rp2350sim
+theme: hugo-geekdoc
+defaultContentLanguage: en
+locale: en-us
+pygmentsUseClasses: true
+pygmentsCodeFences: true
+pluralizeListTitles: false
+disablePathToLower: true
+enableRobotsTXT: true
 enableGitInfo: false
 disableKinds:
   - taxonomy
   - term
-module:
-  imports:
-    - path: github.com/imfing/hextra
 markup:
   goldmark:
     renderer:
       unsafe: true
-  highlight:
-    noClasses: false
+  tableOfContents:
+    startLevel: 1
+    endLevel: 9
 params:
   description: RP2350 emulator for TinyGo and Pico SDK firmware
-  displayUpdatedDate: false
-  navbar:
-    displayTitle: true
-    displayLogo: false
-  footer:
-    displayCopyright: true
-    displayPoweredBy: true
-  theme:
-    default: system
-    displayToggle: true
-  search:
-    enable: true
-    type: flexsearch
-  page:
-    width: wide
-  imageZoom:
-    enable: true
-menu:
-  main:
-    - name: Documentation
-      pageRef: /docs
-      weight: 1
-    - name: GitHub
-      url: https://github.com/akhenakh/rp2350sim
-      weight: 2
-      params:
-        icon: github
-  sidebar:
-    - name: Repository
-      url: https://github.com/akhenakh/rp2350sim
-      weight: 1
-      params:
-        icon: github
+  geekdocToC: 3
+  geekdocSearch: true
+  geekdocSearchShowParent: true
+  geekdocSearchShowDescription: true
+  geekdocPageLastmod: false
+  geekdocDarkModeDim: true
+  geekdocRepo: https://github.com/akhenakh/rp2350sim
+  geekdocMenuBundle: false

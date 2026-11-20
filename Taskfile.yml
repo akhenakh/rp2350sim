@@ -659,24 +659,30 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean --skip=publish,announce
 
+  docs:theme:
+    desc: Fetch the pinned Geekdoc theme release
+    cmds:
+      - mkdir -p site/themes/hugo-geekdoc
+      - test -f site/themes/hugo-geekdoc/theme.toml || (curl -fsSL https://github.com/thegeeklab/hugo-geekdoc/releases/download/v5.0.0/hugo-geekdoc.tar.gz | tar -xz -C site/themes/hugo-geekdoc --strip-components=1)
+
   docs:site:
     desc: Generate the Hugo content tree from docs/
     cmds:
       - python3 tools/gen_docs_site.py
 
   docs:serve:
-    desc: Preview the Hextra documentation locally at http://localhost:1313
-    deps: [docs:site]
+    desc: Preview the Geekdoc documentation locally at http://localhost:1313
+    deps: [docs:theme, docs:site]
     dir: site
     cmds:
-      - 'HUGO_MODULE_PROXY=https://proxy.golang.org hugo server --buildDrafts --disableFastRender --bind 127.0.0.1 --port 1313 --baseURL http://localhost:1313/'
+      - hugo server --buildDrafts --disableFastRender --bind 127.0.0.1 --port 1313 --baseURL http://localhost:1313/
 
   docs:build:
-    desc: Build the Hextra documentation site into site/public
-    deps: [docs:site]
+    desc: Build the Geekdoc documentation site into site/public
+    deps: [docs:theme, docs:site]
     dir: site
     cmds:
-      - 'HUGO_MODULE_PROXY=https://proxy.golang.org hugo --minify'
+      - 'hugo --cleanDestinationDir --baseURL "${HUGO_BASEURL:-https://akhenakh.github.io/rp2350sim/}"'
 
   clean:
     desc: Remove build outputs

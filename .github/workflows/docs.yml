@@ -28,8 +28,13 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: site/go.mod
+          go-version-file: go.mod
           cache: true
+
+      - name: Install Task
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - uses: peaceiris/actions-hugo@v3
         with:
@@ -40,13 +45,10 @@ jobs:
         id: pages
         uses: actions/configure-pages@v5
 
-      - name: Generate documentation
-        run: python3 tools/gen_docs_site.py
-
       - name: Build site
+        run: task docs:build
         env:
-          HUGO_MODULE_PROXY: https://proxy.golang.org
-        run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+          HUGO_BASEURL: ${{ steps.pages.outputs.base_url }}/
 
       - uses: actions/upload-pages-artifact@v3
         with:

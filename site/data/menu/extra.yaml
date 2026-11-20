@@ -1,0 +1,6 @@
+---
+header:
+  - name: GitHub
+    icon: gdoc_github
+    ref: https://github.com/akhenakh/rp2350sim
+    external: true
