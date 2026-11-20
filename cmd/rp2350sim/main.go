@@ -26,6 +26,19 @@ import (
 // version is set by GoReleaser with -X main.version.
 var version = "dev"
 
+// stopCPUProfile is installed when -cpuprofile starts. os.Exit skips defers,
+// and the failing runs are exactly the ones worth profiling, so exit() flushes
+// the profile explicitly.
+var stopCPUProfile func()
+
+func exit(code int) {
+	if stopCPUProfile != nil {
+		stopCPUProfile()
+		stopCPUProfile = nil
+	}
+	os.Exit(code)
+}
+
 // hex renders an address or register value for a log attribute.
 func hex(v uint32) string { return fmt.Sprintf("%#08x", v) }
 
@@ -35,15 +48,15 @@ func resolveAddress(spec string, info *debug.Info) (uint32, error) {
 	if spec == "" {
 		return 0, nil
 	}
+	if info != nil {
+		if addr, ok := info.Resolve(spec); ok {
+			return addr, nil
+		}
+	}
 	raw := strings.TrimPrefix(strings.TrimPrefix(spec, "0x"), "0X")
 	if raw != "" {
 		if v, err := strconv.ParseUint(raw, 16, 32); err == nil {
 			return uint32(v), nil
-		}
-	}
-	if info != nil {
-		if addr, ok := info.Resolve(spec); ok {
-			return addr, nil
 		}
 	}
 	return 0, fmt.Errorf("%q is neither a hex address nor a known symbol", spec)
@@ -203,19 +216,19 @@ func main() {
 	}
 	if *sdImage != "" && *sdDir != "" {
 		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
-		os.Exit(2)
+		exit(2)
 	}
 	if *psramMB < 0 || *psramMB > 16 || *psramMB&(*psramMB-1) != 0 {
 		fmt.Fprintln(os.Stderr, "-psram must be 0, 1, 2, 4, 8 or 16 MiB")
-		os.Exit(2)
+		exit(2)
 	}
 	if *psramLat < 0 {
 		fmt.Fprintln(os.Stderr, "-psram-latency must not be negative")
-		os.Exit(2)
+		exit(2)
 	}
 	if *psramCS < 0 || *psramCS > 47 {
 		fmt.Fprintln(os.Stderr, "-psram-cs must be a GPIO number")
-		os.Exit(2)
+		exit(2)
 	}
 	logicEnabled := *logicPins != "" || *logicOut != "" || *logicUART != "" || *logicI2C != "" || *logicSPI != ""
 	logicLabel := *logicBoard
@@ -232,19 +245,19 @@ func main() {
 		logicCap, logicErr = newLogicCapture(*logicPins, *logicUART, *logicI2C, *logicSPI, *logicRate, *logicDepth, logicLabel)
 		if logicErr != nil {
 			fmt.Fprintln(os.Stderr, "logic capture:", logicErr)
-			os.Exit(2)
+			exit(2)
 		}
 	}
 
 	format, err := logging.ParseFormat(*logFormat)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		exit(2)
 	}
 	level, err := logging.ParseLevel(*logLevel)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		exit(2)
 	}
 	log := logging.New(os.Stderr, format, level)
 	// The legacy RP2350SIM_*_LOG switches select one diagnostic stream. They
@@ -261,32 +274,32 @@ func main() {
 		f, err := os.Create(*cpuProfile)
 		if err != nil {
 			log.Error("cpu profile", slog.String("path", *cpuProfile), slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 		if err := pprof.StartCPUProfile(f); err != nil {
 			log.Error("cpu profile", slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
-		defer pprof.StopCPUProfile()
+		stopCPUProfile = pprof.StopCPUProfile
 	}
 	if *path == "" && *flashIn == "" {
 		flag.Usage()
-		os.Exit(2)
+		exit(2)
 	}
 
 	var img *firmware.Image
-	format = "flash"
+	fwFormat := "flash"
 	if *path != "" {
 		img, err = firmware.Load(*path)
 		if err != nil {
 			log.Error("firmware load failed", slog.String("path", *path), slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 		if err := img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
 			log.Error("unsupported firmware layout", slog.String("path", *path), slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
-		format = img.Format
+		fwFormat = img.Format
 		if !*quiet {
 			log.Info("firmware loaded",
 				slog.String("path", *path),
@@ -316,7 +329,7 @@ func main() {
 		case ferr == nil:
 			if len(data) > len(c.Flash) {
 				log.Error("flash image too large", slog.String("path", *flashIn), slog.Int("bytes", len(data)))
-				os.Exit(1)
+				exit(1)
 			}
 			c.LoadFlashImage(data)
 			if !*quiet {
@@ -328,7 +341,7 @@ func main() {
 			}
 		default:
 			log.Error("flash load", slog.String("path", *flashIn), slog.Any("err", ferr))
-			os.Exit(1)
+			exit(1)
 		}
 	}
 	otpSeeded := 0
@@ -336,7 +349,7 @@ func main() {
 		otpSeeded, err = loadOTP(c, *otpIn)
 		if err != nil {
 			log.Error("otp load", slog.String("path", *otpIn), slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 		if !*quiet {
 			log.Info("otp seeded", slog.String("path", *otpIn), slog.Int("rows", otpSeeded))
@@ -361,7 +374,7 @@ func main() {
 		bootImg := &firmware.Image{Format: "flash", Segments: []firmware.Segment{{Addr: rp2350.FlashBase, Data: head}}}
 		if err := bootImg.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
 			log.Error("unsupported flash image", slog.String("path", *flashIn), slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 	}
 	c.Boot()
@@ -408,7 +421,7 @@ func main() {
 	if *touchLCD2 {
 		if *lcdFlag {
 			log.Error("-lcd and -touch-lcd2 are mutually exclusive")
-			os.Exit(2)
+			exit(2)
 		}
 		lcd = devices.NewST7789(c, 17, 16, 20)
 		lcdSPI = 0
@@ -425,13 +438,13 @@ func main() {
 		card, err = newRunnerCard(c, 25, *sdImage, *sdDir)
 		if err != nil {
 			log.Error("sd card", slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 	} else if *sdFlag {
 		card, err = newRunnerCard(c, 23, *sdImage, *sdDir)
 		if err != nil {
 			log.Error("sd card", slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 		spiCardBus = 0
 	}
@@ -449,7 +462,7 @@ func main() {
 	}
 	if *ethFlag && *w6300Flag {
 		log.Error("-eth and -w6300 are mutually exclusive")
-		os.Exit(2)
+		exit(2)
 	}
 
 	var w5500 *devices.W5500
@@ -509,12 +522,12 @@ func main() {
 	i2cSpecs, err := parseBusBridgeSpecs(devices.BusI2C, i2cTCPFlag)
 	if err != nil {
 		log.Error("i2c-tcp", slog.Any("err", err))
-		os.Exit(2)
+		exit(2)
 	}
 	spiSpecs, err := parseBusBridgeSpecs(devices.BusSPI, spiTCPFlag)
 	if err != nil {
 		log.Error("spi-tcp", slog.Any("err", err))
-		os.Exit(2)
+		exit(2)
 	}
 	var busBridges []*devices.BusBridge
 	var spiBridges []*devices.SPIBridge
@@ -528,7 +541,7 @@ func main() {
 		})
 	if err != nil {
 		log.Error("bus bridge", slog.Any("err", err))
-		os.Exit(2)
+		exit(2)
 	}
 	defer func() {
 		for _, br := range busBridges {
@@ -549,13 +562,13 @@ func main() {
 			if seenCS[k] {
 				log.Error("two SPI devices share a chip select",
 					slog.Int("spi", bus), slog.Int("cs", d.cs))
-				os.Exit(2)
+				exit(2)
 			}
 			seenCS[k] = true
 			if prev, ok := pinBus[d.cs]; ok && prev != bus {
 				log.Error("one GPIO is used as CS on two SPI controllers",
 					slog.Int("gpio", d.cs), slog.Int("spi", prev), slog.Int("other", bus))
-				os.Exit(2)
+				exit(2)
 			}
 			pinBus[d.cs] = bus
 		}
@@ -599,18 +612,18 @@ func main() {
 	if *touchStr != "" {
 		if touch == nil {
 			log.Error("-touch needs -touch-lcd2")
-			os.Exit(2)
+			exit(2)
 		}
 		parts := strings.Split(*touchStr, ",")
 		if len(parts) != 2 {
 			log.Error("-touch expects x,y")
-			os.Exit(2)
+			exit(2)
 		}
 		x, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 		y, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 		if err1 != nil || err2 != nil {
 			log.Error("-touch expects integer x,y")
-			os.Exit(2)
+			exit(2)
 		}
 		at := uint64(touchAt.Seconds() * 150e6)
 		end := at + uint64(touchHold.Seconds()*150e6)
@@ -732,7 +745,7 @@ func main() {
 		addr, err := resolveAddress(*bpStr, dbgInfo)
 		if err != nil {
 			log.Error("breakpoint", slog.Any("err", err))
-			os.Exit(2)
+			exit(2)
 		}
 		bp = uint64(addr)
 	}
@@ -741,7 +754,7 @@ func main() {
 		addr, err := resolveAddress(*bp2Str, dbgInfo)
 		if err != nil {
 			log.Error("secondary breakpoint", slog.Any("err", err))
-			os.Exit(2)
+			exit(2)
 		}
 		bp2 = uint64(addr)
 	}
@@ -749,6 +762,7 @@ func main() {
 	zeros := 0
 	bpHits := 0
 	if *traceLast || bp != 0 || bp2 != 0 {
+		prevTrace := c.CPU0.TracePC
 		watchReg := -1
 		lastReg := uint32(0)
 		if *regStr != "" {
@@ -760,6 +774,9 @@ func main() {
 			maxAddr = img.MaxAddr()
 		}
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
+			if prevTrace != nil {
+				prevTrace(cpu, pc, hw1)
+			}
 			if img != nil && pc >= maxAddr && pc < rp2350.FlashBase+rp2350.FlashSize {
 				log.Error("pc outside image",
 					slog.String("pc", hex(pc)), slog.String("lr", hex(cpu.R[14])), slog.String("sp", hex(cpu.R[13])))
@@ -771,7 +788,7 @@ func main() {
 					log.Info("trace back", slog.String("line", l))
 				}
 				c.Halted = true
-				os.Exit(1)
+				exit(1)
 			}
 			if watchReg >= 0 {
 				if v := cpu.R[watchReg]; v != lastReg {
@@ -810,7 +827,7 @@ func main() {
 				bpHits++
 				if bpHits >= 200 {
 					c.Halted = true
-					os.Exit(1)
+					exit(1)
 				}
 				return
 			}
@@ -838,7 +855,7 @@ func main() {
 					log.Info("trace back", slog.String("line", l))
 				}
 				c.Halted = true
-				os.Exit(1)
+				exit(1)
 			}
 		}
 	}
@@ -873,9 +890,13 @@ func main() {
 		wa, err := resolveAddress(*watchStr, dbgInfo)
 		if err != nil {
 			log.Error("watchpoint", slog.Any("err", err))
-			os.Exit(2)
+			exit(2)
 		}
+		prevWrite := c.OnWrite
 		c.OnWrite = func(addr uint32, val uint32, size int) {
+			if prevWrite != nil {
+				prevWrite(addr, val, size)
+			}
 			if addr == wa {
 				log.Info("watched write",
 					slog.String("addr", hex(addr)), slog.String("value", hex(val)),
@@ -964,7 +985,7 @@ func main() {
 		b, err := os.ReadFile(*inputFile)
 		if err != nil {
 			log.Error("input file", slog.String("path", *inputFile), slog.Any("err", err))
-			os.Exit(1)
+			exit(1)
 		}
 		inputData = append(inputData, b...)
 	}
@@ -1205,7 +1226,7 @@ func main() {
 			PSRAMLatency   uint32                `json:"psram_latency_cycles,omitempty"`
 		}{
 			Firmware:       *path,
-			Format:         format,
+			Format:         fwFormat,
 			Cycles:         c.Cycles,
 			VirtualSeconds: float64(c.Cycles) / 150e6,
 			WallSeconds:    wall.Seconds(),
@@ -1247,6 +1268,6 @@ func main() {
 	}
 
 	if exitCode != 0 {
-		os.Exit(exitCode)
+		exit(exitCode)
 	}
 }
