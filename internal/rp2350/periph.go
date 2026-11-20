@@ -9,6 +9,10 @@ type regBlock struct {
 	readFn func(c *Chip, off uint32) (uint32, bool)
 	// writeFn is called after the register file has been updated.
 	writeFn func(c *Chip, off uint32, v uint32)
+	// clearFn, when set, handles a write through the +0x3000 CLR alias. A
+	// W1C register needs the written mask rather than the resulting value, so
+	// such blocks bypass the default read-modify-write.
+	clearFn func(c *Chip, off uint32, v uint32)
 }
 
 func newRegBlock(base, size uint32) *regBlock {

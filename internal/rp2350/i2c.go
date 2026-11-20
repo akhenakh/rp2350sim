@@ -175,13 +175,23 @@ func (i *i2cBlock) dataCmd(v uint32) {
 	read := v&(1<<8) != 0
 	stop := v&(1<<9) != 0
 	if read {
-		b := i.readByte()
-		i.rx = append(i.rx, b)
-		if i.chip.OnI2C != nil {
-			i.chip.OnI2C(i.id, i.chip.Cycles, "read", i.addr, b, true)
-		}
-		if len(i.rx) >= 16 {
-			i.raw |= 1 << 5 // RX_FULL
+		if _, found := i.devices[i.addr]; !found {
+			// Empty bus: the address phase is NACKed, which aborts the
+			// transfer before any data is clocked.
+			i.block.regs[i2cTXABRTSRC/4] = 1 << 3 // ABRT_7B_ADDR_NOACK
+			i.raw |= i2cTXAbrt
+			if i.chip.OnI2C != nil {
+				i.chip.OnI2C(i.id, i.chip.Cycles, "addr", i.addr, 0, false)
+			}
+		} else {
+			b := i.readByte()
+			i.rx = append(i.rx, b)
+			if i.chip.OnI2C != nil {
+				i.chip.OnI2C(i.id, i.chip.Cycles, "read", i.addr, b, true)
+			}
+			if len(i.rx) >= 16 {
+				i.raw |= 1 << 5 // RX_FULL
+			}
 		}
 	} else {
 		b := byte(v)

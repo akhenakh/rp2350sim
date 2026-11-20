@@ -152,6 +152,7 @@ func main() {
 		wallLimit  = flag.Duration("wall-timeout", 0, "fail after this much wall time (0 = unlimited)")
 		summaryOut = flag.String("summary-file", "", "write a JSON run summary to this path")
 		allowHalt  = flag.Bool("allow-halt", false, "exit 0 even when a core halts")
+		keepAfter  = flag.Bool("continue-after-halt", false, "keep peripherals running after a core halts (PIO/PWM keep driving)")
 		serialTCP  = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
 		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
@@ -858,6 +859,10 @@ func main() {
 
 	if logicCap != nil {
 		logicCap.attach(c)
+	}
+	if *keepAfter {
+		c.ContinueAfterHalt = true
+		*allowHalt = true
 	}
 	netLog := &networkReporter{log: log}
 	start := time.Now()

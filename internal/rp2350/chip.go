@@ -58,6 +58,10 @@ type Chip struct {
 	Paused bool
 	// Halted reports that a core stopped on an unexpected condition.
 	Halted bool
+	// ContinueAfterHalt keeps the clock and peripherals running after a core
+	// halts, so PIO, PWM and DMA engines keep producing state. The halted
+	// cores themselves stop executing.
+	ContinueAfterHalt bool
 
 	// Pin state and per-pin external drive for the board model.
 	Pins *PinState
@@ -188,9 +192,11 @@ func New() *Chip {
 	c.dma = newDMA(c)
 	c.addRegBlock(c.dma.block)
 	c.usb = newUSB(c)
-	c.addRegBlock(c.usb.block)
+	c.addRegBlock(c.usb.dpram)
+	c.addRegBlock(c.usb.regs)
 	c.pwm = newPWM(c)
 	c.addRegBlock(c.pwm.block)
+	c.Pins.LevelOverride = c.pwm.pinLevel
 	c.adc = newADC(c)
 	c.addRegBlock(c.adc.block)
 	c.i2c[0] = newI2C(c, 0x40090000, 0)
@@ -219,7 +225,7 @@ func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 
 // Run executes n cycles across both cores.
 func (c *Chip) Run(n uint64) {
-	for i := uint64(0); i < n && !c.Halted; i++ {
+	for i := uint64(0); i < n && (!c.Halted || c.ContinueAfterHalt); i++ {
 		// With both cores asleep and nothing that needs per-cycle attention,
 		// only timers can make progress; jump to the next microsecond tick
 		// instead of executing 150 empty cycles.
@@ -266,7 +272,7 @@ func (c *Chip) Step() {
 		c.applyReset()
 		return
 	}
-	if c.Halted {
+	if c.Halted && !c.ContinueAfterHalt {
 		return
 	}
 	c.Cycles++
@@ -759,7 +765,11 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 		case addr >= b.base+0x2000 && addr < b.base+0x3000: // SET
 			b.write(c, off, b.read(c, off)|v)
 		default: // CLR
-			b.write(c, off, b.read(c, off)&^v)
+			if b.clearFn != nil {
+				b.clearFn(c, off, v)
+			} else {
+				b.write(c, off, b.read(c, off)&^v)
+			}
 		}
 		return
 	}

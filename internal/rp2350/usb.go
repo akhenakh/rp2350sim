@@ -15,8 +15,12 @@ import (
 // control blocks and buffers there, and the host engine moves packets in and
 // out of the same bytes.
 type usbBlock struct {
-	chip  *Chip
-	block *regBlock
+	chip *Chip
+	// dpram is the 4 KB endpoint buffer memory. The controller registers live
+	// in their own block so the RP2350 atomic aliases at +0x1000/+0x2000/
+	// +0x3000 resolve to the registers, not to DPRAM.
+	dpram *regBlock
+	regs  *regBlock
 
 	// Controller interrupt state (INTR), BUFF_STATUS latches and SIE_STATUS
 	// bits that firmware writes 1 to in order to clear.
@@ -28,11 +32,12 @@ type usbBlock struct {
 	addr     uint32
 
 	// Host enumeration state.
-	state     usbHostState
-	step      int
-	wait      int
-	pollTick  int
-	outSent   bool
+	state    usbHostState
+	step     int
+	wait     int
+	pollTick int
+	outSent  bool
+
 	collected []byte
 
 	// OnCDC receives bytes the firmware sends on the CDC data endpoint.
@@ -55,9 +60,6 @@ const (
 	usbRegsBase  = 0x50110000
 	usbDPRAMBase = 0x50100000
 )
-
-// Controller registers live 64 KB above the DPRAM window.
-func usbReg(off uint32) uint32 { return 0x10000 + off }
 
 const (
 	usbADDRENDP   = 0x000
@@ -117,23 +119,26 @@ func usbBufDataOff(ep int, in bool) uint32 {
 }
 
 func newUSB(c *Chip) *usbBlock {
-	u := &usbBlock{chip: c, block: newRegBlock(usbDPRAMBase, 0x11000)}
-	u.block.readFn = u.read
-	u.block.writeFn = u.write
+	u := &usbBlock{chip: c}
+	u.dpram = newRegBlock(usbDPRAMBase, 0x1000)
+	u.regs = newRegBlock(usbRegsBase, 0x1000)
+	u.regs.readFn = u.read
+	u.regs.writeFn = u.write
+	u.regs.clearFn = u.clear
 	return u
 }
 
 func (u *usbBlock) read(c *Chip, off uint32) (uint32, bool) {
 	switch off {
-	case usbReg(usbADDRENDP):
+	case usbADDRENDP:
 		return u.addr, true
-	case usbReg(usbSIESTATUS):
+	case usbSIESTATUS:
 		return u.sieStatus, true
-	case usbReg(usbBUFFSTATUS):
+	case usbBUFFSTATUS:
 		return u.buffStatus, true
-	case usbReg(usbINTR):
+	case usbINTR:
 		return u.intr, true
-	case usbReg(usbINTS):
+	case usbINTS:
 		return u.intr & u.inte(), true
 	}
 	return 0, false
@@ -141,9 +146,9 @@ func (u *usbBlock) read(c *Chip, off uint32) (uint32, bool) {
 
 func (u *usbBlock) write(c *Chip, off, v uint32) {
 	switch off {
-	case usbReg(usbADDRENDP):
+	case usbADDRENDP:
 		u.addr = v & 0x7F
-	case usbReg(usbSIESTATUS):
+	case usbSIESTATUS:
 		// Write 1 to clear the latched event and its interrupt.
 		if v&usbSIESetupRec != 0 {
 			u.intr &^= usbINTSetupReq
@@ -152,22 +157,34 @@ func (u *usbBlock) write(c *Chip, off, v uint32) {
 			u.intr &^= usbINTBusReset
 		}
 		u.sieStatus &^= v & (usbSIESetupRec | usbSIEReset | usbSIEACKRec)
-	case usbReg(usbBUFFSTATUS):
+	case usbBUFFSTATUS:
 		u.buffStatus &^= v
 		if u.buffStatus == 0 {
 			u.intr &^= usbINTBuffStatus
 		}
-	case usbReg(usbINTS):
+	case usbINTS:
 		u.intr &^= v
-	case usbReg(usbSIECTRL):
+	case usbSIECTRL:
 		if v&usbSIEPullupEn != 0 && !u.attached {
 			u.attach()
 		}
 	}
 }
 
-func (u *usbBlock) inte() uint32  { return u.block.regs[usbReg(usbINTE)/4] }
-func (u *usbBlock) enabled() bool { return u.block.regs[usbReg(usbMAINCTRL)/4]&usbMainEnable != 0 }
+// clear handles the +0x3000 CLR alias. The controller's status and interrupt
+// registers are write-1-to-clear, so they need the written mask; plain control
+// registers take the usual read-modify-write result.
+func (u *usbBlock) clear(c *Chip, off, v uint32) {
+	switch off {
+	case usbSIESTATUS, usbBUFFSTATUS, usbINTS:
+		u.write(c, off, v)
+	default:
+		u.regs.regs[off/4] &^= v
+	}
+}
+
+func (u *usbBlock) inte() uint32  { return u.regs.regs[usbINTE/4] }
+func (u *usbBlock) enabled() bool { return u.regs.regs[usbMAINCTRL/4]&usbMainEnable != 0 }
 
 // idleForSkip reports whether the USB host cannot be mid-handshake, so a
 // microsecond jump will not disturb it. Enumeration waits on tick counters;
@@ -187,16 +204,16 @@ func (u *usbBlock) attach() {
 }
 
 // word reads a DPRAM word.
-func (u *usbBlock) word(off uint32) uint32 { return u.block.regs[off/4] }
+func (u *usbBlock) word(off uint32) uint32 { return u.dpram.regs[off/4] }
 
-func (u *usbBlock) setWord(off, v uint32) { u.block.regs[off/4] = v }
+func (u *usbBlock) setWord(off, v uint32) { u.dpram.regs[off/4] = v }
 
 func (u *usbBlock) writeBytes(off uint32, b []byte) {
 	for i, v := range b {
 		a := off + uint32(i)
 		w := a / 4
 		sh := (a & 3) * 8
-		u.block.regs[w] = u.block.regs[w]&^(0xFF<<sh) | uint32(v)<<sh
+		u.dpram.regs[w] = u.dpram.regs[w]&^(0xFF<<sh) | uint32(v)<<sh
 	}
 }
 
@@ -204,7 +221,7 @@ func (u *usbBlock) readBytes(off uint32, n int) []byte {
 	b := make([]byte, n)
 	for i := range n {
 		a := off + uint32(i)
-		b[i] = byte(u.block.regs[a/4] >> ((a & 3) * 8))
+		b[i] = byte(u.dpram.regs[a/4] >> ((a & 3) * 8))
 	}
 	return b
 }

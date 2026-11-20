@@ -20,6 +20,10 @@ type PinState struct {
 
 	// OnChange is called when a pin's resolved level changes.
 	OnChange func(pin int, level bool)
+
+	// LevelOverride, when it returns ok, supplies a pin's level from a
+	// peripheral that drives it between microsecond ticks (the PWM slices).
+	LevelOverride func(pin int) (level bool, ok bool)
 }
 
 func NewPinState() *PinState {
@@ -46,6 +50,15 @@ func (p *PinState) Level(pin int) bool {
 	if pin < 0 || pin > 47 {
 		return false
 	}
+	if p.LevelOverride != nil {
+		if level, ok := p.LevelOverride(pin); ok {
+			return level
+		}
+	}
+	return p.rawLevel(pin)
+}
+
+func (p *PinState) rawLevel(pin int) bool {
 	bit := uint64(1) << uint(pin)
 	if p.OE&bit != 0 {
 		return p.Out&bit != 0
@@ -64,6 +77,14 @@ func (p *PinState) Voltage(pin int) float32 {
 		return 0
 	}
 	bit := uint64(1) << uint(pin)
+	if p.LevelOverride != nil {
+		if level, ok := p.LevelOverride(pin); ok {
+			if level {
+				return 3.3
+			}
+			return 0
+		}
+	}
 	if p.OE&bit != 0 {
 		if p.Out&bit != 0 {
 			return 3.3
@@ -126,27 +147,27 @@ func (p *PinState) ReleaseExternal(pin int) {
 
 func (p *PinState) setOutput(pin int, level bool) {
 	bit := uint64(1) << uint(pin)
-	before := p.Level(pin)
+	before := p.rawLevel(pin)
 	if level {
 		p.Out |= bit
 	} else {
 		p.Out &^= bit
 	}
-	if p.OnChange != nil && p.Level(pin) != before {
-		p.OnChange(pin, p.Level(pin))
+	if p.OnChange != nil && p.rawLevel(pin) != before {
+		p.OnChange(pin, p.rawLevel(pin))
 	}
 }
 
 func (p *PinState) setOE(pin int, oe bool) {
 	bit := uint64(1) << uint(pin)
-	before := p.Level(pin)
+	before := p.rawLevel(pin)
 	if oe {
 		p.OE |= bit
 	} else {
 		p.OE &^= bit
 	}
-	if p.OnChange != nil && p.Level(pin) != before {
-		p.OnChange(pin, p.Level(pin))
+	if p.OnChange != nil && p.rawLevel(pin) != before {
+		p.OnChange(pin, p.rawLevel(pin))
 	}
 }
 

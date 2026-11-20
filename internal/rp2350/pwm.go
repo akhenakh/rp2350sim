@@ -42,10 +42,7 @@ func (p *pwmBlock) tick(now uint64) {
 		if top == 0 {
 			top = 0xFFFF
 		}
-		// DIV holds the integer divider in the high nibble and the fractional
-		// part in sixteenths in the low nibble, so one counter step takes
-		// div16/16 CPU cycles.
-		ctr := ((now * (sysClkHz / 1_000_000) * 16) / uint64(div16)) % uint64(top+1)
+		ctr := pwmCounter(now*(sysClkHz/1_000_000), div16, top)
 		p.block.regs[(slice*pwmStride+8)/4] = uint32(ctr)
 
 		cc := p.block.regs[(slice*pwmStride+0x0C)/4]
@@ -71,6 +68,50 @@ func (p *pwmBlock) tick(now uint64) {
 			p.chip.Pins.setOE(pin, true)
 		}
 	}
+}
+
+// pwmCounter is the slice counter after cycles cycles of the 150 MHz clock.
+// The microsecond tick and the per-cycle pin sampler share it so both agree.
+func pwmCounter(cycles uint64, div16, top uint32) uint64 {
+	// DIV holds the integer divider in the high nibble and the fractional
+	// part in sixteenths in the low nibble, so one counter step takes
+	// div16/16 CPU cycles.
+	return ((cycles * 16) / uint64(div16)) % uint64(top+1)
+}
+
+// pinLevel resolves a PWM-driven pin at the current cycle. The microsecond
+// tick still maintains the counter register and the pin latch, but sampling a
+// scope trace needs the edges that fall between two ticks.
+func (p *pwmBlock) pinLevel(pin int) (bool, bool) {
+	if pin < 0 || pin > 47 || int(p.chip.Pins.Func[pin]) != pwmFuncSel {
+		return false, false
+	}
+	slice := (pin >> 1) & 7
+	csr := p.block.regs[(slice*pwmStride+0)/4]
+	if csr&1 == 0 { // CSR_EN
+		return false, false
+	}
+	div := p.block.regs[(slice*pwmStride+4)/4]
+	div16 := (div>>4)*16 + (div & 0xF)
+	if div16 == 0 {
+		div16 = 16
+	}
+	top := p.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
+	if top == 0 {
+		top = 0xFFFF
+	}
+	ctr := pwmCounter(p.chip.Cycles, div16, top)
+	cc := p.block.regs[(slice*pwmStride+0x0C)/4]
+	var level bool
+	if pin&1 == 0 {
+		level = ctr < uint64(cc&0xFFFF)
+	} else {
+		level = ctr < uint64(cc>>16)
+	}
+	if csr&(0x8<<uint(pin&1)) != 0 {
+		level = !level
+	}
+	return level, true
 }
 
 // PinBrightness returns the effective drive level of a pin as a 0..1 duty

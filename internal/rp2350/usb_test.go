@@ -44,23 +44,37 @@ func TestUSBCdcOutControl(t *testing.T) {
 func TestUSBInterruptLatches(t *testing.T) {
 	c := New()
 	u := c.usb
-	u.block.regs[usbReg(usbINTE)/4] = usbINTSetupReq | usbINTBuffStatus
+	u.regs.regs[usbINTE/4] = usbINTSetupReq | usbINTBuffStatus
 	u.intr = usbINTSetupReq
 	u.buffStatus = 1 << 1
 	u.intr |= usbINTBuffStatus
 
-	if got, _ := u.read(c, usbReg(usbINTS)); got != usbINTSetupReq|usbINTBuffStatus {
+	if got, _ := u.read(c, usbINTS); got != usbINTSetupReq|usbINTBuffStatus {
 		t.Fatalf("INTS = %#x", got)
 	}
 	// Clearing BUFF_STATUS clears the buffer interrupt.
-	u.write(c, usbReg(usbBUFFSTATUS), 1<<1)
+	u.write(c, usbBUFFSTATUS, 1<<1)
 	if u.intr&usbINTBuffStatus != 0 {
 		t.Fatal("BUFF_STATUS interrupt did not clear")
 	}
 	// Clearing SIE_STATUS.SETUP_REC clears SETUP_REQ.
 	u.setSIEStatus(usbSIESetupRec)
-	u.write(c, usbReg(usbSIESTATUS), usbSIESetupRec)
+	u.write(c, usbSIESTATUS, usbSIESetupRec)
 	if u.intr&usbINTSetupReq != 0 {
 		t.Fatal("SETUP_REQ interrupt did not clear")
+	}
+}
+
+// TestUSBAttachViaSetAlias checks that TinyUSB's use of the +0x2000 SET alias
+// for SIE_CTRL.PULLUP_EN reaches the controller.
+func TestUSBAttachViaSetAlias(t *testing.T) {
+	c := New()
+	c.Write32(usbRegsBase+usbMAINCTRL, usbMainEnable)
+	c.Write32(usbRegsBase+0x2000+usbSIECTRL, usbSIEPullupEn)
+	if !c.usb.attached {
+		t.Fatal("USB did not attach through the SET alias")
+	}
+	if !c.usb.enabled() {
+		t.Fatal("USB controller not enabled")
 	}
 }
