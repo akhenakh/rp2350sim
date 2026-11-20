@@ -273,6 +273,102 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		out=$("$EMU" -fw "$BUILD/pico-c/blinky.elf" -seconds 0.6 -trace-pins 25 2>&1)
 		n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
 		if [ "$n" -ge 2 ]; then ok "C blinky toggles GP25 ($n edges)"; else bad "C blinky GP25" "$out"; fi
+
+		# --- pico-examples: stock SDK programs with known output and signals ---
+		if bash tools/picoexamples.sh "$BUILD/pico-examples" >>"$BUILD/smoke.log" 2>&1; then
+			EX="$BUILD/pico-examples/build"
+			out=$("$EMU" -fw "$EX/hello_serial/hello_serial.elf" -seconds 2.2 -quiet 2>&1)
+			contains "pico-examples hello_serial" "Hello, world!" "$out"
+			out=$("$EMU" -fw "$EX/hello_uart/hello_uart.elf" -seconds 0.5 -quiet 2>&1)
+			contains "pico-examples hello_uart" "AB Hello, UART!" "$out"
+			out=$("$EMU" -fw "$EX/hello_dma/hello_dma.elf" -seconds 0.5 -quiet 2>&1)
+			contains "pico-examples hello_dma" "Hello, world! (from DMA)" "$out"
+			out=$("$EMU" -fw "$EX/hello_reset/hello_reset.elf" -seconds 0.5 -quiet 2>&1)
+			contains "pico-examples hello_reset" "Hello, reset!" "$out"
+			out=$("$EMU" -fw "$EX/hello_adc/hello_adc.elf" -seconds 0.5 -quiet 2>&1)
+			contains "pico-examples hello_adc" "ADC Example, measuring GPIO26" "$out"
+			contains "pico-examples hello_adc conversion" "Raw value: 0x000, voltage: 0.000000 V" "$out"
+			out=$("$EMU" -fw "$EX/divider/hello_divider.elf" -seconds 0.5 -quiet 2>&1)
+			contains "pico-examples divider" "123456/-321 = -384 remainder 192" "$out"
+			contains "pico-examples divider async" "Async result 123456/-321 = -384 remainder 192" "$out"
+			out=$("$EMU" -fw "$EX/hello_dcp/hello_dcp.elf" -seconds 0.5 -quiet 2>&1)
+			contains "pico-examples DCP" "(1,2,3).(4,5,6)=28" "$out"
+			out=$("$EMU" -fw "$EX/hello_watchdog/hello_watchdog.elf" -seconds 1.5 -quiet 2>&1)
+			contains "pico-examples watchdog boot" "Clean boot" "$out"
+			contains "pico-examples watchdog reboot" "Rebooted by Watchdog!" "$out"
+			out=$("$EMU" -fw "$EX/hello_multicore/hello_multicore.elf" -seconds 0.5 -quiet \
+				-continue-after-halt 2>&1)
+			contains "pico-examples multicore core 0" "It's all gone well on core 0!" "$out"
+			contains "pico-examples multicore core 1" "Its all gone well on core 1!" "$out"
+			out=$("$EMU" -fw "$EX/hello_timer/hello_timer.elf" -seconds 14 -quiet 2>&1)
+			contains "pico-examples timer alarm" "Hello Timer!" "$out"
+			contains "pico-examples timer callback" "fired!" "$out"
+			contains "pico-examples timer repeat" "Repeat at " "$out"
+			contains "pico-examples timer cancel" "cancelled... 1" "$out"
+			contains "pico-examples timer done" "Done" "$out"
+
+			# GPIO/PIO/PWM programs: measure the pin, not just the console.
+			if "$EMU" -fw "$EX/blink/blink.elf" -seconds 1.2 -quiet \
+				-logic-pins 25 -logic-rate 1000 -logic-out "$BUILD/pe-blink.txt" >/dev/null 2>&1 &&
+				"$BUILD/pincheck" -pin 25 -freq 2 -duty 50 "$BUILD/pe-blink.txt" >>"$BUILD/smoke.log" 2>&1; then
+				ok "pico-examples blink GP25 at 2 Hz"
+			else
+				bad "pico-examples blink signal" "$(cat "$BUILD/smoke.log")"
+			fi
+			if "$EMU" -fw "$EX/hello_pio/hello_pio.elf" -seconds 1.6 -quiet \
+				-logic-pins 25 -logic-rate 1000 -logic-out "$BUILD/pe-hello-pio.txt" >/dev/null 2>&1 &&
+				"$BUILD/pincheck" -pin 25 -freq 1 -duty 50 "$BUILD/pe-hello-pio.txt" >>"$BUILD/smoke.log" 2>&1; then
+				ok "pico-examples hello_pio GP25 at 1 Hz"
+			else
+				bad "pico-examples hello_pio signal" "$(cat "$BUILD/smoke.log")"
+			fi
+			if "$EMU" -fw "$EX/pio_blink/pio_blink.elf" -seconds 1.2 -quiet \
+				-logic-pins 3,4,5,6 -logic-rate 1000 -logic-out "$BUILD/pe-pio-blink.txt" >/dev/null 2>&1 &&
+				"$BUILD/pincheck" -pin 3 -freq 4 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1 &&
+				"$BUILD/pincheck" -pin 4 -freq 3 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1 &&
+				"$BUILD/pincheck" -pin 5 -freq 2 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1 &&
+				"$BUILD/pincheck" -pin 6 -freq 1 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1; then
+				ok "pico-examples pio_blink 4/3/2/1 Hz"
+			else
+				bad "pico-examples pio_blink signals" "$(cat "$BUILD/smoke.log")"
+			fi
+			if "$EMU" -fw "$EX/pio_squarewave/pio_squarewave.elf" -seconds 0.01 -quiet \
+				-continue-after-halt -logic-pins 0 -logic-rate 150e6 \
+				-logic-out "$BUILD/pe-squarewave.txt" >/dev/null 2>&1 &&
+				"$BUILD/pincheck" -pin 0 -freq 15e6 -duty 50 "$BUILD/pe-squarewave.txt" >>"$BUILD/smoke.log" 2>&1; then
+				ok "pico-examples PIO square wave 15 MHz"
+			else
+				bad "pico-examples PIO square wave" "$(cat "$BUILD/smoke.log")"
+			fi
+			if "$EMU" -fw "$EX/hello_pwm/hello_pwm.elf" -seconds 0.01 -quiet \
+				-continue-after-halt -logic-pins 0,1 -logic-rate 150e6 \
+				-logic-out "$BUILD/pe-pwm.txt" >/dev/null 2>&1 &&
+				"$BUILD/pincheck" -pin 0 -freq 37.5e6 -duty 25 "$BUILD/pe-pwm.txt" >>"$BUILD/smoke.log" 2>&1 &&
+				"$BUILD/pincheck" -pin 1 -freq 37.5e6 -duty 75 "$BUILD/pe-pwm.txt" >>"$BUILD/smoke.log" 2>&1; then
+				ok "pico-examples PWM 25/75% at 37.5 MHz"
+			else
+				bad "pico-examples PWM signals" "$(cat "$BUILD/smoke.log")"
+			fi
+
+			out=$("$EMU" -fw "$EX/i2c_bus_scan/i2c_bus_scan.elf" -seconds 1 -quiet 2>&1)
+			contains "pico-examples I2C scan completes" "Done." "$out"
+			if [ "$(tr -cd '@' <<<"$out" | wc -c | tr -d ' ')" -eq 0 ]; then
+				ok "pico-examples I2C empty bus NACKs every address"
+			else
+				bad "pico-examples I2C empty bus" "$out"
+			fi
+			out=$("$EMU" -fw "$EX/i2c_bus_scan/i2c_bus_scan.elf" -seconds 1 -quiet \
+				-touch-lcd2 2>&1)
+			if [ "$(tr -cd '@' <<<"$out" | wc -c | tr -d ' ')" -eq 2 ] &&
+				grep -qF "10 .  .  .  .  .  @" <<<"$out" &&
+				grep -qF "60 .  .  .  .  .  .  .  .  .  .  .  @" <<<"$out"; then
+				ok "pico-examples I2C scan finds the Touch-LCD-2 devices"
+			else
+				bad "pico-examples I2C scan devices" "$out"
+			fi
+		else
+			bad "pico-examples build" "$(tail -20 "$BUILD/smoke.log")"
+		fi
 	else
 		bad "Pico SDK C build" "$(tail -20 "$BUILD/smoke.log")"
 	fi

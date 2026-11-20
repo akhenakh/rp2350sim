@@ -66,6 +66,31 @@ This is also how you drive the CH9120 / W5500 / W6300 / virtual Wi-Fi demos:
 their sockets are backed by the host's network stack, so start the server the
 firmware expects first (for example `go run ./tools/ethhost`).
 
+## Pico SDK examples and signal checks
+
+`tools/picoexamples.sh` downloads a pinned `raspberrypi/pico-examples` snapshot
+(SDK 2.3.1, commit `0d62f75`) and builds the subset the emulator supports:
+hello world over UART, blink, UART, timer, multicore, DMA, PIO, PWM, ADC,
+reset, watchdog, I2C bus scan, divider and DCP. FreeRTOS and the examples that
+need external hardware are not built. The `task ci` smoke suite runs each one
+and checks its console output; GPIO-producing examples are checked on the wire,
+not just on stdout.
+
+`tools/pincheck` measures a pin in a logic trace produced by `-logic-pins`:
+
+```sh
+rp2350sim -fw pwm.elf -seconds 0.01 -continue-after-halt \
+  -logic-pins 0,1 -logic-rate 150e6 -logic-out pwm.txt
+pincheck -pin 0 -freq 37.5e6 -duty 25 pwm.txt
+pincheck -pin 1 -freq 37.5e6 -duty 75 pwm.txt
+```
+
+`-freq` has a 5% default tolerance (`-freq-tol`), `-duty` is in percentage
+points (`-duty-tol`), and `-min-edges`/`-max-edges` bound the transition count.
+This is how CI validates the PIO square wave (15 MHz, 50%), blink (2 Hz),
+the PIO blink frequencies and the PWM duty cycles. Build the subset on its own
+with `task picoexamples:build` (or `bash tools/picoexamples.sh build/pico-examples`).
+
 ## Exit codes
 
 | code | action |

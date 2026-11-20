@@ -70,6 +70,7 @@ tasks:
       - 'go test -tags qemu ./internal/m33 -run TestQEMUInstructions'
       - 'go build -o {{.BUILD}}/ethhost ./tools/ethhost'
       - 'go build -o {{.BUILD}}/pngcheck ./tools/pngcheck'
+      - 'go build -o {{.BUILD}}/pincheck ./tools/pincheck'
       - 'go build -o {{.BUILD}}/serialcheck ./tools/serialcheck'
       - 'bash tools/smoke.sh {{.BUILD}}'
 
@@ -555,3 +556,8 @@ tasks:
     desc: Remove build outputs
     cmds:
       - rm -rf {{.BUILD}}
+
+  picoexamples:build:
+    desc: Build the pinned pico-examples subset (requires PICO_SDK_PATH)
+    cmds:
+      - bash tools/picoexamples.sh {{.BUILD}}/pico-examples

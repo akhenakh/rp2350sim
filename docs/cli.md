@@ -300,6 +300,7 @@ resets in the UI but the headless runner is one process.
 | `-poke ADDR=VAL` | write memory after boot |
 | `-peek ADDR` | print a word at exit |
 | `-sample N` | print the PC in 10M-cycle chunks |
+| `-continue-after-halt` | keep peripherals (PIO/PWM/DMA) running after a core halts |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | report unmapped accesses at exit |
 | `-msg` | at `-bp`, decode `r1` as a runtime message string |
@@ -325,6 +326,10 @@ rp2350sim -fw build/protocols.elf -seconds 0.5 \
   -logic-uart 0,1,115200 -logic-i2c 4,5 -logic-spi 18,19,16,17 \
   -logic-out logic-trace.txt
 ```
+
+`-continue-after-halt` is for examples that start a PIO or PWM engine from
+`main` and then return: the cores stop, but the peripheral clock keeps running
+so the captured waveform is still valid. It implies `-allow-halt`.
 
 Without `-logic-out` the file is written to the current directory as
 `logic-analyze-trace-<date>-<board>.txt`. The text format has a metadata block,

@@ -78,6 +78,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
 | `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
 | `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
+| `task picoexamples:build` | build the pinned pico-examples subset (needs `PICO_SDK_PATH`) |
 | `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
 | `task c:otp` | run the C OTP demo and dump the programmed array |
 | `task c:ota` | run the single-slot self-update demo and reboot the new image |
@@ -120,6 +121,7 @@ Useful flags:
 | `-otp PATH`, `-otp-dump PATH` | seed / write back the OTP array (JSON) |
 | `-flash PATH`, `-flash-out PATH` | load / write back the raw 16 MiB flash image |
 | `-logic-pins 0,1`, `-logic-out PATH` | capture a logic-analyzer trace (UART/I2C/SPI taps plus pin samples) |
+| `-continue-after-halt` | keep PIO/PWM/DMA running after a core halts (firmware that returns from `main`) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
