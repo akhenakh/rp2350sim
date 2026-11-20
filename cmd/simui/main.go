@@ -1626,7 +1626,7 @@ func logicUART(pins []int, samples []devices.TraceSample, interval uint64, d *UA
 	decoded := ""
 	if events := uartTXEvents(d.Bus); len(events) > 0 {
 		decoded = uartEventText(events)
-		wavePins, waveSamples = uartWave(events, d.Baud)
+		wavePins, waveSamples = uartWave(events, d.Baud, d.TX)
 		lines = []logicLine{{Pin: d.TX, Label: "TX", Color: paletteAt(0)}}
 	} else {
 		// Fallback for PIO/bit-banged UART: decode the pin trace itself.
@@ -1666,7 +1666,7 @@ func uartEventText(events []UARTEvent) string {
 
 // uartWave synthesises a TX waveform from captured bytes so the analyzer can
 // show the wire even though the UART model drives the console directly.
-func uartWave(events []UARTEvent, baud int) ([]int, []devices.TraceSample) {
+func uartWave(events []UARTEvent, baud, txPin int) ([]int, []devices.TraceSample) {
 	const interval = 75 // 2 MHz, matching the logic trace
 	bit := max(int(math.Round(150e6/float64(interval)/float64(baud))), 1)
 	var samples []devices.TraceSample
@@ -1691,7 +1691,7 @@ func uartWave(events []UARTEvent, baud int) ([]int, []devices.TraceSample) {
 		add(3.3, bit)     // stop
 		add(3.3, bit/2+1) // idle between bytes
 	}
-	return []int{0}, samples
+	return []int{txPin}, samples
 }
 
 func logicI2C(pins []int, samples []devices.TraceSample, d *I2CDevice) {
@@ -2382,11 +2382,13 @@ func main() {
 		if err := RenderToPNG(*png, *winW, *winH, RootView); err != nil {
 			fmt.Println("render failed:", err)
 		}
+		emu.SyncSD()
 		emu.SaveFlash()
 		return
 	}
 
 	app.SetupWindow("rp2350sim", *winW, *winH)
 	app.Run(RootView)
+	emu.SyncSD()
 	emu.SaveFlash()
 }

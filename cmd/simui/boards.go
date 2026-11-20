@@ -389,6 +389,12 @@ func LoadBoards() ([]BoardDef, error) {
 					d.Dir = filepath.Join(baseDir, d.Dir)
 				}
 			}
+			if d.Image != "" {
+				d.Image = expandPath(d.Image)
+				if !filepath.IsAbs(d.Image) && baseDir != "" {
+					d.Image = filepath.Join(baseDir, d.Image)
+				}
+			}
 		}
 		for _, sd := range b.Serial {
 			if sd.UART < 0 || sd.UART > 1 {

@@ -15,6 +15,7 @@ var (
 	debugBreakSpec    string
 	debugWatchSpec    string
 	debugCyclesSpec   = "1000000"
+	debugToCycleSpec  = "1000000"
 	debugMemSpec      string
 	debugMsg          string
 	debugCore         int
@@ -116,9 +117,9 @@ func debugControls(s DebugSnapshot) {
 		})
 		Container(Attrs(Row, CrossMid, Gap(6)), func() {
 			Label("run to cycle", FontSize(12))
-			textField(&debugCyclesSpec, 110)
+			textField(&debugToCycleSpec, 110)
 			if Button(NoIcon, "Go") {
-				if n, err := parseDebugNumber(debugCyclesSpec); err == nil {
+				if n, err := parseDebugNumber(debugToCycleSpec); err == nil {
 					emu.RunToCycle(n)
 					RequestNextFrame()
 				} else {

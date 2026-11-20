@@ -39,3 +39,13 @@ func TestSaveLogicTraceFile(t *testing.T) {
 		t.Fatalf("unexpected path %q", path)
 	}
 }
+
+func TestUARTWaveUsesTXPin(t *testing.T) {
+	pins, samples := uartWave([]UARTEvent{{Data: 'A'}}, 115200, 21)
+	if len(pins) != 1 || pins[0] != 21 {
+		t.Fatalf("uartWave pins = %v, want [21]", pins)
+	}
+	if len(samples) == 0 {
+		t.Fatal("uartWave produced no samples")
+	}
+}

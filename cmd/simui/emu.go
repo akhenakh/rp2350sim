@@ -450,7 +450,6 @@ func (e *Emu) resetChip() {
 	e.ethKind = ""
 	e.w5500 = nil
 	e.w6300 = nil
-	e.ch9120 = nil
 	e.ethLog.reset()
 	e.frozen = frozenLogic{}
 	e.usbEvents = e.usbEvents[:0]
@@ -514,7 +513,6 @@ func (e *Emu) resetChip() {
 			ch.OnByte = func(v byte) {
 				e.addUART(w.UART, c.Cycles, false, v)
 			}
-			ch.Attach()
 			e.ch9120 = ch
 			e.ethKind = "wifi"
 		}
@@ -884,6 +882,17 @@ func (e *Emu) SaveFlash() {
 	e.mu.Unlock()
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		slog.Error("flash save", slog.String("path", path), slog.Any("err", err))
+	}
+}
+
+// SyncSD flushes a host-backed SD card so writes made just before the window
+// closes are not lost.
+func (e *Emu) SyncSD() {
+	e.mu.Lock()
+	sd := e.sd
+	e.mu.Unlock()
+	if sd != nil {
+		_ = sd.Sync()
 	}
 }
 
