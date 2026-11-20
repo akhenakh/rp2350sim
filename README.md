@@ -83,6 +83,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task c:otp` | run the C OTP demo and dump the programmed array |
 | `task c:ota` | run the single-slot self-update demo and reboot the new image |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
+| `task release:check` | validate the GoReleaser configuration |
+| `task release:snapshot` | build all release archives under `dist/` (no publish) |
 | `task clean` | remove `build/` |
 
 ## Running firmware
@@ -318,3 +320,13 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 - RP2350 datasheet; `tinygo/src/device/rp/rp2350.go` register definitions
 - TinyGo `machine` and `runtime` packages for the boot contract
 - `qemu-system-arm -M mps2-an505` as the Cortex-M33 instruction oracle
+
+## Releases
+
+Tags matching `v*` build and publish Linux, macOS and Windows archives with
+both the `rp2350sim` runner and the `rp2350sim-ui` desktop application. See
+[docs/release.md](docs/release.md).
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

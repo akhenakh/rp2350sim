@@ -22,6 +22,9 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
+// version is set by GoReleaser with -X main.version.
+var version = "dev"
+
 // hex renders an address or register value for a log attribute.
 func hex(v uint32) string { return fmt.Sprintf("%#08x", v) }
 
@@ -160,10 +163,15 @@ func main() {
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
 		logFormat  = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
 		logLevel   = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
+		showVer    = flag.Bool("version", false, "print the version and exit")
 	)
 	var expectFlag stringList
 	flag.Var(&expectFlag, "expect", "fail unless this console output appears (repeatable)")
 	flag.Parse()
+	if *showVer {
+		fmt.Println("rp2350sim", version)
+		return
+	}
 	if *sdImage != "" && *sdDir != "" {
 		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
 		os.Exit(2)

@@ -552,6 +552,16 @@ tasks:
       - '{{.EMU}} -fw firmware/c/build/ota.elf -flash {{.BUILD}}/ota-flash.bin -seconds 2 -expect "ota v2 running" -stop-on-expect'
       - '{{.EMU}} -flash {{.BUILD}}/ota-flash.bin -seconds 0.2 -quiet'
 
+  release:check:
+    desc: Validate the GoReleaser configuration
+    cmds:
+      - goreleaser check
+
+  release:snapshot:
+    desc: Build the release archives locally (all platforms, no publish)
+    cmds:
+      - goreleaser release --snapshot --clean --skip=publish,announce
+
   clean:
     desc: Remove build outputs
     cmds:

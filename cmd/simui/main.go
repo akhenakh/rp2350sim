@@ -20,6 +20,9 @@ import (
 	. "go.hasen.dev/shirei/widgets"
 )
 
+// version is set by GoReleaser with -X main.version.
+var version = "dev"
+
 var (
 	emu     = NewEmu()
 	fwPath  = ""
@@ -2046,7 +2049,12 @@ func main() {
 	touchAt := flag.String("touch", "", "inject a held touch at native panel coordinates: x,y")
 	touchDemoFlag := flag.Bool("touch-demo", false, "move a synthetic touch around the panel while the UI runs")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
+	showVer := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVer {
+		fmt.Println("rp2350sim-ui", version)
+		return
+	}
 	viewW, viewH = *winW, *winH
 
 	var err error

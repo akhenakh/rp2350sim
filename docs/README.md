@@ -16,6 +16,7 @@ This directory is the user guide:
 | [ui.md](ui.md) | the desktop UI, board picker, `boards.yaml`, tabs, scope, logic analyzer, serial bridge |
 | [boards.md](boards.md) | supported boards, wiring, peripherals, and current limitations |
 | [c.md](c.md) | C firmware with the Pico SDK: build, examples, console, current gaps |
+| [release.md](release.md) | release archives, GoReleaser, supported platforms |
 
 ## Quick start
 

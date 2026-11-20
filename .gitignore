@@ -8,3 +8,5 @@ cmd/simui/simui
 sdcards/
 
 logic-analyze-trace-*.txt
+
+dist/

@@ -33,6 +33,7 @@ Other startup options:
 |---|---|
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
 | `--list-boards` | print board IDs, names and badges, then exit |
+| `--version` | print the version and exit |
 | `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `otp`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
