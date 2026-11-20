@@ -257,11 +257,13 @@ the device side: requests appear as Bus Pirate tokens such as
 < ]
 ```
 
-and you answer with `ACK`, `NAK`, or hex bytes. Responses are queued, so you
-can type `0xEF 0x40 0x18` before a three-byte SPI read starts; each whitespace
-token answers one request. For the bundled `busmaster`, queue
-`ACK ACK 0x12 0x34` for the I2C exchange and `0xEF 0x40 0x18` for the SPI
-exchange. The bridge timeout is 500 ms in the UI; if nothing
+and you answer with `ACK`, `NAK`, or hex bytes. Responses are queued (the log
+shows `+ queued ...` immediately), so you can type `0xEF 0x40 0x18` before a
+three-byte SPI read starts; each whitespace token answers one request. The
+terminal only writes an answer when the firmware asks; if the log stops at
+`HELLO`, press **Reset firmware** in the Bus tab (or Reset in the toolbar).
+For the bundled `busmaster`, queue `ACK ACK 0x12 0x34` for the I2C exchange
+and `0xEF 0x40 0x18` for the SPI exchange. The bridge timeout is 500 ms in the UI; if nothing
 is queued the request returns NAK/`0xff` and the machine keeps running. The
 listener and terminal survive firmware reloads, so connect first, queue the
 answers, then reset.

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/akhenakh/rp2350sim/internal/devices"
 )
 
 func TestNeedsBusResponse(t *testing.T) {
@@ -64,4 +66,37 @@ func TestBusTerminalSendsResponse(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("terminal did not answer the request")
 	}
+}
+
+func TestBusTerminalAnswersI2CBridge(t *testing.T) {
+	br := devices.NewI2CBridge(0, []uint8{0x50}, "127.0.0.1:0", "")
+	br.Timeout = time.Second
+	br.Wait = time.Second
+	if err := br.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer br.Close()
+	listen, _, _, _ := br.Status()
+
+	term, err := NewBusTerminal(listen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.Send("ACK ACK 0x23 0x34")
+
+	br.SetAddress(0x50)
+	br.BeginTransaction()
+	if !br.WriteAck(0x00) {
+		t.Fatal("I2C address/data was not ACKed")
+	}
+	v, ok := br.ReadAck()
+	if !ok || v != 0x23 {
+		t.Fatalf("first read = %#x, %v; want 0x23", v, ok)
+	}
+	v, ok = br.ReadAck()
+	if !ok || v != 0x34 {
+		t.Fatalf("second read = %#x, %v; want 0x34", v, ok)
+	}
+	br.EndTransaction()
 }

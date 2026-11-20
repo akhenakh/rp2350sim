@@ -106,15 +106,32 @@ func needsBusResponse(line string) bool {
 
 // Send queues one or more response tokens. Whitespace separates tokens, so a
 // SPI command that expects three bytes can be answered with "0xEF 0x40 0x18".
+// Queued tokens are logged immediately so a send is visible even before the
+// firmware asks for the next byte.
 func (t *BusTerminal) Send(line string) {
-	for tok := range strings.FieldsSeq(line) {
+	tokens := strings.Fields(line)
+	if len(tokens) == 0 {
+		return
+	}
+	queued := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
 		select {
 		case t.queue <- tok:
+			queued = append(queued, tok)
 		default:
+			if len(queued) > 0 {
+				t.append("+ queued " + strings.Join(queued, " "))
+			}
 			return
 		}
 	}
+	if len(queued) > 0 {
+		t.append("+ queued " + strings.Join(queued, " "))
+	}
 }
+
+// Queued reports how many responses are waiting for a request.
+func (t *BusTerminal) Queued() int { return len(t.queue) }
 
 // Render draws the terminal log. It holds the log lock while LogView walks the
 // ring, so the reader goroutine cannot append concurrently.

@@ -2051,6 +2051,9 @@ func busPanel(snap MachineState) {
 		}
 		Container(Attrs(Row, Gap(8), CrossMid), func() {
 			Label("terminal "+sel.Listen, FontSize(11), TextColor(140, 45, 65, 1))
+			if q := term.Queued(); q > 0 {
+				Label(fmt.Sprintf("%d queued", q), FontSize(11), FontWeight(600), TextColor(45, 60, 60, 1))
+			}
 			Filler(1)
 			if Button(NoIcon, "Disconnect") {
 				term.Close()
@@ -2072,8 +2075,13 @@ func busPanel(snap MachineState) {
 				busInput = ""
 				RequestNextFrame()
 			}
+			if Button(NoIcon, "Reset firmware") {
+				emu.Reset()
+				RequestNextFrame()
+			}
 		})
 		Label("Type ACK, NAK or hex bytes; spaces queue one response per request (e.g. 0xEF 0x40 0x18).", FontSize(11), TextColor(140, 45, 65, 1))
+		Label("If only HELLO appears, the firmware is not asking yet: queue the answers, then press Reset in the toolbar.", FontSize(11), TextColor(140, 45, 65, 1))
 	})
 }
 
