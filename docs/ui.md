@@ -250,8 +250,8 @@ firmware** to restart after queueing when the firmware already ran.
 
 Connect-mode bridges have no terminal: their external server is the device,
 exactly like the CLI `=host:port` form. See
-[peripherals.md](peripherals.md#bus-pirate-i2c-and-spi-targets) for the token
-protocol.
+[bus-pirate.md](bus-pirate.md) for the token protocol and fake-device
+examples.
 
 ### Console
 

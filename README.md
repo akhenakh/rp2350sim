@@ -311,6 +311,7 @@ The user guide lives in [`docs/`](docs/README.md):
 
 - [`docs/cli.md`](docs/cli.md) — every flag, output contract and exit code
 - [`docs/peripherals.md`](docs/peripherals.md) — each peripheral from the CLI and the UI
+- [`docs/bus-pirate.md`](docs/bus-pirate.md) — Bus Pirate tokens and fake I2C/SPI peripherals
 - [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, Bus Pirate terminals
 - [`docs/debug.md`](docs/debug.md) — Debug tab, breakpoints, watchpoints, memory and DWARF variables
 - [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, signal checks, artifacts

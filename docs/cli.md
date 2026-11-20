@@ -339,7 +339,9 @@ resets in the UI but the headless runner is one process.
 
 ### I2C/SPI devices over TCP
 
-`-i2c-tcp` and `-spi-tcp` expose a bus to an external device program. The
+`-i2c-tcp` and `-spi-tcp` expose a bus to an external device program. See
+[bus-pirate.md](bus-pirate.md) for the token reference and complete fake-device
+transcripts. The
 emulator is the controller; the TCP peer is the target. The wire format is
 Bus Pirate tokens, where `[` is start (or CS low), `]` is stop (or CS high),
 and the address byte is `addr << 1`:

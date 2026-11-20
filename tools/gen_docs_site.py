@@ -23,6 +23,7 @@ PAGES = [
     ("README.md", "Documentation", 1),
     ("cli.md", "Command-line reference", 10),
     ("peripherals.md", "Peripherals from CLI and UI", 20),
+    ("bus-pirate.md", "Bus Pirate targets", 25),
     ("ui.md", "Desktop UI", 30),
     ("debug.md", "Debugging", 40),
     ("boards.md", "Boards and peripherals", 50),

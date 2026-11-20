@@ -405,6 +405,9 @@ Reference board: `pico2-analog`. Task: `task ui:scope`.
 
 ## Bus Pirate I2C and SPI targets
 
+The token reference, transcripts and fake-peripheral recipes are in
+[bus-pirate.md](bus-pirate.md). The summary here is the peripheral guide.
+
 **Headless.** `-i2c-tcp` and `-spi-tcp` expose the controller to an external
 program acting as the device. The wire format is Bus Pirate tokens:
 
