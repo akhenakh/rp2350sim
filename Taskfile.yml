@@ -50,6 +50,7 @@ tasks:
     deps:
       - build
       - firmware:blinky
+      - firmware:debugvars
       - firmware:lcd
       - firmware:touchlcd
       - firmware:piotest
@@ -137,6 +138,18 @@ tasks:
     deps: [build, firmware:sdcard]
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/sdcard.elf -sd -sd-dir {{.BUILD}}/sdcard-host -seconds 4'
+
+  firmware:debugvars:
+    desc: Build the TinyGo debugger fixture with known variables
+    dir: firmware/debugvars
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/debugvars.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/debugvars.elf .'
 
   run:blinky:
     desc: Run the blinky firmware and trace GP25 for three virtual seconds
@@ -463,6 +476,21 @@ tasks:
     cmds:
       - go run . --board pico2-psram '../../firmware/c/build/psram.elf'
 
+  ui:debug:
+    desc: Open the Debug tab on the C debugger fixture at debug_marker
+    deps: [c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab debug --break debug_marker '../../firmware/c/build/debug.elf'
+
+  ui:debug:png:
+    desc: Render the Debug tab at debug_marker to build/ui-debug.png
+    deps: [c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab debug --break debug_marker --run 0.7 --png '../../{{.BUILD}}/ui-debug.png' '../../firmware/c/build/debug.elf'
+
+
   ui:logic:
     desc: Run the UI logic analyzer with the UART/I2C/SPI demo
     deps: [firmware:protocols]
@@ -556,6 +584,7 @@ tasks:
       - 'build/multicore.elf'
       - 'build/otp.elf'
       - 'build/psram.elf'
+      - 'build/debug.elf'
       - 'build/ota.elf'
       - 'build/ota2.elf'
     cmds:
@@ -598,6 +627,19 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/psram.elf -seconds 2 -quiet -psram 8 -psram-cs 8 -psram-latency 6 -expect "psram: ok" -stop-on-expect'
+
+  c:debug:
+    desc: Run the C debugger fixture and stop at debug_marker
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/debug.elf -seconds 1 -bp debug_marker -log-format text'
+
+  debug:test:
+    desc: Run debugger unit tests with the TinyGo and C fixtures
+    deps: [build, firmware:debugvars, c:build]
+    cmds:
+      - go test ./internal/debug -v
+
 
   c:ota:
     desc: Run the single-slot OTA demo, then boot the updated image from flash

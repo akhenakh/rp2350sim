@@ -68,6 +68,7 @@ const (
 	tabLogic
 	tabOTP
 	tabBus
+	tabDebug
 	tabConsole
 )
 
@@ -160,6 +161,8 @@ func RootView() {
 				otpPanel(snap)
 			case tabBus:
 				busPanel(snap)
+			case tabDebug:
+				debugPanel(snap)
 			case tabConsole:
 				consolePanel(snap)
 			default:
@@ -340,6 +343,8 @@ func setTab(name string) {
 		if boardHasBuses(selectedBoard) {
 			activeTab = tabBus
 		}
+	case "debug", "dbg":
+		activeTab = tabDebug
 	case "console":
 		activeTab = tabConsole
 	}
@@ -370,6 +375,7 @@ func tabsBar() {
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
 		tabButton("OTP", tabOTP)
+		tabButton("Debug", tabDebug)
 		if boardHasBuses(selectedBoard) {
 			tabButton("Bus", tabBus)
 		}
@@ -2203,7 +2209,8 @@ func main() {
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, bus, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, bus, debug, console")
+	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	touchAt := flag.String("touch", "", "inject a held touch at native panel coordinates: x,y")
 	touchDemoFlag := flag.Bool("touch-demo", false, "move a synthetic touch around the panel while the UI runs")
 	listBoards := flag.Bool("list-boards", false, "list board definitions and exit")
@@ -2249,6 +2256,12 @@ func main() {
 		if err := emu.LoadFlash(*flashPath); err != nil {
 			fmt.Fprintln(os.Stderr, "flash load:", err)
 			os.Exit(1)
+		}
+	}
+	if *debugBreak != "" {
+		if _, err := emu.AddBreakpoint(*debugBreak); err != nil {
+			fmt.Fprintln(os.Stderr, "breakpoint:", err)
+			os.Exit(2)
 		}
 	}
 	if *touchAt != "" {

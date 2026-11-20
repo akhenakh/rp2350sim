@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/logging"
@@ -27,6 +28,26 @@ var version = "dev"
 
 // hex renders an address or register value for a log attribute.
 func hex(v uint32) string { return fmt.Sprintf("%#08x", v) }
+
+// resolveAddress accepts a hex address or an ELF symbol name.
+func resolveAddress(spec string, info *debug.Info) (uint32, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return 0, nil
+	}
+	raw := strings.TrimPrefix(strings.TrimPrefix(spec, "0x"), "0X")
+	if raw != "" {
+		if v, err := strconv.ParseUint(raw, 16, 32); err == nil {
+			return uint32(v), nil
+		}
+	}
+	if info != nil {
+		if addr, ok := info.Resolve(spec); ok {
+			return addr, nil
+		}
+	}
+	return 0, fmt.Errorf("%q is neither a hex address nor a known symbol", spec)
+}
 
 func newRunnerCard(c *rp2350.Chip, cs int, image, dir string) (*devices.SDCard, error) {
 	return devices.NewSDCard(c, cs, image, dir)
@@ -276,6 +297,10 @@ func main() {
 		}
 	}
 
+	var dbgInfo *debug.Info
+	if img != nil && img.Format == "elf" {
+		dbgInfo, _ = debug.Load(*path)
+	}
 	c := rp2350.New()
 	c.Logger = log
 	c.ConfigurePSRAM(uint32(*psramMB)<<20, uint32(*psramLat), *psramCS)
@@ -704,16 +729,26 @@ func main() {
 
 	var bp uint64
 	if *bpStr != "" {
-		bp, _ = strconv.ParseUint(strings.TrimPrefix(*bpStr, "0x"), 16, 32)
+		addr, err := resolveAddress(*bpStr, dbgInfo)
+		if err != nil {
+			log.Error("breakpoint", slog.Any("err", err))
+			os.Exit(2)
+		}
+		bp = uint64(addr)
 	}
 	var bp2 uint64
 	if *bp2Str != "" {
-		bp2, _ = strconv.ParseUint(strings.TrimPrefix(*bp2Str, "0x"), 16, 32)
+		addr, err := resolveAddress(*bp2Str, dbgInfo)
+		if err != nil {
+			log.Error("secondary breakpoint", slog.Any("err", err))
+			os.Exit(2)
+		}
+		bp2 = uint64(addr)
 	}
 	var ring []string
 	zeros := 0
 	bpHits := 0
-	if *traceLast {
+	if *traceLast || bp != 0 || bp2 != 0 {
 		watchReg := -1
 		lastReg := uint32(0)
 		if *regStr != "" {
@@ -763,14 +798,24 @@ func main() {
 					log.Info("runtime message", slog.String("text", string(b)))
 				}
 				attrs := append([]any{slog.String("pc", hex(pc))}, regAttrs(cpu)...)
+				if dbgInfo != nil {
+					if fn, ok := dbgInfo.FunctionAt(uint32(pc)); ok {
+						attrs = append(attrs, slog.String("symbol", fn.Name))
+					}
+					if file, line, ok := dbgInfo.LineAt(uint32(pc)); ok {
+						attrs = append(attrs, slog.String("file", file), slog.Int("line", line))
+					}
+				}
 				log.Info("break", attrs...)
 				bpHits++
 				if bpHits >= 200 {
 					c.Halted = true
 					os.Exit(1)
-				} else {
-					return
 				}
+				return
+			}
+			if !*traceLast {
+				return
 			}
 			if hw1 == 0 {
 				zeros++
@@ -825,9 +870,13 @@ func main() {
 	}
 
 	if *watchStr != "" {
-		wa, _ := strconv.ParseUint(strings.TrimPrefix(*watchStr, "0x"), 16, 32)
+		wa, err := resolveAddress(*watchStr, dbgInfo)
+		if err != nil {
+			log.Error("watchpoint", slog.Any("err", err))
+			os.Exit(2)
+		}
 		c.OnWrite = func(addr uint32, val uint32, size int) {
-			if uint64(addr) == wa {
+			if addr == wa {
 				log.Info("watched write",
 					slog.String("addr", hex(addr)), slog.String("value", hex(val)),
 					slog.Int("size", size),

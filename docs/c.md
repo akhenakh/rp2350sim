@@ -28,6 +28,8 @@ task c:hello      # build and assert "hello c done"
 task c:blinky     # build and trace GP25
 task c:float      # single-precision FPU demo
 task c:multicore  # core 1 launch through the SIO FIFO
+task c:psram      # QSPI PSRAM size and pattern check
+task c:debug      # stop at debug_marker with known variables
 ```
 
 The same by hand:
@@ -83,6 +85,11 @@ works: `multicore_launch_core1` uses the same SIO FIFO handshake as TinyGo.
   integer bit patterns instead of `%f` until that lands.
 
 ## Debugging
+
+`firmware/c/debug` is a deterministic fixture for the Debug tab and the CLI:
+`debug_marker` has `g_magic`, two 32-bit `g_wide_*` globals and a volatile
+`local`, all checked by `internal/debug`. Use `task c:debug`, `task debug:test`
+or `task ui:debug`; see [debug.md](debug.md).
 
 The runner flags are the same as for TinyGo (`-trace`, `-bp`, `-trace-pins`,
 `-lcd`, `-serial-tcp`, `-expect`, ...). `-trace-last` prints a ring of recent

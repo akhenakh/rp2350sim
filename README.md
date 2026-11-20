@@ -42,6 +42,7 @@ cmd/rp2350sim/      headless runner and debugging tools
 cmd/simui/          Shirei desktop UI (separate module)
 firmware/c/         Pico SDK C examples (CMake)
 internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
+internal/debug/     ELF symbols, source lines, CFI and variable evaluation
 internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
                     UART, SPI, DMA, PWM, ADC, I2C, OTP, QMI/PSRAM
 internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
@@ -89,6 +90,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
 | `task ui:psram` | PSRAM board with the Pico SDK PSRAM demo |
+| `task ui:debug` | Debug tab stopped at the C fixture's `debug_marker` |
+| `task ui:debug:png` | headless render of the Debug tab to `build/ui-debug.png` |
 | `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
 | `task ui:bus` | Bus Pirate board paused: connect terminals, queue ACK/data, then Run |
@@ -103,6 +106,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
 | `task c:otp` | run the C OTP demo and dump the programmed array |
 | `task c:psram` | run the Pico SDK PSRAM demo with an 8 MiB device |
+| `task c:debug` | run the C debugger fixture and stop at `debug_marker` |
+| `task debug:test` | run the TinyGo and C DWARF debugger tests |
 | `task c:ota` | run the single-slot self-update demo and reboot the new image |
 | `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
 | `task release:check` | validate the GoReleaser configuration |
@@ -141,8 +146,8 @@ Useful flags:
 | `-unhandled` | print a summary of unmapped accesses at exit |
 | `-trace N`, `-trace-from ADDR` | trace instructions |
 | `-trace-last` | keep a ring of recent instructions for diagnostics |
-| `-bp ADDR`, `-bp2 ADDR` | stop / log at an address |
-| `-watch ADDR`, `-watch-val V`, `-watch-reg N` | write and register logging |
+| `-bp ADDR\|SYMBOL`, `-bp2 ADDR\|SYMBOL` | log at an address or ELF symbol |
+| `-watch ADDR\|SYMBOL`, `-watch-val V`, `-watch-reg N` | write and register logging |
 | `-poke ADDR=VAL` | write memory before starting |
 | `-peek ADDR` | print a memory word at exit |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
@@ -263,6 +268,8 @@ the tabs accordingly:
   zoom/range controls and generated `analog:` waveforms.
 - **Logic** (always): UART/I2C/SPI/USB decoding, triggers and **Save trace**.
 - **OTP**: pages, rows, ECC status and locks.
+- **Debug**: breakpoints, cycle stepping, registers, memory, source lines and
+  DWARF variables.
 - **Bus**: I2C/SPI Bus Pirate TCP terminals for the device side.
 - **Console** (always): USB CDC + UART, click to type into the firmware.
 
@@ -302,6 +309,7 @@ The user guide lives in [`docs/`](docs/README.md):
 - [`docs/cli.md`](docs/cli.md) — every flag, output contract and exit code
 - [`docs/peripherals.md`](docs/peripherals.md) — each peripheral from the CLI and the UI
 - [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, Bus Pirate terminals
+- [`docs/debug.md`](docs/debug.md) — Debug tab, breakpoints, watchpoints, memory and DWARF variables
 - [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, signal checks, artifacts
 - [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
 - [`docs/boards.md`](docs/boards.md) — supported boards, wiring and limitations

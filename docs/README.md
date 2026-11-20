@@ -15,6 +15,7 @@ This directory is the user guide:
 | [cli.md](cli.md) | every command-line flag, output contract, exit codes, examples |
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
 | [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, Bus Pirate terminals |
+| [debug.md](debug.md) | the Debug tab, symbols, breakpoints, watchpoints, memory and variables |
 | [boards.md](boards.md) | supported boards, wiring, peripherals and current limitations |
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |
 | [tinygo.md](tinygo.md) | installing, building with TinyGo, drop-in Taskfile/Makefile targets, dev loop |
@@ -95,5 +96,7 @@ See [ci.md](ci.md) for the full recipe.
 - Time is virtual (150 MHz cycles); the emulator runs faster than real time,
   so `-seconds` is virtual time and `-wall-timeout` is real time.
 - The headless runner is the automation surface; the UI is a separate module.
+- ELF debug information drives the Debug tab and symbol breakpoints; UF2/raw
+  images fall back to address breakpoints.
 - Hardware wiring and design contracts live in `.operator/specs/` for
   contributors; the documents here are for users.

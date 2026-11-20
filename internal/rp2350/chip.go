@@ -114,6 +114,10 @@ type Chip struct {
 	// discarding logger so callers can log unconditionally.
 	Logger *slog.Logger
 
+	// Debug, when non-nil, adds execution breakpoints and watchpoints. Normal
+	// runs leave it nil.
+	Debug *Debugger
+
 	// IRQCount counts delivered exceptions (diagnostics).
 	IRQCount uint64
 	usbPoll  int
@@ -240,6 +244,9 @@ func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 func (c *Chip) Run(n uint64) {
 	target := c.Cycles + n
 	for c.Cycles < target && (!c.Halted || c.ContinueAfterHalt) {
+		if c.Debug != nil && c.Debug.Stopped {
+			return
+		}
 		// With both cores asleep and nothing that needs per-cycle attention,
 		// only timers can make progress; jump to the next microsecond tick
 		// instead of executing 150 empty cycles.
@@ -298,8 +305,10 @@ func (c *Chip) Step() {
 		if !c.CPU0.Sleeping && !c.CPU0.Parked {
 			c.stepCore(c.CPU0)
 		}
-		if !c.CPU1.Sleeping && !c.CPU1.Parked {
-			c.stepCore(c.CPU1)
+		if c.Debug == nil || !c.Debug.Stopped {
+			if !c.CPU1.Sleeping && !c.CPU1.Parked {
+				c.stepCore(c.CPU1)
+			}
 		}
 	} else {
 		// Paused: still advance time so timers behave.
@@ -325,6 +334,9 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 	}
 	cpu.Bus = c
 	pc := cpu.R[15]
+	if c.Debug != nil && c.Debug.checkPC(c.core, pc, c.Cycles) {
+		return
+	}
 	if c.booted && pc < ROMSize {
 		if c.rom.exec(c, cpu, pc) {
 			return
@@ -440,6 +452,9 @@ func (c *Chip) Reset() {
 	}
 	if c.otp != nil {
 		c.otp.resetLockState()
+	}
+	if c.Debug != nil {
+		c.Debug.Reset()
 	}
 	c.resetPSRAM()
 }
@@ -642,6 +657,7 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 	if c.OnWrite != nil {
 		c.OnWrite(addr, uint32(v), 1)
 	}
+	c.debugWrite(addr, 1)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
 		c.SRAM[addr-SRAMBase] = v
 		return
@@ -683,6 +699,7 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 	if c.OnWrite != nil {
 		c.OnWrite(addr, uint32(v), 2)
 	}
+	c.debugWrite(addr, 2)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-1 {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)
@@ -724,6 +741,7 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 	if c.OnWrite != nil {
 		c.OnWrite(addr, v, 4)
 	}
+	c.debugWrite(addr, 4)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-3 {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)

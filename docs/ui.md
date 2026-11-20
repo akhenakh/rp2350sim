@@ -41,7 +41,7 @@ Startup flags:
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
-| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `otp`, `bus`, `console` |
+| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `otp`, `bus`, `debug`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--paused` | load the firmware but do not execute until Run |
@@ -52,6 +52,7 @@ Startup flags:
 | `--scope-zoom N`, `--scope-range V` | initial scope time zoom / full-scale volts |
 | `--logic-trigger KIND` | arm the logic analyzer at startup: `off`, `any`, `uart`, `i2c`, `spi` |
 | `--logic-pause` | pause the machine when the startup logic trigger fires |
+| `--break SPEC` | add a breakpoint (address or symbol) after loading the firmware |
 
 For headless use, `--run` executes synchronously before the frame is rendered
 (the UI does not step in the background), and the system font scan is awaited
@@ -222,6 +223,15 @@ firmware programmed until you pick a page. Nothing is persistent: seed rows
 with the runner's `-otp` flag or dump them with `-otp-dump`.
 
 ![OTP tab](images/otp.png)
+
+### Debug
+
+The debugger view: Run/Pause/Step, cycle stepping, breakpoints by address or
+symbol, write watchpoints, registers, a side-effect-free memory hex view,
+source/line and DWARF variables. See [debug.md](debug.md) for the variable
+limitations and the fixture tests.
+
+![Debug tab](images/debug.png)
 
 ### Bus
 

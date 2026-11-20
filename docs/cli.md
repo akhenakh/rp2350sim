@@ -415,8 +415,8 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-trace-from ADDR` | start tracing at this address |
 | `-trace-last` | keep a ring of recent instructions for faults |
 | `-trace-pins 25,15` | log GPIO level changes |
-| `-bp ADDR`, `-bp2 ADDR` | stop/log at an address (hex) |
-| `-watch ADDR`, `-watch-val V`, `-watch-reg N` | log writes / register changes |
+| `-bp ADDR\|SYMBOL`, `-bp2 ADDR\|SYMBOL` | log at an address or ELF symbol (requires ELF symbols for names) |
+| `-watch ADDR\|SYMBOL`, `-watch-val V`, `-watch-reg N` | log writes at an address/symbol / value / register changes |
 | `-poke ADDR=VAL` | write memory after boot |
 | `-peek ADDR` | print a word at exit |
 | `-sample N` | print the PC in 10M-cycle chunks |
@@ -508,6 +508,10 @@ rp2350sim -fw firmware.elf -seconds 3 -lcd -lcd-png lcd.png
 rp2350sim -fw firmware.elf -seconds 3 -log-format text
 rp2350sim -fw firmware.elf -seconds 3 -log-format json 2> run.jsonl
 ```
+
+For interactive breakpoints, registers, memory and variables, see
+[debug.md](debug.md). `-bp` and `-watch` accept symbol names when `-fw` is an
+ELF; UF2/raw images need numeric addresses.
 
 See [ci.md](ci.md) for CI recipes and [tinygo.md](tinygo.md) for build
 integration.

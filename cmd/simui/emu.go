@@ -12,6 +12,7 @@ import (
 
 	"image/color"
 
+	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -29,31 +30,31 @@ type PinInfo struct {
 
 // MachineState is a consistent copy of the machine state for one UI frame.
 type MachineState struct {
-	Pins        [48]PinInfo
-	Cycles      uint64
-	PC, SP      uint32
-	Halted      bool
-	Running     bool
-	Firmware    string
-	FlashPath   string
-	Boots       uint64
-	FlashWrites uint64
-	BootEntry   uint32
-	ResetReason string
-	PSRAMBytes  uint32
+	Pins         [48]PinInfo
+	Cycles       uint64
+	PC, SP       uint32
+	Halted       bool
+	Running      bool
+	Firmware     string
+	FlashPath    string
+	Boots        uint64
+	FlashWrites  uint64
+	BootEntry    uint32
+	ResetReason  string
+	PSRAMBytes   uint32
 	PSRAMLatency uint32
-	Err         string
-	LCD         *image.RGBA
-	Console     string
-	ConsolePos  int64
-	WSColors    []color.RGBA
-	WSFrames    uint64
-	WSEnabled   bool
-	EthKind     string
-	Network     *devices.NetworkInfo
-	EthLog      []string
-	Serial      []string
-	Buses       []string
+	Err          string
+	LCD          *image.RGBA
+	Console      string
+	ConsolePos   int64
+	WSColors     []color.RGBA
+	WSFrames     uint64
+	WSEnabled    bool
+	EthKind      string
+	Network      *devices.NetworkInfo
+	EthLog       []string
+	Serial       []string
+	Buses        []string
 
 	Touch     *TouchState
 	IMU       *IMUState
@@ -119,6 +120,8 @@ type Emu struct {
 	chip       *rp2350.Chip
 	lcd        *devices.ST7789
 	img        *firmware.Image
+	debugInfo  *debug.Info
+	debugger   *rp2350.Debugger
 	fwPath     string
 	flashPath  string
 	lastBoots  uint64
@@ -219,7 +222,7 @@ type USBEvent struct {
 }
 
 func NewEmu() *Emu {
-	e := &Emu{}
+	e := &Emu{debugger: rp2350.NewDebugger()}
 	e.mu.Lock()
 	e.resetChip()
 	e.mu.Unlock()
@@ -432,6 +435,8 @@ func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
 // resetChip builds a fresh machine and attaches the selected board's devices.
 func (e *Emu) resetChip() {
 	c := rp2350.New()
+	e.debugger.Reset()
+	c.Debug = e.debugger
 	if e.sd != nil {
 		_ = e.sd.Sync()
 	}
@@ -903,6 +908,7 @@ func (e *Emu) LoadFlash(path string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.img = nil
+	e.debugInfo = nil
 	e.fwPath = path
 	e.errText = ""
 	e.resetChip()
@@ -930,6 +936,10 @@ func (e *Emu) Load(path string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.img = img
+	e.debugInfo = nil
+	if img.Format == "elf" {
+		e.debugInfo, _ = debug.Load(path)
+	}
 	e.fwPath = path
 	e.errText = ""
 	e.loadLocked()
@@ -942,8 +952,9 @@ func (e *Emu) Load(path string) error {
 func (e *Emu) RunFor(cycles uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.debugger.Resume()
 	const chunk = 500_000
-	for cycles > 0 && !e.chip.Halted {
+	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped {
 		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
 		cycles -= n
@@ -961,6 +972,11 @@ func (e *Emu) Reset() {
 func (e *Emu) SetRunning(run bool) {
 	e.mu.Lock()
 	e.running = run
+	if run {
+		e.debugger.Resume()
+	} else if e.chip != nil {
+		e.debugger.Pause(e.chip.CPU0.R[15], e.chip.Cycles)
+	}
 	e.mu.Unlock()
 }
 
@@ -989,6 +1005,9 @@ func (e *Emu) loop() {
 		if running {
 			e.chip.Run(chunk)
 			boots = e.chip.BootCount()
+			if e.debugger.Stopped {
+				e.running = false
+			}
 		}
 		e.mu.Unlock()
 		if running {
