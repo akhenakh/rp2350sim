@@ -1,6 +1,7 @@
 package devices
 
 import (
+	"net"
 	"testing"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -94,5 +95,18 @@ func TestW6300BufferPointers(t *testing.T) {
 	}
 	if got := w.readBlock(c, w6BlockTX, 0, 3); string(got) != "abc" {
 		t.Fatalf("TX buffer = %q", got)
+	}
+}
+
+func TestW6300CloseLazyUDP(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &W6300{}
+	w.socks[0] = &w6sock{udp: conn}
+	w.closeSocket(0)
+	if _, err := conn.WriteToUDP([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}); err == nil {
+		t.Fatal("lazy UDP socket still open after closeSocket")
 	}
 }

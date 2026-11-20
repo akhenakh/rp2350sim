@@ -635,6 +635,15 @@ func (w *W5500) rxAppend(n int, data []byte) {
 func (w *W5500) closeSocket(n int) {
 	s := w.socks[n]
 	s.gen++
+	if s.udp != nil {
+		// The CONNECT path sets both conn and udp to the same socket; the lazy
+		// send path only sets udp. Close it here so the fd and udpReader
+		// goroutine do not leak.
+		if s.conn == nil {
+			_ = s.udp.Close()
+		}
+		s.udp = nil
+	}
 	if s.conn != nil {
 		_ = s.conn.Close()
 		s.conn = nil
@@ -643,7 +652,6 @@ func (w *W5500) closeSocket(n int) {
 		_ = s.listener.Close()
 		s.listener = nil
 	}
-	s.udp = nil
 	// Host-written registers (protocol, ports, destination) survive a CLOSE,
 	// as they do on the chip. OPEN consumes the destination-write flag so a
 	// reused socket never dials a stale destination.

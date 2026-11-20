@@ -647,6 +647,15 @@ func (w *W6300) rxAppend(n int, data []byte) {
 func (w *W6300) closeSocket(n int) {
 	s := w.socks[n]
 	s.gen++
+	if s.udp != nil {
+		// The CONNECT path sets both conn and udp to the same socket; the lazy
+		// send path only sets udp. Close it here so the fd and udpReader
+		// goroutine do not leak.
+		if s.conn == nil {
+			_ = s.udp.Close()
+		}
+		s.udp = nil
+	}
 	if s.conn != nil {
 		_ = s.conn.Close()
 		s.conn = nil
@@ -655,7 +664,6 @@ func (w *W6300) closeSocket(n int) {
 		_ = s.listener.Close()
 		s.listener = nil
 	}
-	s.udp = nil
 	s.status = w6StatusClosed
 	s.irq = 0
 	s.txReadPtr, s.txWritePtr = 0, 0
