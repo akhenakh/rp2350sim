@@ -38,6 +38,7 @@ const (
 	sysClkHz = 150_000_000
 	// CPU is modelled at one instruction per cycle.
 	cyclesPerMicrosecond = sysClkHz / 1_000_000
+	cyclesPerMillisecond = sysClkHz / 1_000
 )
 
 // Chip is one RP2350 device: two M33 cores, memory and peripherals.
@@ -301,11 +302,12 @@ func (c *Chip) Step() {
 
 	if !c.Paused {
 		// Sleeping and parked cores need no work; checking here avoids two
-		// function calls per cycle for the common idle case.
-		if !c.CPU0.Sleeping && !c.CPU0.Parked {
-			c.stepCore(c.CPU0)
-		}
+		// function calls per cycle for the common idle case. A debugger stop
+		// freezes both cores; StepDebug drives one core directly.
 		if c.Debug == nil || !c.Debug.Stopped {
+			if !c.CPU0.Sleeping && !c.CPU0.Parked {
+				c.stepCore(c.CPU0)
+			}
 			if !c.CPU1.Sleeping && !c.CPU1.Parked {
 				c.stepCore(c.CPU1)
 			}
@@ -477,7 +479,9 @@ func (c *Chip) applyReset() {
 	c.pendingReset = false
 	c.Boot()
 	c.resetReason = reason
-	if reason == "watchdog" && c.wd != nil {
+	if reason == "watchdog" && c.wd != nil && c.wd.reason&wdReasonForce == 0 {
+		// A forced TRIGGER reset already recorded its own cause; only an
+		// expiry reset sets the timer bit.
 		c.wd.reason |= wdReasonTimer
 	}
 }
@@ -806,6 +810,20 @@ func (c *Chip) unhandledWrite(addr, v uint32) {
 	}
 }
 
+// regBlockFor finds the block containing addr. The common case is an access
+// on the block's first 4 KB page, which byBase resolves without scanning.
+func (c *Chip) regBlockFor(addr uint32) *regBlock {
+	if b := c.byBase[addr&^0xFFF]; b != nil && addr >= b.base && addr < b.base+b.size {
+		return b
+	}
+	for _, b := range c.regs {
+		if addr >= b.base && addr < b.base+b.size {
+			return b
+		}
+	}
+	return nil
+}
+
 // readMMIO dispatches a 32-bit peripheral read.
 func (c *Chip) readMMIO(addr uint32) uint32 {
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
@@ -819,10 +837,8 @@ func (c *Chip) readMMIO(addr uint32) uint32 {
 			return v
 		}
 	}
-	for _, b := range c.regs {
-		if addr >= b.base && addr < b.base+b.size {
-			return b.read(c, addr-b.base)
-		}
+	if b := c.regBlockFor(addr); b != nil {
+		return b.read(c, addr-b.base)
 	}
 	if off, b, ok := c.aliasTarget(addr); ok {
 		return b.read(c, off)
@@ -863,11 +879,9 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 		c.NVIC.write(addr-SCSBase, v)
 		return
 	}
-	for _, b := range c.regs {
-		if addr >= b.base && addr < b.base+b.size {
-			b.write(c, addr-b.base, v)
-			return
-		}
+	if b := c.regBlockFor(addr); b != nil {
+		b.write(c, addr-b.base, v)
+		return
 	}
 	// Atomic aliases: SET/CLR/XOR.
 	if off, b, ok := c.aliasTarget(addr); ok {
@@ -889,6 +903,20 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 }
 
 func (c *Chip) writeMMIO8(addr uint32, v uint8) {
+	if addr >= SIOBase && addr < SIOBase+0x1000 {
+		off := (addr - SIOBase) &^ 3
+		shift := (addr & 3) * 8
+		old := c.sio.read(c, off)
+		c.sio.write(c, off, old&^(0xFF<<shift)|uint32(v)<<shift)
+		return
+	}
+	if addr >= SCSBase && addr < SCSBase+0x1000 {
+		off := (addr - SCSBase) &^ 3
+		shift := (addr & 3) * 8
+		old := c.NVIC.read(off)
+		c.NVIC.write(off, old&^(0xFF<<shift)|uint32(v)<<shift)
+		return
+	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {
 			off := (addr - b.base) &^ 3
@@ -902,6 +930,20 @@ func (c *Chip) writeMMIO8(addr uint32, v uint8) {
 }
 
 func (c *Chip) writeMMIO16(addr uint32, v uint16) {
+	if addr >= SIOBase && addr < SIOBase+0x1000 {
+		off := (addr - SIOBase) &^ 3
+		shift := (addr & 2) * 8
+		old := c.sio.read(c, off)
+		c.sio.write(c, off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+		return
+	}
+	if addr >= SCSBase && addr < SCSBase+0x1000 {
+		off := (addr - SCSBase) &^ 3
+		shift := (addr & 2) * 8
+		old := c.NVIC.read(off)
+		c.NVIC.write(off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+		return
+	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {
 			off := (addr - b.base) &^ 3

@@ -209,7 +209,7 @@ func codeName(code uint32) string {
 func (b *bootROM) stubOK(c *Chip, cpu *m33.CPU) { cpu.R[0] = bootromOK }
 
 func (b *bootROM) stubUnsupported(c *Chip, cpu *m33.CPU) {
-	c.Logger.Warn("bootrom: unsupported service called", slog.Uint64("pc", cpu.Cycles))
+	c.Logger.Warn("bootrom: unsupported service called", slog.String("pc", fmtHex(cpu.R[15])))
 	cpu.R[0] = bootromErrInvalidState
 }
 
@@ -296,7 +296,7 @@ func (b *bootROM) stubReboot(c *Chip, cpu *m33.CPU) {
 			slog.String("flags", fmtHex(flags)))
 	}
 	c.Logger.Debug("bootrom reboot", slog.Uint64("delay_ms", uint64(delayMS)))
-	c.requestReset("bootrom", uint64(delayMS)*cyclesPerMicrosecond)
+	c.requestReset("bootrom", uint64(delayMS)*cyclesPerMillisecond)
 	cpu.R[0] = bootromOK
 }
 

@@ -406,6 +406,13 @@ func (c *Chip) pinsChanged(oldOut, oldOE uint64) {
 		return
 	}
 	for pin := range 48 {
+		if c.Pins.LevelOverride != nil {
+			// A peripheral (PWM) owns this pin's level; an SIO write does not
+			// change what is on the wire.
+			if _, ok := c.Pins.LevelOverride(pin); ok {
+				continue
+			}
+		}
 		old := c.Pins.levelWith(oldOut, oldOE, pin)
 		now := c.Pins.Level(pin)
 		if old != now {

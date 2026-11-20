@@ -6,15 +6,17 @@ type timerBlock struct {
 	chip  *Chip
 	idx   int
 
-	alarm    [4]uint32
-	armed    uint32
-	intR     uint32
-	intE     uint32
-	intF     uint32
-	pause    uint32
-	dbgPause uint32
-	locked   uint32
-	source   uint32
+	alarm      [4]uint32
+	armed      uint32
+	latchHigh  uint32
+	latchValid bool
+	intR       uint32
+	intE       uint32
+	intF       uint32
+	pause      uint32
+	dbgPause   uint32
+	locked     uint32
+	source     uint32
 }
 
 func (t *timerBlock) init(c *Chip, idx int) {
@@ -32,6 +34,8 @@ func (t *timerBlock) init(c *Chip, idx int) {
 func (t *timerBlock) reset() {
 	t.alarm = [4]uint32{}
 	t.armed = 0
+	t.latchHigh = 0
+	t.latchValid = false
 	t.intR = 0
 	t.intE = 0
 	t.intF = 0
@@ -50,8 +54,15 @@ func (t *timerBlock) read(c *Chip, off uint32) (uint32, bool) {
 		// A write to TIMELW latches the high word; reads return the latched value.
 		return t.block.regs[1], true
 	case 0x08: // TIMEHR
+		// Software reads TIMELR then TIMEHR; TIMELR latches the high word so
+		// the pair cannot straddle a 32-bit microsecond wrap.
+		if t.latchValid {
+			return t.latchHigh, true
+		}
 		return uint32(now >> 32), true
 	case 0x0C: // TIMELR
+		t.latchHigh = uint32(now >> 32)
+		t.latchValid = true
 		return uint32(now), true
 	case 0x24: // TIMERAWH
 		return uint32(now >> 32), true

@@ -85,3 +85,15 @@ func TestLDRHFromBootROM(t *testing.T) {
 		t.Fatalf("ldrh stored %#x, want %#x", got, c.Read16(bootromLookupPtr))
 	}
 }
+
+func TestBootromRebootDelayIsMilliseconds(t *testing.T) {
+	c := New()
+	c.Cycles = 1000
+	c.CPU0.R[0] = 0
+	c.CPU0.R[1] = 3
+	c.rom.stubReboot(c, c.CPU0)
+	want := uint64(3) * cyclesPerMillisecond
+	if got := c.pendingResetAt - c.Cycles; got != want {
+		t.Fatalf("reboot delay = %d cycles, want %d", got, want)
+	}
+}

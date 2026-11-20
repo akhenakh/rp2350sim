@@ -46,3 +46,22 @@ func TestTimerAlarmFire(t *testing.T) {
 		t.Fatalf("pending irq = %d, want 0", got)
 	}
 }
+
+func TestTimerReadLatch(t *testing.T) {
+	c := New()
+	const base = 0x400B0000
+	c.Cycles = (uint64(1)<<32)*cyclesPerMicrosecond - cyclesPerMicrosecond
+	if lo := c.Read32(base + 0x0C); lo != 0xFFFFFFFF {
+		t.Fatalf("TIMELR = %#x, want 0xffffffff", lo)
+	}
+	if hi := c.Read32(base + 0x08); hi != 0 {
+		t.Fatalf("TIMEHR latch = %#x, want 0", hi)
+	}
+	c.Cycles += 2 * cyclesPerMicrosecond
+	if hi := c.Read32(base + 0x24); hi != 1 {
+		t.Fatalf("TIMERAWH = %#x, want 1", hi)
+	}
+	if hi := c.Read32(base + 0x08); hi != 0 {
+		t.Fatalf("TIMEHR after wrap = %#x, want latched 0", hi)
+	}
+}

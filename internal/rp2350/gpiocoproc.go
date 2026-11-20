@@ -33,7 +33,9 @@ func (c *Chip) ExecGPIOCoproc(cpu *m33.CPU, hw1, hw2 uint16) {
 		}
 		switch opc {
 		case 0, 1, 2, 3:
-			c.cpApply(crm, opc, uint64(cpu.R[rt]))
+			// MCRR carries a 64-bit mask in Rt (low) and Rt2 (high). The
+			// hilo forms (crm 0/4) must update both output halves.
+			c.cpApplyMCRR(crm, opc, uint64(cpu.R[rt])|uint64(cpu.R[rt2])<<32)
 		case 4: // bit put: Rt is the pin, Rt2 the value (1 set, 0 clear)
 			c.cpBit(crm, uint(cpu.R[rt]), 3-uint32(cpu.R[rt2]&1))
 		case 5, 6, 7:
@@ -111,6 +113,41 @@ func (c *Chip) cpApply(crm uint32, opc uint32, v uint64) {
 	switch opc {
 	case 0: // put: replace the addressed 32-bit half
 		*dst = (*dst &^ (uint64(0xFFFFFFFF) << shift)) | val
+	case 1:
+		*dst ^= val
+	case 2:
+		*dst |= val
+	case 3:
+		*dst &^= val
+	}
+	if c.Pins.Out != oldOut || c.Pins.OE != oldOE {
+		c.pinsChanged(oldOut, oldOE)
+	}
+}
+
+// cpApplyMCRR applies a 64-bit mask transferred by MCRR. CRm 0/4 address both
+// halves ("hilo"); CRm 1/5 address the high half and take Rt2.
+func (c *Chip) cpApplyMCRR(crm, opc uint32, v uint64) {
+	space, high, ok := cpSpace(crm)
+	if !ok || space == 2 {
+		return
+	}
+	oldOut, oldOE := c.Pins.Out, c.Pins.OE
+	dst := &c.Pins.Out
+	if space == 1 {
+		dst = &c.Pins.OE
+	}
+	val := v
+	if high {
+		val = (v >> 32) << 32
+	}
+	switch opc {
+	case 0: // put
+		if high {
+			*dst = (*dst &^ (uint64(0xFFFFFFFF) << 32)) | val
+		} else {
+			*dst = val
+		}
 	case 1:
 		*dst ^= val
 	case 2:

@@ -35,3 +35,15 @@ func TestExternalIRQDelivery(t *testing.T) {
 		t.Fatal("pending bit was not cleared on entry")
 	}
 }
+
+func TestNVICByteAndHalfwordPriorityWrites(t *testing.T) {
+	c := New()
+	c.Write8(SCSBase+0x402, 0x80)
+	if got := c.NVIC.prio[2]; got != 0x80 {
+		t.Fatalf("byte IPR write = %#x, want 0x80", got)
+	}
+	c.Write16(SCSBase+0x404, 0x6040)
+	if c.NVIC.prio[4] != 0x40 || c.NVIC.prio[5] != 0x60 {
+		t.Fatalf("halfword IPR write = %#x %#x", c.NVIC.prio[4], c.NVIC.prio[5])
+	}
+}

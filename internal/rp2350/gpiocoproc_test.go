@@ -32,3 +32,21 @@ func TestGPIOCoprocBits(t *testing.T) {
 		t.Fatal("clear mask did not clear GP3")
 	}
 }
+
+func TestGPIOCoprocMCRRHighHalf(t *testing.T) {
+	c := New()
+	cpu := c.CPU0
+	cpu.R[0] = 1 << 3
+	cpu.R[1] = 1 << 3
+	c.ExecGPIOCoproc(cpu, 0xEC41, 0x0020) // mcrr p0,#2,r0,r1,c0 (hilo)
+	if c.Pins.Out&(1<<3) == 0 || c.Pins.Out&(1<<35) == 0 {
+		t.Fatalf("hilo set mask = %#x, want GP3 and GP35", c.Pins.Out)
+	}
+
+	cpu.R[0] = 0
+	cpu.R[1] = 1 << 4
+	c.ExecGPIOCoproc(cpu, 0xEC41, 0x0021) // mcrr p0,#2,r0,r1,c1 (high)
+	if c.Pins.Out&(1<<36) == 0 {
+		t.Fatalf("high set mask = %#x, want GP36", c.Pins.Out)
+	}
+}
