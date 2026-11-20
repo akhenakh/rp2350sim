@@ -104,5 +104,5 @@ See [ci.md](ci.md) for the full recipe.
 - The headless runner is the automation surface; the UI is a separate module.
 - ELF debug information drives the Debug tab and symbol breakpoints; UF2/raw
   images fall back to address breakpoints.
-- Hardware wiring and design contracts live in `.operator/specs/` for
-  contributors; the documents here are for users.
+- The documents here are the user guide; implementation contracts live with
+  the code.

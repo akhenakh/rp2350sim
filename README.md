@@ -232,7 +232,7 @@ conn, _ := net.DialTCP("tcp", nil, &net.TCPAddr{IP: net.IPv4(127,0,0,1), Port: 9
 ```
 
 `task run:wifi` shows `wifi echo: hello wifi`; the UI's Wi-Fi tab shows the
-module state. Bluetooth is not emulated; see `.operator/specs/hardware.md`.
+module state. Bluetooth is not emulated; see [docs/boards.md](docs/boards.md).
 
 The W6300 frame is `instruction, address hi, address lo, dummy, data`; its
 register map and status/interrupt registers differ from the W5500, and it has

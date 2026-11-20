@@ -72,7 +72,7 @@ works: `multicore_launch_core1` uses the same SIO FIFO handshake as TinyGo.
 - Bootrom services: `rom_func_lookup`/`rom_table_lookup`, bootrom state reset,
   boot stack, boot random, memory helpers, flash range erase/program, and
   explicit "unsupported" replies for partition/secure services. See
-  `.operator/specs/hardware.md` for the synthetic table.
+  `internal/rp2350/bootrom.go` for the synthetic table.
 - Clocks/resets/timer/GPIO coprocessor/SIO/NVIC: enough for the SDK runtime,
   `printf`, GPIO and multicore.
 - Single-precision floating point (VFPv5-SP): arithmetic, comparisons,
