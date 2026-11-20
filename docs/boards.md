@@ -43,9 +43,10 @@ clocks/PLL/XOSC, watchdog, UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device
   target board, not on-board devices.
 - Use `-lcd` (runner) or the `geek` UI board; `-lcd-png out.png` exports the
   framebuffer.
-- Reference firmware: `firmware/lcd`, which animates palette bands and a
-  sweeping cursor so full-frame fills, partial updates and rotation are all
-  exercised.
+- Reference firmware: `firmware/lcd`, a font splash using
+  `tinygo.org/x/tinyfont` and `freesans`. The title color and accent bars
+  cycle through the palette, exercising full-frame fills, text rendering,
+  partial updates and rotation.
 
 ## Waveshare RP2350-Touch-LCD-2
 

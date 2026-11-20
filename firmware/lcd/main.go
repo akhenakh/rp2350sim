@@ -1,6 +1,6 @@
-// Drive the RP2350-GEEK's ST7789 panel. The animation exercises full-frame
-// fills and partial updates: three palette bands slide, a white cursor sweeps
-// across the panel, and a progress bar grows along the top edge.
+// Drive the RP2350-GEEK's ST7789 panel with a TinyGo font splash. The title
+// color and the accent bars cycle through the palette, so full-frame fills,
+// text rendering and partial updates are all exercised.
 // Build with `task lcd`, which also exports a PNG of the framebuffer.
 package main
 
@@ -11,24 +11,19 @@ import (
 
 	"tinygo.org/x/drivers"
 	"tinygo.org/x/drivers/st7789"
+	"tinygo.org/x/tinyfont"
+	"tinygo.org/x/tinyfont/freesans"
 )
-
-var palettes = [][3]color.RGBA{
-	{
-		{R: 255, G: 56, B: 56, A: 255},
-		{R: 255, G: 176, B: 32, A: 255},
-		{R: 48, G: 200, B: 120, A: 255},
-	},
-	{
-		{R: 64, G: 132, B: 255, A: 255},
-		{R: 168, G: 96, B: 255, A: 255},
-		{R: 64, G: 232, B: 232, A: 255},
-	},
-}
 
 var (
 	background = color.RGBA{R: 12, G: 14, B: 20, A: 255}
-	white      = color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	white      = color.RGBA{R: 240, G: 244, B: 248, A: 255}
+	muted      = color.RGBA{R: 126, G: 138, B: 154, A: 255}
+	accent     = [3]color.RGBA{
+		{R: 255, G: 56, B: 56, A: 255},
+		{R: 255, G: 176, B: 32, A: 255},
+		{R: 48, G: 200, B: 120, A: 255},
+	}
 )
 
 func main() {
@@ -41,48 +36,25 @@ func main() {
 
 	uart.Write([]byte("lcd example running\r\n"))
 
-	const (
-		width  = 240
-		height = 135
-		band   = 45
-	)
-
 	var frame int
 	for {
-		p := palettes[(frame/150)%len(palettes)]
+		p := accent[(frame/90)%len(accent)]
 
-		_ = display.FillRectangle(0, 0, width, height, background)
+		_ = display.FillRectangle(0, 0, 240, 135, background)
 
-		// Bands bounce up and down so no wrap seam is visible.
-		phase := frame % 90
-		if phase > 45 {
-			phase = 90 - phase
-		}
-		for i, c := range p {
-			y0 := int16(-15 + i*band + phase)
-			y1 := y0 + band
-			if y0 < 0 {
-				y0 = 0
-			}
-			if y1 > height {
-				y1 = height
-			}
-			if y1 > y0 {
-				_ = display.FillRectangle(0, y0, width, y1-y0, c)
-			}
+		// A thin accent line and three palette swatches keep the animation
+		// visible without hiding the text.
+		_ = display.FillRectangle(0, 0, 240, 3, p)
+		for i, c := range accent {
+			_ = display.FillRectangle(int16(12+i*14), 116, 10, 6, c)
 		}
 
-		// Sweep a cursor across the panel, erasing the previous column.
-		x := int16(frame % (width - 4))
-		_ = display.FillRectangle(x, 0, 4, height, white)
-		_ = display.FillRectangle((x+width-6)%width, 0, 4, height, background)
-
-		// Progress bar along the top edge, redrawn every 30 frames.
-		if frame%30 == 0 {
-			_ = display.FillRectangle(4, 4, int16(4+frame%232), 3, white)
-		}
+		tinyfont.WriteLine(&display, &freesans.Bold18pt7b, 12, 38, "rp2350sim", white)
+		tinyfont.WriteLine(&display, &freesans.Regular9pt7b, 12, 66, "RP2350-GEEK", p)
+		tinyfont.WriteLine(&display, &freesans.Regular9pt7b, 12, 90, "ST7789 240x135", muted)
+		tinyfont.WriteLine(&display, &freesans.Regular9pt7b, 12, 110, "TinyGo fonts", white)
 
 		frame++
-		time.Sleep(40 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 }
