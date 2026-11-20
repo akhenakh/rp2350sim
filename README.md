@@ -119,6 +119,7 @@ Useful flags:
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 | `-otp PATH`, `-otp-dump PATH` | seed / write back the OTP array (JSON) |
 | `-flash PATH`, `-flash-out PATH` | load / write back the raw 16 MiB flash image |
+| `-logic-pins 0,1`, `-logic-out PATH` | capture a logic-analyzer trace (UART/I2C/SPI taps plus pin samples) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |

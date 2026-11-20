@@ -163,7 +163,9 @@ same SPI bus.
   the firmware can be exercised with `nc` or a browser.
 - **LEDs** — the last WS2812B frame as large swatches with their RGB values.
 - **Scope** — see below.
-- **Logic** — see below.
+- **Logic** — protocol decoders and waveforms; **Save trace** writes
+  `logic-analyze-trace-<date>-<board>.txt` in the current directory with the
+  raw pin samples and the decoded UART/I2C/SPI/USB sections.
 - **OTP** — the RP2350 OTP array: 64 pages of 64 rows, each page showing its
   programmed-row count and effective secure/non-secure lock. Click a page to
   inspect its rows (data, raw 24-bit value and ECC status). The panel follows

@@ -36,6 +36,8 @@ var (
 	scopeRangeIdx      = 4
 	triggerKind        string
 	triggerPause       bool
+	logicSaveMsg       string
+	logicSaveErr       bool
 	touchDemo          bool
 	touchDemoStart     time.Time
 	touchDemoAt        time.Time
@@ -1328,6 +1330,103 @@ func toggleScopePin(pin int) {
 
 // ---- Logic analyzer tab ----
 
+// saveLogicTrace writes the current capture in the same text format as the
+// headless runner.
+func saveLogicTrace(pins []int, samples []devices.TraceSample, interval uint64) (string, error) {
+	when := time.Now()
+	trace := devices.LogicTrace{
+		BoardID:   selectedBoard.ID,
+		BoardName: selectedBoard.Name,
+		Captured:  when,
+		Interval:  interval,
+		Pins:      pins,
+		Samples:   samples,
+	}
+	if l := selectedBoard.Logic; l != nil {
+		if d := l.UART; d != nil {
+			text := "no frames"
+			if ev := uartTXEvents(d.Bus); len(ev) > 0 {
+				text = uartEventText(ev)
+			} else if ch := channelOf(pins, d.TX); ch >= 0 && interval > 0 {
+				text = uartFrameText(devices.DecodeUART(samples, ch, float64(d.Baud), 150e6/float64(interval)), samples)
+			}
+			trace.Sections = append(trace.Sections, devices.LogicSection{
+				Name:   "UART",
+				Detail: fmt.Sprintf("%d baud · TX GP%d", d.Baud, d.TX),
+				Text:   text,
+			})
+		}
+		if d := l.I2C; d != nil {
+			text := "no transactions"
+			if ev := emu.I2CEvents(); len(ev) > 0 {
+				text = i2cEventText(ev, d.Bus)
+			} else {
+				sda, scl := channelOf(pins, d.SDA), channelOf(pins, d.SCL)
+				if sda >= 0 && scl >= 0 {
+					text = i2cText(devices.DecodeI2C(samples, sda, scl))
+				}
+			}
+			trace.Sections = append(trace.Sections, devices.LogicSection{
+				Name:   "I2C",
+				Detail: fmt.Sprintf("SDA GP%d · SCL GP%d", d.SDA, d.SCL),
+				Text:   text,
+			})
+		}
+		if d := l.SPI; d != nil {
+			text := "no frames"
+			if ev := spiBusEvents(d.Bus); len(ev) > 0 {
+				text = spiEventText(ev)
+			} else {
+				sck, mosi := channelOf(pins, d.SCK), channelOf(pins, d.MOSI)
+				if sck >= 0 && mosi >= 0 {
+					text = spiText(devices.DecodeSPI(samples, sck, mosi, channelOf(pins, d.MISOPin()), channelOf(pins, d.CSPin())))
+				}
+			}
+			trace.Sections = append(trace.Sections, devices.LogicSection{
+				Name:   "SPI",
+				Detail: fmt.Sprintf("SCK GP%d · MOSI GP%d", d.SCK, d.MOSI),
+				Text:   text,
+			})
+		}
+	}
+	if text := usbTraceText(emu.USBEvents()); text != "" {
+		trace.Sections = append(trace.Sections, devices.LogicSection{Name: "USB CDC", Text: text})
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(wd, devices.LogicTraceFilename(selectedBoard.ID, when))
+	f, err := os.Create(path)
+	if err != nil {
+		return "", err
+	}
+	if err := devices.WriteLogicTrace(f, trace); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func usbTraceText(events []USBEvent) string {
+	if len(events) == 0 {
+		return ""
+	}
+	base := events[0].Cycle
+	var b strings.Builder
+	for _, ev := range events {
+		dir := "IN "
+		if !ev.In {
+			dir = "OUT"
+		}
+		fmt.Fprintf(&b, "%7.2fms %s %q\n", float64(ev.Cycle-base)/150e3, dir, string(ev.Data))
+	}
+	return b.String()
+}
+
 func logicPanel() {
 	pins, samples, interval := emu.LogicData()
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
@@ -1339,8 +1438,26 @@ func logicPanel() {
 				Label(fmt.Sprintf("%.1f MS/s · %.1f ms window", rate/1e6, window), FontSize(12))
 			}
 			Filler(1)
+			if Button(NoIcon, "Save trace") {
+				path, err := saveLogicTrace(pins, samples, interval)
+				if err != nil {
+					logicSaveMsg = "save failed: " + err.Error()
+					logicSaveErr = true
+				} else {
+					logicSaveMsg = "saved " + path
+					logicSaveErr = false
+				}
+				RequestNextFrame()
+			}
 			Label("hardware taps + pin traces", FontSize(11), TextColor(220, 6, 60, 1))
 		})
+		if logicSaveMsg != "" {
+			color := TextColor(140, 45, 72, 1)
+			if logicSaveErr {
+				color = TextColor(0, 65, 60, 1)
+			}
+			Label(logicSaveMsg, FontSize(11), FontWeight(600), color)
+		}
 		Container(Attrs(Row, CrossMid, Gap(4)), func() {
 			Label("Trigger", FontSize(11), FontWeight(600))
 			triggerButton("Off", "")

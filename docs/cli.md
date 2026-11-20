@@ -304,6 +304,35 @@ resets in the UI but the headless runner is one process.
 | `-unhandled` | report unmapped accesses at exit |
 | `-msg` | at `-bp`, decode `r1` as a runtime message string |
 | `-cpuprofile PATH` | write a Go CPU profile |
+| `-logic-pins 0,1,4,5` | sample these GPIOs into the logic analyzer trace |
+| `-logic-out PATH` | write the trace file (default `logic-analyze-trace-<date>-<board>.txt`) |
+| `-logic-uart tx[,rx],baud` | decode a UART pin trace |
+| `-logic-i2c sda,scl` | decode an I2C pin trace |
+| `-logic-spi sck,mosi[,miso[,cs]]` | decode an SPI pin trace |
+| `-logic-rate HZ` | sample rate (default 2 MHz) |
+| `-logic-depth N` | ring depth in samples (default 16384) |
+| `-logic-board NAME` | board label for the file name and metadata |
+
+### Logic analyzer capture
+
+The runner can save the same trace the UI's logic tab shows. Hardware
+UART/SPI/I2C taps are always included; `-logic-pins` adds raw pin samples and
+the protocol flags decode those pins for PIO/bit-banged traffic.
+
+```sh
+rp2350sim -fw build/protocols.elf -seconds 0.5 \
+  -logic-pins 0,1,4,5,18,19,16,17 \
+  -logic-uart 0,1,115200 -logic-i2c 4,5 -logic-spi 18,19,16,17 \
+  -logic-out logic-trace.txt
+```
+
+Without `-logic-out` the file is written to the current directory as
+`logic-analyze-trace-<date>-<board>.txt`. The text format has a metadata block,
+a `# samples` table (`time_us` plus one column per GPIO), and decoded sections
+for the controller taps and pin protocols. A pin trace is a rolling window of
+`-logic-depth` samples; lower `-logic-rate` to cover more time. Capturing pins
+installs a per-cycle hook, which disables the idle fast-forward while the run
+is captured.
 
 ### Environment variables
 

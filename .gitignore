@@ -6,3 +6,5 @@ firmware/c/build/
 /rp2350sim
 cmd/simui/simui
 sdcards/
+
+logic-analyze-trace-*.txt

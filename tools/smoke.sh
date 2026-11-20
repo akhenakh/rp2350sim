@@ -280,6 +280,16 @@ else
 	echo "skip: Pico SDK C checks (set PICO_SDK_PATH and install the ARM toolchain)"
 fi
 
+"$EMU" -fw "$BUILD/protocols.elf" -seconds 0.4 -quiet \
+	-logic-pins 0,1 -logic-uart 0,1,115200 -logic-out "$BUILD/logic-capture.txt" >/dev/null 2>&1
+if grep -q "rp2350sim logic analyzer trace" "$BUILD/logic-capture.txt" &&
+	grep -q "# UART taps" "$BUILD/logic-capture.txt" &&
+	grep -q "# samples" "$BUILD/logic-capture.txt"; then
+	ok "CLI logic analyzer capture"
+else
+	bad "CLI logic analyzer capture" "$(head -20 "$BUILD/logic-capture.txt" 2>/dev/null)"
+fi
+
 if (cd cmd/simui && go run . --board pico2-analog --tab logic --run 0.05 	--png "../../$BUILD/logic-smoke.png" "../../$BUILD/protocols.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 30 "$BUILD/logic-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI logic analyzer tab"

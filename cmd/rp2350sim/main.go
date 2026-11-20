@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -105,6 +106,14 @@ func main() {
 		secs       = flag.Float64("seconds", 0, "virtual seconds to run (overrides -steps)")
 		unhandled  = flag.Bool("unhandled", false, "report unmapped peripheral accesses at exit")
 		tracePins  = flag.String("trace-pins", "", "comma separated GPIO numbers to log")
+		logicPins  = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
+		logicOut   = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
+		logicUART  = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
+		logicI2C   = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
+		logicSPI   = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
+		logicRate  = flag.Float64("logic-rate", 2e6, "logic analyzer sample rate in Hz")
+		logicDepth = flag.Int("logic-depth", devices.LogicDepth, "logic analyzer ring depth in samples")
+		logicBoard = flag.String("logic-board", "", "board label for the logic trace and filename")
 		stopOnMMIO = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
 		core1      = flag.Bool("core1", true, "start core 1")
 		quiet      = flag.Bool("quiet", false, "suppress the firmware header and final summary")
@@ -157,6 +166,24 @@ func main() {
 	if *sdImage != "" && *sdDir != "" {
 		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
 		os.Exit(2)
+	}
+	logicEnabled := *logicPins != "" || *logicOut != "" || *logicUART != "" || *logicI2C != "" || *logicSPI != ""
+	logicLabel := *logicBoard
+	if logicLabel == "" {
+		if *path != "" {
+			logicLabel = strings.TrimSuffix(filepath.Base(*path), filepath.Ext(*path))
+		} else {
+			logicLabel = "flash"
+		}
+	}
+	var logicCap *logicCapture
+	if logicEnabled {
+		var logicErr error
+		logicCap, logicErr = newLogicCapture(*logicPins, *logicUART, *logicI2C, *logicSPI, *logicRate, *logicDepth, logicLabel)
+		if logicErr != nil {
+			fmt.Fprintln(os.Stderr, "logic capture:", logicErr)
+			os.Exit(2)
+		}
 	}
 
 	format, err := logging.ParseFormat(*logFormat)
@@ -829,6 +856,9 @@ func main() {
 		inputCycles = uint64(float64(*inputAt) / float64(time.Second) * 150_000_000)
 	}
 
+	if logicCap != nil {
+		logicCap.attach(c)
+	}
 	netLog := &networkReporter{log: log}
 	start := time.Now()
 	timedOut := false
@@ -903,6 +933,20 @@ func main() {
 	}
 	netLog.report(w5500, w6300, ch9120)
 	saveFlash()
+	logicPath := ""
+	logicSamples := 0
+	if logicCap != nil {
+		var logicErr error
+		logicPath, logicErr = logicCap.write(*logicOut)
+		if logicErr != nil {
+			log.Error("logic trace", slog.String("path", logicPath), slog.Any("err", logicErr))
+		} else {
+			logicSamples = logicCap.samples
+			log.Info("logic trace saved",
+				slog.String("path", logicPath),
+				slog.Int("samples", logicSamples))
+		}
+	}
 	wall := time.Since(start)
 	halted := c.CPU0.Halted || c.CPU1.Halted || c.Halted
 	missing := expects.missing()
@@ -1031,6 +1075,7 @@ func main() {
 			ExitCode       int                   `json:"exit_code"`
 			Network        []devices.NetworkInfo `json:"network,omitempty"`
 			FlashPath      string                `json:"flash_path,omitempty"`
+			LogicPath      string                `json:"logic_trace,omitempty"`
 			Boots          uint64                `json:"boots"`
 			FlashWrites    uint64                `json:"flash_writes"`
 			ResetReason    string                `json:"reset_reason,omitempty"`
@@ -1055,6 +1100,7 @@ func main() {
 			ExitCode:       exitCode,
 			Network:        netLog.infos(w5500, w6300, ch9120),
 			FlashPath:      flashPath,
+			LogicPath:      logicPath,
 			Boots:          c.BootCount(),
 			FlashWrites:    c.FlashWrites(),
 			ResetReason:    c.LastResetReason(),
