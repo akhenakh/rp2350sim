@@ -178,17 +178,21 @@ func (e *Emu) DebugFunctions() []debug.Function {
 func (e *Emu) DebugSnapshot() DebugSnapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	cpu := e.chip.CPU0
+	if e.debugger.Stopped && e.debugger.StopCore == 1 {
+		cpu = e.chip.CPU1
+	}
 	s := DebugSnapshot{
-		PC:         e.chip.CPU0.R[15],
-		SP:         e.chip.CPU0.R[13],
-		Registers:  [16]uint32(e.chip.CPU0.R),
-		APSR:       e.chip.CPU0.APSR,
-		IPSR:       e.chip.CPU0.IPSR,
-		CONTROL:    e.chip.CPU0.CONTROL,
-		MSP:        e.chip.CPU0.MSP,
-		PSP:        e.chip.CPU0.PSP,
-		FPSCR:      e.chip.CPU0.FPSCR,
-		FPUActive:  e.chip.CPU0.FPUActive,
+		PC:         cpu.R[15],
+		SP:         cpu.R[13],
+		Registers:  [16]uint32(cpu.R),
+		APSR:       cpu.APSR,
+		IPSR:       cpu.IPSR,
+		CONTROL:    cpu.CONTROL,
+		MSP:        cpu.MSP,
+		PSP:        cpu.PSP,
+		FPSCR:      cpu.FPSCR,
+		FPUActive:  cpu.FPUActive,
 		Cycles:     e.chip.Cycles,
 		Stopped:    e.debugger.Stopped,
 		StopReason: e.debugger.StopReason,
