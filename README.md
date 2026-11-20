@@ -119,7 +119,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 ## Running firmware
 
 ```sh
-go run ./cmd/rp2350sim -fw firmware.elf -seconds 1 -trace-pins 25
+rp2350sim -fw firmware.elf -seconds 1 -trace-pins 25
 # or, building and running the bundled blinky example:
 task run:blinky
 ```
@@ -239,9 +239,6 @@ destination address on its second netdev call in this build (TCP is fine).
 ## Desktop UI
 
 ```sh
-cd cmd/simui
-go run . --board geek ../../firmware.elf
-# or, from a release archive
 rp2350sim-ui --board geek firmware.elf
 ```
 
@@ -253,7 +250,7 @@ hardware: an ST7789 LCD with its CS/DC/RST pins, touch and IMU controllers, a
 W5500/W6300/CH9120 network controller, virtual Wi-Fi, a microSD directory, a
 WS2812B data pin, scope channels, generated analog signals, logic-analyzer
 protocols, UART TCP bridges or remote I2C/SPI Bus Pirate devices.
-`go run . --list-boards` prints the ids.
+`rp2350sim-ui --list-boards` prints the ids.
 
 Selecting a board attaches only those devices to the emulated chip and builds
 the tabs accordingly:

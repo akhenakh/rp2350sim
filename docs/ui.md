@@ -8,12 +8,10 @@ firmware console.
 
 The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
 the emulator build. Download `rp2350sim-ui` from
-[GitHub Releases](https://github.com/akhenakh/rp2350sim/releases), or run it
-from a checkout:
+[GitHub Releases](https://github.com/akhenakh/rp2350sim/releases) and run it:
 
 ```sh
-cd cmd/simui
-go run . --board geek ../../build/lcd.elf
+rp2350sim-ui --board geek build/lcd.elf
 ```
 
 The window is 1280×820 by default; `--width`/`--height` change it. **Cmd+Q** on
@@ -31,7 +29,7 @@ matching tabs; boards without a device do not get that tab.
 Override the list without rebuilding:
 
 ```sh
-RP2350SIM_BOARDS=/path/to/boards.yaml go run .
+RP2350SIM_BOARDS=/path/to/boards.yaml rp2350sim-ui
 ```
 
 Startup flags:
@@ -282,14 +280,13 @@ stable while the UI is open.
 ## Headless snapshots
 
 ```sh
-cd cmd/simui
-go run . --board geek --tab lcd --run 0.6 --png ../../ui.png ../../build/lcd.elf
-go run . --board pico2-analog --tab scope --run 0.02 --png ../../scope.png
-go run . --board pico2-analog --tab logic --run 0.05 --png ../../logic.png ../../build/protocols.elf
-go run . --board touch-lcd2 --tab sensors --touch 120,200 --run 0.6 \
-  --png ../../sensors.png ../../build/touchlcd.elf
-go run . --board pico2 --flash /tmp/ota-flash.bin --run 0.5 --png ../../ota.png \
-  ../../firmware/c/build/ota.elf
+rp2350sim-ui --board geek --tab lcd --run 0.6 --png ui.png build/lcd.elf
+rp2350sim-ui --board pico2-analog --tab scope --run 0.02 --png scope.png
+rp2350sim-ui --board pico2-analog --tab logic --run 0.05 --png logic.png build/protocols.elf
+rp2350sim-ui --board touch-lcd2 --tab sensors --touch 120,200 --run 0.6 \
+  --png sensors.png build/touchlcd.elf
+rp2350sim-ui --board pico2 --flash /tmp/ota-flash.bin --run 0.5 --png ota.png \
+  firmware/c/build/ota.elf
 ```
 
 `task ui:ota` opens the same setup live; `task ui:ota-png` writes

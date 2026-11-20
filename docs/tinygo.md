@@ -115,8 +115,7 @@ The UI module can render a deterministic frame, which is useful for design
 reviews or CI artifacts:
 
 ```sh
-cd cmd/simui
-go run . --board geek --tab lcd --run 0.6 --png ../../ui.png ../../build/firmware.elf
+rp2350sim-ui --board geek --tab lcd --run 0.6 --png ui.png build/firmware.elf
 ```
 
 ## Choosing hardware

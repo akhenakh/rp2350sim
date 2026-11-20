@@ -64,7 +64,7 @@ equivalent when `jq` is available.
 
 This is also how you drive the CH9120 / W5500 / W6300 / virtual Wi-Fi demos:
 their sockets are backed by the host's network stack, so start the server the
-firmware expects first (for example `go run ./tools/ethhost`).
+firmware expects first (for example `go build -o build/ethhost ./tools/ethhost` then `build/ethhost`).
 
 ## Pico SDK examples and signal checks
 
@@ -181,8 +181,8 @@ rp2350sim -fw firmware.elf -seconds 3 -lcd -lcd-png lcd.png \
 The UI can render a headless snapshot too (see [ui.md](ui.md)):
 
 ```sh
-(cd cmd/simui && go run . --board geek --tab lcd --run 0.6 \
-  --png ../../ui.png ../../firmware.elf)
+rp2350sim-ui --board geek --tab lcd --run 0.6 \
+  --png ui.png firmware.elf
 ```
 
 ## GitHub Actions
