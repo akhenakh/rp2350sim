@@ -119,9 +119,9 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	case a == 0xEE80 && b == 0x0A40 && op == 8:
 		c.vfpSetS(sd, float32(c.S[sm])) // VCVT.F32.U32
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xD:
-		c.vfpSetS(sd, float32(int32(c.vfpS(sm)))) // VCVT.S32.F32 (truncate)
+		c.S[sd&31] = uint32(int32(c.vfpS(sm))) // VCVT.S32.F32 (truncate)
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xC:
-		c.vfpSetS(sd, float32(uint32(c.vfpS(sm)))) // VCVT.U32.F32
+		c.S[sd&31] = uint32(c.vfpS(sm)) // VCVT.U32.F32
 	default:
 		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
 	}
@@ -197,7 +197,14 @@ func (c *CPU) vfpLoadStore(hw1, hw2 uint16) {
 	sd := int((hw2>>12)<<1) | d
 	imm8 := uint32(hw2 & 0xFF)
 	if double {
-		sd = (int(hw2>>12) | d<<4) * 2
+		dreg := int(hw2>>12) | d<<4
+		if dreg > 15 {
+			// FPv5-SP only has D0-D15 (S0-S31); D16-D31 encodings are
+			// UNDEFINED and must not index past the register file.
+			c.Halt("undefined VFP double register")
+			return
+		}
+		sd = dreg * 2
 	}
 
 	if hw1&0x0020 == 0 {
@@ -240,9 +247,17 @@ func (c *CPU) vfpLoadStore(hw1, hw2 uint16) {
 		for i := range count {
 			if double {
 				d := sd + int(i)*2
+				if d > 30 {
+					c.Halt("undefined VFP double register")
+					return
+				}
 				c.S[d] = c.Bus.Read32(addr + uint32(i)*8)
 				c.S[d+1] = c.Bus.Read32(addr + uint32(i)*8 + 4)
 			} else {
+				if sd+int(i) > 31 {
+					c.Halt("undefined VFP register")
+					return
+				}
 				c.S[sd+int(i)] = c.Bus.Read32(addr + uint32(i)*4)
 			}
 		}
@@ -250,9 +265,17 @@ func (c *CPU) vfpLoadStore(hw1, hw2 uint16) {
 		for i := range count {
 			if double {
 				d := sd + int(i)*2
+				if d > 30 {
+					c.Halt("undefined VFP double register")
+					return
+				}
 				c.Bus.Write32(addr+uint32(i)*8, c.S[d])
 				c.Bus.Write32(addr+uint32(i)*8+4, c.S[d+1])
 			} else {
+				if sd+int(i) > 31 {
+					c.Halt("undefined VFP register")
+					return
+				}
 				c.Bus.Write32(addr+uint32(i)*4, c.S[sd+int(i)])
 			}
 		}

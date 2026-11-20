@@ -30,3 +30,44 @@ func TestVFPFused(t *testing.T) {
 		}
 	}
 }
+
+// TestVCVTIntBits checks that float-to-integer conversions write the integer
+// bit pattern, not an IEEE-754 float re-encoding of the integer.
+func TestVCVTIntBits(t *testing.T) {
+	cases := []struct {
+		name string
+		hw1  uint16
+		hw2  uint16
+		in   float32
+		want uint32
+	}{
+		{"vcvt.s32.f32", 0xEEBD, 0x0AE0, 3.7, 3},
+		{"vcvt.s32.f32 negative", 0xEEBD, 0x0AE0, -3.7, 0xFFFFFFFD},
+		{"vcvt.u32.f32", 0xEEBC, 0x0AE0, 3.7, 3},
+	}
+	for _, tc := range cases {
+		cpu := New(newTestBus())
+		cpu.S[1] = math.Float32bits(tc.in)
+		cpu.exec32Coproc(tc.hw1, tc.hw2)
+		if cpu.Halted {
+			t.Fatalf("%s halted: %s", tc.name, cpu.HaltReason)
+		}
+		if got := cpu.S[0]; got != tc.want {
+			t.Errorf("%s = %#x, want %#x", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestVFPDoubleRegisterBounds checks that an undefined D16-D31 encoding halts
+// the guest instead of panicking the host on S[32].
+func TestVFPDoubleRegisterBounds(t *testing.T) {
+	cpu := New(newExecBus())
+	cpu.R[0] = 0x20000400
+	cpu.exec32Coproc(0xEDD0, 0x0B00) // vldr d16, [r0]
+	if !cpu.Halted {
+		t.Fatal("undefined D16 load did not halt")
+	}
+	if cpu.HaltReason != "undefined VFP double register" {
+		t.Fatalf("halt reason = %q", cpu.HaltReason)
+	}
+}

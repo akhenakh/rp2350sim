@@ -87,6 +87,51 @@ func TestStoreReleaseByte(t *testing.T) {
 	}
 }
 
+// TestLDRDPostIndexed guards the P bit in STRD/LDRD immediate: bit 8 is the
+// pre/post selector, while bit 6 is fixed at one. Testing bit 6 made every
+// post-indexed access use the updated address.
+func TestLDRDPostIndexed(t *testing.T) {
+	bus := newExecBus()
+	cpu := New(bus)
+	// ldrd r0, r1, [r3], #8 / b .
+	copy(bus.mem, []byte{0xf3, 0xe8, 0x02, 0x01, 0xfe, 0xe7})
+	bus.Write32(0x20000400, 0x11223344)
+	bus.Write32(0x20000404, 0x55667788)
+	bus.Write32(0x20000408, 0x99aabbcc)
+	cpu.R[3] = 0x20000400
+	cpu.R[15] = 0x20000000
+	cpu.Step()
+	if cpu.R[0] != 0x11223344 || cpu.R[1] != 0x55667788 {
+		t.Fatalf("ldrd post-index = %#x %#x", cpu.R[0], cpu.R[1])
+	}
+	if cpu.R[3] != 0x20000408 {
+		t.Fatalf("ldrd writeback = %#x, want 0x20000408", cpu.R[3])
+	}
+}
+
+// TestSTRDPreIndex checks that the same decoder writes at base+imm and still
+// updates the base for the pre-indexed form.
+func TestSTRDPreIndex(t *testing.T) {
+	bus := newExecBus()
+	cpu := New(bus)
+	// strd r6, r7, [r5, #8]! / b .
+	copy(bus.mem, []byte{0xe5, 0xe9, 0x02, 0x67, 0xfe, 0xe7})
+	cpu.R[5] = 0x20000400
+	cpu.R[6] = 0x11111111
+	cpu.R[7] = 0x22222222
+	cpu.R[15] = 0x20000000
+	cpu.Step()
+	if got := bus.Read32(0x20000408); got != 0x11111111 {
+		t.Fatalf("strd low = %#x", got)
+	}
+	if got := bus.Read32(0x2000040c); got != 0x22222222 {
+		t.Fatalf("strd high = %#x", got)
+	}
+	if cpu.R[5] != 0x20000408 {
+		t.Fatalf("strd writeback = %#x, want 0x20000408", cpu.R[5])
+	}
+}
+
 // TestPKHBT covers the packed-halfword insert instructions emitted by the
 // TinyGo math/PWM helpers.
 func TestPKHBT(t *testing.T) {
@@ -103,8 +148,8 @@ func TestPKHBT(t *testing.T) {
 	cpu.R[3] = 0x33334444
 	cpu.R[15] = 0x20000000
 	cpu.Step()
-	if cpu.R[1] != 0x22224444 {
-		t.Fatalf("pkhbt = %#x, want 0x22224444", cpu.R[1])
+	if cpu.R[1] != 0x44442222 {
+		t.Fatalf("pkhbt = %#x, want 0x44442222", cpu.R[1])
 	}
 	cpu.Step()
 	if cpu.R[1] != 0x11113333 {

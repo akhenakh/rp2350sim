@@ -373,8 +373,10 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			out=$("$EMU" -fw "$EX/divider/hello_divider.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples divider" "123456/-321 = -384 remainder 192" "$out"
 			contains "pico-examples divider async" "Async result 123456/-321 = -384 remainder 192" "$out"
+			# 32 is the arithmetic answer; the old post-indexed LDRD bug made
+			# dcp_dot consume the wrong elements and print 28.
 			out=$("$EMU" -fw "$EX/hello_dcp/hello_dcp.elf" -seconds 0.5 -quiet 2>&1)
-			contains "pico-examples DCP" "(1,2,3).(4,5,6)=28" "$out"
+			contains "pico-examples DCP" "(1,2,3).(4,5,6)=32" "$out"
 			out=$("$EMU" -fw "$EX/hello_watchdog/hello_watchdog.elf" -seconds 1.5 -quiet 2>&1)
 			contains "pico-examples watchdog boot" "Clean boot" "$out"
 			contains "pico-examples watchdog reboot" "Rebooted by Watchdog!" "$out"

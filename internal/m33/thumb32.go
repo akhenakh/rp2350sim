@@ -242,7 +242,7 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 	case hw1&0xFE40 == 0xE840: // STRD / LDRD (immediate, imm8*4)
 		rn := uint32(hw1 & 0xF)
 		u := hw1&0x0080 != 0
-		p := hw1&0x0040 != 0
+		p := hw1&0x0100 != 0
 		w := hw1&0x0020 != 0
 		load := hw1&0x0010 != 0
 		rt := uint32(hw2 >> 12)
@@ -396,8 +396,8 @@ func (c *CPU) exec32DataProc(hw1, hw2 uint16, _ bool) {
 				sh = 32
 			}
 			res = (a & 0xFFFF0000) | (uint32(int32(c.R[rm])>>sh) & 0xFFFF)
-		} else { // PKHBT: logical shift left, keep Rm's low half
-			res = a<<shift | (c.R[rm] & 0xFFFF)
+		} else { // PKHBT: keep Rn's low half and the shifted Rm high half
+			res = (a & 0xFFFF) | ((c.R[rm] << shift) & 0xFFFF0000)
 		}
 	case 0x8: // ADD
 		if s {
