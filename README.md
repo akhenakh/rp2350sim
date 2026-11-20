@@ -14,6 +14,23 @@ interpreter is checked against QEMU instruction by instruction.
 
 Fully tested on Linux & Mac OSX.
 
+## Download
+
+Prebuilt binaries are attached to [GitHub Releases](https://github.com/akhenakh/rp2350sim/releases).
+Every archive contains both programs, `LICENSE`, `README.md` and the `docs/`
+directory:
+
+| platform | archive | programs |
+|---|---|---|
+| Linux (`amd64`, `arm64`) | `rp2350sim_<version>_linux_<arch>.tar.gz` | `rp2350sim`, `rp2350sim-ui` |
+| macOS (`amd64`, `arm64`) | `rp2350sim_<version>_darwin_<arch>.tar.gz` | `rp2350sim`, `rp2350sim-ui` |
+| Windows (`amd64`, `arm64`) | `rp2350sim_<version>_windows_<arch>.zip` | `rp2350sim.exe`, `rp2350sim-ui.exe` |
+| all | `rp2350sim_<version>_checksums.txt` | SHA-256 checksums |
+
+`rp2350sim -version` and `rp2350sim-ui --version` report the release build. The
+binaries are pure Go, so no CGO toolchain is needed. Tags matching `v*` publish
+these archives; [docs/release.md](docs/release.md) covers the pipeline.
+
 ## Use of AI
 This project was created using AI, cross checked against existing implementations, unit tested and smoke tested , CI guards.  
 Your best bet is to try and see if it's running your code properly, send bug reports if you want the tool to improve.
@@ -113,6 +130,10 @@ Useful flags:
 | `-w6300` | attach a W6300 on SPI0 CS GP17 (PoE board) |
 | `-ch9120` | attach a CH9120 on UART1 GP20/21 (RP2350-ETH board) |
 | `-lcd-png path.png` | write the LCD framebuffer at exit |
+| `-sd`, `-sd-dir PATH`, `-sd-image PATH` | attach a microSD card or back it with a host directory / raw image |
+| `-touch-lcd2`, `-touch x,y`, `-touch-at D` | Touch-LCD-2 devices and a deterministic tap |
+| `-sensors` | log touch, IMU, battery, backlight and card state at exit |
+| `-serial-tcp 1:127.0.0.1:0` | expose UART1 as a TCP server |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | print a summary of unmapped accesses at exit |
 | `-trace N`, `-trace-from ADDR` | trace instructions |
@@ -145,7 +166,8 @@ timeout.
 Per-stream debug switches (JSON is the default for a piped run):
 `RP2350SIM_SPI_LOG`, `RP2350SIM_DMA_LOG`, `RP2350SIM_LCD_LOG`,
 `RP2350SIM_USB_LOG`, `RP2350SIM_ETH_LOG`, `RP2350SIM_W6300_LOG`,
-`RP2350SIM_CH9120_LOG`, `RP2350SIM_PIO_LOG`.
+`RP2350SIM_CH9120_LOG`, `RP2350SIM_PIO_LOG`, `RP2350SIM_I2C_LOG`,
+`RP2350SIM_DCP_LOG`.
 
 ## Ethernet
 
@@ -208,47 +230,45 @@ destination address on its second netdev call in this build (TCP is fine).
 ```sh
 cd cmd/simui
 go run . --board geek ../../firmware.elf
+# or, from a release archive
+rp2350sim-ui --board geek firmware.elf
 ```
 
-The UI starts with a board picker. The list comes from `cmd/simui/boards.yaml` (or
-`RP2350SIM_BOARDS=/path/to/boards.yaml`), and each entry declares its hardware:
-an ST7789 LCD on an SPI bus with its CS/DC/RST pins, a W5500/W6300 controller,
-a WS2812B data pin, scope channels, generated analog signals, or logic-analyzer
-protocols. `go run . --list-boards` prints the ids.
+![Board picker](docs/images/picker.png)
+
+The UI starts with a board picker. The list comes from `cmd/simui/boards.yaml`
+(or `RP2350SIM_BOARDS=/path/to/boards.yaml`), and each entry declares its
+hardware: an ST7789 LCD with its CS/DC/RST pins, touch and IMU controllers, a
+W5500/W6300/CH9120 network controller, virtual Wi-Fi, a microSD directory, a
+WS2812B data pin, scope channels, generated analog signals, logic-analyzer
+protocols, UART TCP bridges or remote I2C/SPI Bus Pirate devices.
+`go run . --list-boards` prints the ids.
 
 Selecting a board attaches only those devices to the emulated chip and builds
 the tabs accordingly:
 
-- **Board** (always): the Pico 2 header diagram and the live GPIO table.
-- **LCD**: only when the board has an LCD; shows the framebuffer.
-- **Ethernet**: only for W5500/W6300 boards; shows the socket log.
-- **LEDs**: only for WS2812B boards; shows the last latched colours.
-- **Scope** (always): an oscilloscope with up to 8 pin traces in different
-  colours, a 1 MHz sampler and a ~16 ms window. Click header pins to add or
-  remove traces. **Zoom −/+** changes the time base from 1× to 64×;
-  **Range −/+** selects the full-scale voltage (0.5, 1, 1.65, 2, 3.3 or 5 V);
-  **Reset** restores 1× and 3.3 V. The view grows with the window width.
-  `analog:` board entries drive a generated waveform (the `pico2-analog` board
-  puts a 1 kHz sine on GP26).
-- **Logic** (always): a logic analyzer. Board `logic:` blocks declare UART,
-  I2C and SPI pins/baud; hardware transfers are tapped from the peripheral
-  models (so high-speed buses do not need pin-level sampling), and PIO or
-  bit-banged traffic falls back to the pin trace. Decoded UART bytes, I2C
-  address/data/ACK phases and SPI bytes are listed under synthesised
-  waveforms; USB CDC transfers are listed as well. **Trigger** arms on the next
-  UART, I2C, SPI or any protocol event and freezes the capture (and optionally
-  pauses the machine); **Rearm** waits for the next event.
-- **Console** (always): USB CDC + UART. Click it to give it keyboard focus;
-  typed text and Enter/Backspace/Tab/arrows are forwarded to the firmware.
+- **Board** (always): the Pico 2 header diagram and the live GPIO table. After
+  an OTA reset it shows the flash image, boot number and entry point.
+- **LCD**: only when the board has an LCD; shows the framebuffer and maps
+  clicks/drags to native touch coordinates.
+- **Sensors**: touch, IMU, battery, backlight and card state.
+- **Ethernet / Wi-Fi**: guest identity, live sockets with the host address to
+  connect to, and a device log.
+- **LEDs**: only for WS2812B boards; the last latched colours.
+- **Scope** (always): up to 8 pin traces, 1 MHz sampling, a ~16 ms window,
+  zoom/range controls and generated `analog:` waveforms.
+- **Logic** (always): UART/I2C/SPI/USB decoding, triggers and **Save trace**.
+- **OTP**: pages, rows, ECC status and locks.
+- **Bus**: I2C/SPI Bus Pirate TCP terminals for the device side.
+- **Console** (always): USB CDC + UART, click to type into the firmware.
 
 The toolbar shows the selected board, a **Board…** button to return to the
 picker, the firmware path field, **Open…** (OS dialog), run/pause and reset.
-**Cmd+Q** on macOS or **Ctrl+Q** elsewhere quits the UI.
-`--board ID` skips the picker, `--tab board|lcd|eth|ws|scope|logic|console`
-chooses the initial tab, and `--width`/`--height` set the window size. For
-headless scope snapshots, `--scope-zoom` and `--scope-range` set the initial
-time base and voltage range. `--png out.png --run 0.6 firmware.elf` renders a
-headless snapshot after advancing virtual time.
+`--tab` selects the initial tab, `--paused` loads without executing,
+`--logic-trigger`/`--logic-pause` arm the analyzer, and `--png out.png --run 0.6
+firmware.elf` renders a headless snapshot. **Cmd+Q** on macOS or **Ctrl+Q**
+elsewhere quits. See [docs/ui.md](docs/ui.md) for every tab and
+[docs/peripherals.md](docs/peripherals.md) for the CLI/UI peripheral map.
 
 ## Serial over TCP
 
@@ -276,11 +296,13 @@ which echoes UART1. The headless runner has the same feature:
 The user guide lives in [`docs/`](docs/README.md):
 
 - [`docs/cli.md`](docs/cli.md) — every flag, output contract and exit code
-- [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, artifacts
+- [`docs/peripherals.md`](docs/peripherals.md) — each peripheral from the CLI and the UI
+- [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, Bus Pirate terminals
+- [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, signal checks, artifacts
 - [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
-- [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, serial bridge
 - [`docs/boards.md`](docs/boards.md) — supported boards, wiring and limitations
 - [`docs/c.md`](docs/c.md) — C firmware with the Pico SDK, examples and current gaps
+- [`docs/release.md`](docs/release.md) — release archives, GoReleaser and supported platforms
 
 ## Tests
 
@@ -327,9 +349,11 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 
 ## Releases
 
-Tags matching `v*` build and publish Linux, macOS and Windows archives with
-both the `rp2350sim` runner and the `rp2350sim-ui` desktop application. See
-[docs/release.md](docs/release.md).
+Prebuilt Linux, macOS and Windows archives with both `rp2350sim` and
+`rp2350sim-ui` are on the
+[GitHub Releases page](https://github.com/akhenakh/rp2350sim/releases) (see
+[Download](#download)). Tags matching `v*` build and publish them from the
+GoReleaser workflow. See [docs/release.md](docs/release.md).
 
 ## License
 

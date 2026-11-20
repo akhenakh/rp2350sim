@@ -1,8 +1,10 @@
 # Releases
 
 Releases are built with [GoReleaser](https://goreleaser.com) from the tag
-workflow. Pushing a `v*` tag (or dispatching the `release` workflow with a tag)
-publishes a GitHub release with both programs:
+workflow. They are published on the
+[GitHub Releases page](https://github.com/akhenakh/rp2350sim/releases). Pushing
+a `v*` tag (or dispatching the `release` workflow with a tag) publishes a
+GitHub release with both programs:
 
 | artifact | contents |
 |---|---|

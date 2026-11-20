@@ -4,6 +4,24 @@ The emulated CPU is the ARM Cortex-M33 (`thumbv8m.main`), matching TinyGo's
 `-target=pico2` output. Board wiring below matches the headless flags and the
 UI board definitions.
 
+[peripherals.md](peripherals.md) maps each board to its headless flags, UI tab
+and reference firmware. In short:
+
+| UI board | Headless flag |
+|---|---|
+| `pico2` | none |
+| `pico2-lcd` | `-lcd` |
+| `pico2-ws2812` | `-ws2812 0` |
+| `geek` | `-lcd -sd` (or `-sd-dir`) |
+| `touch-lcd2` | `-touch-lcd2` (plus `-touch`, `-sensors`, `-lcd-png`) |
+| `pico2-w5500` | `-eth` |
+| `poe-eth` | `-w6300` |
+| `rp2350-eth` | `-ch9120` |
+| `pico2w` | `-ch9120` (virtual Wi-Fi transport) |
+| `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` |
+| `pico2-bus` | `-i2c-tcp`, `-spi-tcp` |
+| `pico2-analog` | `-logic-*` (the generated waveform is UI-only) |
+
 ## Raspberry Pi Pico 2 (RP2350A)
 
 No device flags are needed. The core brings up the RP2350 peripherals TinyGo

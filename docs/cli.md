@@ -147,6 +147,9 @@ rp2350sim -fw fw.elf -seconds 5 -input 'status\n' \
 
 ## Devices and boards (headless runner)
 
+[peripherals.md](peripherals.md) gives one end-to-end recipe per device and maps
+every UI board to its flags and demo firmware. The flags are:
+
 | flag | attaches |
 |---|---|
 | `-lcd` | ST7789 240×135 on SPI1 (CS GP9, DC GP8, RST GP12), GEEK wiring |
@@ -268,6 +271,19 @@ rp2350sim -fw touchlcd.elf -seconds 3 -touch-lcd2 \
   -touch 120,200 -touch-at 1s -touch-hold 500ms
 ```
 
+`-touch` uses native panel coordinates. Add `-sensors` to log the final touch,
+IMU acceleration/temperature, battery voltage, PWM backlight and SD card state:
+
+```json
+{"msg":"sensors","touch":"120,200","pressed":true,"accel":"0.00,0.00,1.00",
+ "temp":25,"sd_blocks":32768,"sd_source":"build/sdcard-host","battery":3.9,
+ "backlight":1}
+```
+
+The UI-only `pico2-analog` board adds generated waveforms for the scope; every
+other UI board maps to the flags above (see
+[peripherals.md](peripherals.md#board-to-flag-map)).
+
 ### UART over TCP
 
 `-serial-tcp` exposes a hardware UART as a TCP server:
@@ -383,7 +399,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-logic-spi sck,mosi[,miso[,cs]]` | decode an SPI pin trace |
 | `-logic-rate HZ` | sample rate (default 2 MHz) |
 | `-logic-depth N` | ring depth in samples (default 16384) |
-| `-logic-board NAME` | board label for the file name and metadata |
+| `-logic-board NAME` | board label for the file name and metadata (default: the firmware file name) |
 | `-i2c-tcp bus:addr[,addr][@listen|=connect]` | expose I2C targets over TCP (repeatable) |
 | `-spi-tcp bus:cs[@listen|=connect]` | expose an SPI device over TCP (repeatable) |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
@@ -412,14 +428,13 @@ a `# samples` table (`time_us` plus one column per GPIO), and decoded sections
 for the controller taps and pin protocols. A pin trace is a rolling window of
 `-logic-depth` samples; lower `-logic-rate` to cover more time. Capturing pins
 installs a per-cycle hook, which disables the idle fast-forward while the run
-is captured.
+is captured. The UI's **Save trace** writes the same format plus a USB CDC
+section.
 
 ### Environment variables
 
-| variable | effect |
-|---|---|
-Each legacy variable below enables one debug stream without changing the level
-of the others. Setting `-log-level debug` enables all of them.
+Each legacy variable enables one debug stream without changing the level of
+the others. Setting `-log-level debug` enables all of them.
 
 | variable | effect |
 |---|---|

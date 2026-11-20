@@ -6,6 +6,13 @@ it runs in the emulator.
 
 ## Install the emulator
 
+Prebuilt archives for Linux, macOS and Windows (with both `rp2350sim` and
+`rp2350sim-ui`) are on the
+[GitHub Releases page](https://github.com/akhenakh/rp2350sim/releases). Unpack
+the archive and put both binaries on `PATH`.
+
+Or install from source:
+
 ```sh
 go install github.com/akhenakh/rp2350sim/cmd/rp2350sim@latest
 ```
