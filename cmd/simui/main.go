@@ -2027,6 +2027,9 @@ func busPanel(snap MachineState) {
 			}
 		}
 		Label(fmt.Sprintf("%s · %s · %s", busLabel(sel), endpoint, state), FontSize(12), FontWeight(600))
+		if !snap.Running {
+			Label("Machine paused: connect the terminals, queue the answers, then press Run.", FontSize(12), FontWeight(600), TextColor(45, 60, 60, 1))
+		}
 		if sel.Listen == "" {
 			Label("Connect mode: the external device is the server; use the CLI or a script there, not this terminal.", FontSize(12), TextColor(140, 45, 65, 1))
 			return
@@ -2184,6 +2187,7 @@ var viewW, viewH = 1280, 820
 func main() {
 	png := flag.String("png", "", "render one settled frame to PATH and exit")
 	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time at startup (live windows keep running)")
+	paused := flag.Bool("paused", false, "load the firmware but start paused (press Run to execute)")
 	winW := flag.Int("width", 1280, "window width in points")
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
@@ -2279,6 +2283,10 @@ func main() {
 		if *png == "" {
 			emu.SetRunning(true)
 		}
+	}
+
+	if *paused && *png == "" {
+		emu.SetRunning(false)
 	}
 
 	if *png != "" {

@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -99,4 +101,68 @@ func TestBusTerminalAnswersI2CBridge(t *testing.T) {
 		t.Fatalf("second read = %#x, %v; want 0x34", v, ok)
 	}
 	br.EndTransaction()
+}
+
+func TestBusTerminalsDriveBusmaster(t *testing.T) {
+	fw := filepath.Join("..", "..", "build", "busmaster.elf")
+	if _, err := os.Stat(fw); err != nil {
+		t.Skip("build/busmaster.elf is not built")
+	}
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var board *BoardDef
+	for i := range boards {
+		if boards[i].ID == "pico2-bus" {
+			board = &boards[i]
+		}
+	}
+	if board == nil {
+		t.Fatal("pico2-bus board is missing")
+	}
+
+	e := NewEmu()
+	e.SetBoard(board)
+	if err := e.Load(fw); err != nil {
+		t.Fatal(err)
+	}
+
+	infos := e.BusBridges()
+	if len(infos) != 2 {
+		t.Fatalf("bridges = %+v, want I2C and SPI", infos)
+	}
+	var terms []*BusTerminal
+	defer func() {
+		for _, term := range terms {
+			term.Close()
+		}
+	}()
+	for _, info := range infos {
+		term, err := NewBusTerminal(info.Listen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		terms = append(terms, term)
+		switch info.Kind {
+		case "I2C":
+			term.Send("ACK ACK 0x12 0x34")
+		case "SPI":
+			term.Send("0xEF 0x40 0x18")
+		}
+	}
+
+	e.Reset()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		snap := e.Snapshot()
+		if strings.Contains(snap.Console, "i2c: 12 34") &&
+			strings.Contains(snap.Console, "spi: ef 40 18") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("busmaster did not see both devices; console:\n%s", snap.Console)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

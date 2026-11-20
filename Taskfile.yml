@@ -485,11 +485,11 @@ tasks:
       - go run . --board pico2-serial '../../{{.BUILD}}/serialbridge.elf'
 
   ui:bus:
-    desc: Run the UI on the Bus Pirate board (connect the Bus terminals, queue responses, then Reset)
+    desc: Run the UI paused on the Bus Pirate board (connect terminals, queue responses, then Run)
     deps: [firmware:busmaster]
     dir: cmd/simui
     cmds:
-      - go run . --board pico2-bus --tab bus '../../{{.BUILD}}/busmaster.elf'
+      - go run . --board pico2-bus --tab bus --paused '../../{{.BUILD}}/busmaster.elf'
 
   ui:bus:png:
     desc: Render the Bus Pirate tab headlessly to build/ui-bus.png

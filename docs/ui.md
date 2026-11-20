@@ -37,6 +37,7 @@ Other startup options:
 | `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `otp`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
+| `--paused` | load the firmware but do not execute until Run |
 | `--png PATH` | render one settled frame and exit (headless) |
 | `--flash PATH` | raw flash backing image; self-updates are written back here |
 | `--touch x,y` | inject a held touch at native panel coordinates |
@@ -236,10 +237,11 @@ spi_tcp:
 ```
 
 The `pico2-bus` board is the ready-made demo (I2C 0x50 and SPI0 CS GP17).
-`task ui:bus` opens it on the Bus tab with the `busmaster` firmware. Connect
-the terminal for **each** bridge you want to answer (the I2C and SPI terminals
-stay open independently), queue the responses, then press **Reset** (or
-**Load**) so the firmware starts after the terminals are attached. `task ui:bus:png` renders the
+`task ui:bus` opens it on the Bus tab **paused** with the `busmaster` firmware.
+Connect the terminal for **each** bridge you want to answer (the I2C and SPI
+terminals stay open independently), queue the responses, then press **Run**.
+Starting paused is what avoids the 500 ms bridge timeout: queue first, run
+afterwards. Without `--paused`, use Reset after queueing. `task ui:bus:png` renders the
 tab headlessly to `build/ui-bus.png`.
 Bridges listen by default; use `connect: host:port` instead to dial a device
 server. Address and chip-select conflicts with LCD, touch, IMU, SD and
@@ -262,6 +264,8 @@ shows `+ queued ...` immediately), so you can type `0xEF 0x40 0x18` before a
 three-byte SPI read starts; each whitespace token answers one request. The
 terminal only writes an answer when the firmware asks; if the log stops at
 `HELLO`, press **Reset firmware** in the Bus tab (or Reset in the toolbar).
+A request has a 500 ms deadline, so queue the answers before running; `task
+ui:bus` starts paused for exactly this reason.
 For the bundled `busmaster`, queue `ACK ACK 0x12 0x34` for the I2C exchange
 and `0xEF 0x40 0x18` for the SPI exchange. The bridge timeout is 500 ms in the UI; if nothing
 is queued the request returns NAK/`0xff` and the machine keeps running. The
