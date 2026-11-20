@@ -227,9 +227,10 @@ with the runner's `-otp` flag or dump them with `-otp-dump`.
 ### Debug
 
 The debugger view: Run/Pause/Step, cycle stepping, breakpoints by address or
-symbol, write watchpoints, registers, a side-effect-free memory hex view,
-source/line and DWARF variables. See [debug.md](debug.md) for the variable
-limitations and the fixture tests.
+symbol, write watchpoints, source/line and a lower inspector with
+**Registers / Memory / Variables** tabs. The inspector is one third of the
+window height. See [debug.md](debug.md) for the variable limitations and the
+fixture tests.
 
 ![Debug tab](images/debug.png)
 

@@ -12,12 +12,13 @@ import (
 )
 
 var (
-	debugBreakSpec  string
-	debugWatchSpec  string
-	debugCyclesSpec = "1000000"
-	debugMemSpec    string
-	debugMsg        string
-	debugCore       int
+	debugBreakSpec    string
+	debugWatchSpec    string
+	debugCyclesSpec   = "1000000"
+	debugMemSpec      string
+	debugMsg          string
+	debugCore         int
+	debugInspectorTab int
 )
 
 func debugPanel(snap MachineState) {
@@ -30,20 +31,50 @@ func debugPanel(snap MachineState) {
 		})
 		Container(Attrs(Grow(1), Expand, Gap(8)), func() {
 			debugSource(s)
-			Container(Attrs(Row, Grow(1), Expand, Gap(8)), func() {
-				Container(Attrs(FixWidth(280), Expand, Gap(4)), func() {
-					debugRegisters(s)
-				})
-				Container(Attrs(Grow(1), Expand, Gap(4)), func() {
-					debugMemory(s)
-				})
-				Container(Attrs(FixWidth(330), Expand, Gap(4)), func() {
-					debugVariables(s)
-				})
-			})
+			debugInspector(s)
 		})
 	})
 	_ = snap
+}
+
+func debugInspector(s DebugSnapshot) {
+	// One third of the window height: the source viewer above takes the rest.
+	Container(Attrs(FixHeight(float32(viewH)/3), Expand, Gap(4)), func() {
+		Container(Attrs(Row, CrossMid, Expand, Gap(4), Pad4(2, 10, 2, 10),
+			Background(220, 10, 15, 1)), func() {
+			debugInspectorButton("Registers", 0)
+			debugInspectorButton("Memory", 1)
+			debugInspectorButton("Variables", 2)
+			Filler(1)
+		})
+		Container(Attrs(Grow(1), Expand), func() {
+			switch debugInspectorTab {
+			case 1:
+				debugMemory(s)
+			case 2:
+				debugVariables(s)
+			default:
+				debugRegisters(s)
+			}
+		})
+	})
+}
+
+func debugInspectorButton(label string, tab int) {
+	Container(Attrs(Row, CrossMid, Pad2(6, 12), Corners(4)), func() {
+		st := ProcessButtonEvents(false)
+		if st.Clicked {
+			debugInspectorTab = tab
+			RequestNextFrame()
+		}
+		switch {
+		case debugInspectorTab == tab:
+			ModAttrs(Background(140, 35, 20, 1))
+		case st.Hovered:
+			ModAttrs(Background(220, 12, 18, 1))
+		}
+		Label(label, FontSize(13), FontWeight(600))
+	})
 }
 
 func debugControls(s DebugSnapshot) {
@@ -220,7 +251,7 @@ func debugSource(s DebugSnapshot) {
 }
 
 func debugRegisters(s DebugSnapshot) {
-	Container(Attrs(Gap(2), Pad(10), Corners(6), Background(220, 12, 10, 1),
+	Container(Attrs(Grow(1), Expand, Gap(2), Pad(10), Corners(6), Background(220, 12, 10, 1),
 		BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
 		Label("Registers", FontSize(14), FontWeight(700))
 		for r := 0; r < 16; r += 2 {
@@ -240,7 +271,7 @@ func debugMemory(s DebugSnapshot) {
 	if debugMemSpec == "" {
 		debugMemSpec = fmt.Sprintf("%#x", s.PC)
 	}
-	Container(Attrs(Gap(5), Pad(10), Corners(6), Background(220, 12, 10, 1),
+	Container(Attrs(Grow(1), Expand, Gap(5), Pad(10), Corners(6), Background(220, 12, 10, 1),
 		BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
 		Container(Attrs(Row, CrossMid, Gap(5)), func() {
 			Label("Memory", FontSize(14), FontWeight(700))

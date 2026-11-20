@@ -32,12 +32,13 @@ rp2350sim -fw firmware.elf -seconds 2 -watch g_magic
 - **Source** shows the lines around the current PC when the DWARF file is
   present on this machine. A short name, function and `file:line` are shown
   even when the source tree is from another build host.
-- **Registers** shows R0-R15, APSR, IPSR, CONTROL, MSP and PSP.
-- **Memory** is a read-only hex/ASCII view. It uses side-effect-free `Peek`
-  reads for ROM, flash, SRAM and PSRAM: it does not charge PSRAM latency and
-  never reads a UART/SPI/I2C/FIFO register. **PC** and **SP** jump to the
-  current locations.
-- **Variables** evaluates the current function's locals and globals.
+- The lower third of the tab is a **Registers / Memory / Variables** inspector.
+  - **Registers** shows R0-R15, APSR, IPSR, CONTROL, MSP and PSP.
+  - **Memory** is a read-only hex/ASCII view. It uses side-effect-free `Peek`
+    reads for ROM, flash, SRAM and PSRAM: it does not charge PSRAM latency and
+    never reads a UART/SPI/I2C/FIFO register. **PC** and **SP** jump to the
+    current locations.
+  - **Variables** evaluates the current function's locals and globals.
 
 ## Variables and limitations
 
