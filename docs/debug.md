@@ -77,9 +77,11 @@ rp2350sim -fw firmware/c/build/debug.elf -seconds 1 -bp debug_marker \
 rp2350sim -fw firmware/c/build/debug.elf -seconds 1 -watch g_magic
 ```
 
-The breakpoint record includes `symbol`, `file` and `line` when available. The
-existing `-trace`, `-trace-last`, `-poke` and `-peek` flags remain available for
-non-interactive diagnosis.
+The breakpoint record includes `symbol`, `file` and `line` when available. An
+exact symbol match wins over a hexadecimal interpretation, so a symbol named
+`face` is not mistaken for an address. `-trace`, `-bp`, `-watch` and
+`-watch-val` can be combined. The existing `-trace-last`, `-poke` and `-peek`
+flags remain available for non-interactive diagnosis.
 
 `UF2` and raw binary images carry no symbol or DWARF data. Use an address, or
 load the matching ELF if one is available.

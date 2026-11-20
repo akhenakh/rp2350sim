@@ -193,6 +193,12 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   cores). The default TinyGo tasks scheduler is single-core.
 - **Interrupt nesting:** exceptions are delivered at IPSR 0; a pending
   higher-priority exception does not preempt the current handler yet.
+- **PIO OUT:** an empty OSR is refilled from the TX FIFO even when autopull is
+  disabled, because TinyGo's `SetX`/`SetY` rely on it. Treat this as more
+  permissive than hardware when porting hand-written PIO.
+- **VFP/DSP:** VFMA/VFMS are separate multiply/add (up to 1 ulp from fused
+  hardware); `SEL` does not model the GE flags. The timer's 64-bit read pair is
+  not latched across a 32-bit wrap.
 - **USB host:** the emulated host enumerates the device and pumps CDC; arbitrary
   USB devices are not supported.
 - **DMA:** paced transfers and completion interrupts, but no DREQ pacing.
