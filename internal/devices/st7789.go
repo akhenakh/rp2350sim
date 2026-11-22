@@ -57,8 +57,13 @@ type ST7789 struct {
 }
 
 // NewST7789 creates a display attached to the chip, wired to the given pins.
-func NewST7789(chip *rp2350.Chip, cs, dc, rst int) *ST7789 {
-	d := &ST7789{Chip: chip, CS: cs, DC: dc, RST: rst, Width: 240, Height: 320, Brightness: 1}
+// width and height are the panel geometry from the board definition (240x320
+// when unknown).
+func NewST7789(chip *rp2350.Chip, cs, dc, rst, width, height int) *ST7789 {
+	if width <= 0 || height <= 0 {
+		width, height = 240, 320
+	}
+	d := &ST7789{Chip: chip, CS: cs, DC: dc, RST: rst, Width: width, Height: height, Brightness: 1}
 	d.stride = max(d.Width, d.Height)
 	d.gram = make([]uint16, d.stride*d.stride)
 	d.reset()
@@ -198,13 +203,13 @@ func (d *ST7789) PixelsWritten() int { return d.pixels }
 // On reports whether the display is enabled.
 func (d *ST7789) On() bool { return d.on }
 
-// Framebuffer renders the written window as RGBA, in driver (address) order.
+// Framebuffer renders the whole panel as RGBA, in driver (address) order. With
+// MADCTL MV the panel is addressed with rows and columns exchanged.
 func (d *ST7789) Framebuffer() *image.RGBA {
-	if d.minX < 0 {
-		return image.NewRGBA(image.Rect(0, 0, 1, 1))
+	w, h := d.Width, d.Height
+	if d.madctl&0x20 != 0 { // MV exchanges rows and columns
+		w, h = d.Height, d.Width
 	}
-	w := d.maxX - d.minX + 1
-	h := d.maxY - d.minY + 1
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	brightness := d.Brightness
 	if !d.on {
@@ -232,9 +237,9 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 	}
 	bgr := d.madctl&0x08 != 0
 	pix := img.Pix
-	for y := d.minY; y <= d.maxY; y++ {
-		row := d.gram[y*d.stride+d.minX : y*d.stride+d.maxX+1]
-		o := (y - d.minY) * w * 4
+	for y := range h {
+		row := d.gram[y*d.stride : y*d.stride+w]
+		o := y * w * 4
 		for _, px := range row {
 			r := rTab[(px>>11)&0x1f]
 			g := gTab[(px>>5)&0x3f]

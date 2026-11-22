@@ -28,7 +28,7 @@ func BenchmarkTraceSnapshot(b *testing.B) {
 // does whenever the panel content changes.
 func BenchmarkST7789Framebuffer(b *testing.B) {
 	c := rp2350.New()
-	d := NewST7789(c, 9, 8, 12)
+	d := NewST7789(c, 9, 8, 12, 240, 320)
 	d.minX, d.maxX, d.minY, d.maxY = 0, 239, 0, 319
 	d.stride = 240
 	for i := range d.gram {

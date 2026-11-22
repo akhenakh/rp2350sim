@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // These tests drive the Ethernet models through their register interfaces
@@ -324,5 +326,141 @@ func TestW6300RingWrap(t *testing.T) {
 		want := (i + 1) * chunk
 		sw(w6SnRXRD, byte(want>>8), byte(want))
 		sw(w6SnCR, w6CmdRecv)
+	}
+}
+
+func freeUDPPort(t *testing.T) uint16 {
+	t.Helper()
+	uc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("reserve UDP port: %v", err)
+	}
+	port := uint16(uc.LocalAddr().(*net.UDPAddr).Port)
+	_ = uc.Close()
+	return port
+}
+
+func waitW5500RX(t *testing.T, w *W5500, c *rp2350.Chip, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		got := w.readReg(c, w5SockRXRecvSize, w5bsb(0, 1), 2)
+		if int(got[0])<<8|int(got[1]) == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	got := w.readReg(c, w5SockRXRecvSize, w5bsb(0, 1), 2)
+	t.Fatalf("RX size = % x, want %d", got, want)
+}
+
+// TestW5500UDPSourcePortAndHeader checks that a UDP client binds the guest's
+// Sn_PORT and that received datagrams carry the WIZnet 8-byte header.
+func TestW5500UDPSourcePortAndHeader(t *testing.T) {
+	host, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("host UDP: %v", err)
+	}
+	defer func() { _ = host.Close() }()
+	dstPort := uint16(host.LocalAddr().(*net.UDPAddr).Port)
+	srcPort := freeUDPPort(t)
+
+	w, c := newTestW5500()
+	sw := func(addr uint16, data ...byte) { w.writeReg(c, addr, w5bsb(0, 1), data...) }
+	sw(w5SockMode, 2) // UDP
+	sw(w5SockSrcPort, byte(srcPort>>8), byte(srcPort))
+	sw(w5SockDestIP, 127, 0, 0, 1)
+	sw(w5SockDestPort, byte(dstPort>>8), byte(dstPort))
+	sw(w5SockCmd, w5CmdOpen)
+
+	w.writeReg(c, 0, w5bsb(0, 2), 'h', 'i')
+	sw(w5SockTXWritePtr, 0, 2)
+	sw(w5SockCmd, w5CmdSend)
+
+	_ = host.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 32)
+	n, peer, err := host.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatalf("host read: %v", err)
+	}
+	if string(buf[:n]) != "hi" {
+		t.Fatalf("payload = %q", buf[:n])
+	}
+	if peer.Port != int(srcPort) {
+		t.Fatalf("peer port = %d, want the guest source port %d", peer.Port, srcPort)
+	}
+
+	if _, err := host.WriteToUDP([]byte("pong"), peer); err != nil {
+		t.Fatalf("host reply: %v", err)
+	}
+	waitW5500RX(t, w, c, 12)
+	got := w.readReg(c, 0, w5bsb(0, 3), 12)
+	if got[0] != 127 || got[1] != 0 || got[2] != 0 || got[3] != 1 {
+		t.Fatalf("UDP header peer IP = % x", got[:4])
+	}
+	if int(got[4])<<8|int(got[5]) != int(dstPort) {
+		t.Fatalf("UDP header peer port = % x", got[4:6])
+	}
+	if int(got[6])<<8|int(got[7]) != 4 || string(got[8:]) != "pong" {
+		t.Fatalf("UDP header length/payload = % x", got)
+	}
+}
+
+// TestW5500UDPServerReceives checks the bind path used by a UDP server.
+func TestW5500UDPServerReceives(t *testing.T) {
+	srcPort := freeUDPPort(t)
+	w, c := newTestW5500()
+	sw := func(addr uint16, data ...byte) { w.writeReg(c, addr, w5bsb(0, 1), data...) }
+	sw(w5SockMode, 2)
+	sw(w5SockSrcPort, byte(srcPort>>8), byte(srcPort))
+	sw(w5SockCmd, w5CmdOpen)
+	sw(w5SockCmd, w5CmdRecv) // binds the listening UDP socket
+
+	peer, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(srcPort)})
+	if err != nil {
+		t.Fatalf("peer dial: %v", err)
+	}
+	defer func() { _ = peer.Close() }()
+	if _, err := peer.Write([]byte("ping")); err != nil {
+		t.Fatalf("peer write: %v", err)
+	}
+	waitW5500RX(t, w, c, 12)
+	got := w.readReg(c, 0, w5bsb(0, 3), 12)
+	if string(got[8:]) != "ping" {
+		t.Fatalf("payload = %q", got[8:])
+	}
+}
+
+// TestW6300UDPSourcePort checks the UDP client binds the guest's Sn_PORT.
+func TestW6300UDPSourcePort(t *testing.T) {
+	host, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("host UDP: %v", err)
+	}
+	defer func() { _ = host.Close() }()
+	dstPort := uint16(host.LocalAddr().(*net.UDPAddr).Port)
+	srcPort := freeUDPPort(t)
+
+	w, c := newTestW6300()
+	sw := func(addr uint16, data ...byte) { w.writeBlock(c, w6BlockRegs, addr, data...) }
+	sw(w6SnMR, 2)
+	sw(w6SnPORTR, byte(srcPort>>8), byte(srcPort))
+	sw(w6SnDIPR, 127, 0, 0, 1)
+	sw(w6SnDPORTR, byte(dstPort>>8), byte(dstPort))
+	sw(w6SnCR, w6CmdOpen)
+	sw(w6SnCR, w6CmdConnect)
+
+	w.writeBlock(c, w6BlockTX, 0, 'o', 'k')
+	sw(w6SnTXWR, 0, 2)
+	sw(w6SnCR, w6CmdSend)
+
+	_ = host.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 16)
+	n, peer, err := host.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatalf("host read: %v", err)
+	}
+	if string(buf[:n]) != "ok" || peer.Port != int(srcPort) {
+		t.Fatalf("payload=%q peer=%s, want ok from port %d", buf[:n], peer, srcPort)
 	}
 }

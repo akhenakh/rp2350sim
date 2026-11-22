@@ -36,6 +36,7 @@ type SDCard struct {
 
 	// Read/write state.
 	multiRead  bool
+	multiWrite bool
 	multiAddr  uint32
 	writeToken bool
 	writeBuf   []byte
@@ -157,6 +158,7 @@ func (s *SDCard) Transfer(tx byte) byte {
 func (s *SDCard) deselect() {
 	s.cmdLen = 0
 	s.multiRead = false
+	s.multiWrite = false
 	s.writeToken = false
 	s.writeBuf = nil
 	s.writeCRC = 0
@@ -223,6 +225,9 @@ func (s *SDCard) command() {
 		s.queueData(s.cid())
 	case 12: // STOP_TRANSMISSION
 		s.multiRead = false
+		s.multiWrite = false
+		s.writeToken = false
+		s.writeBuf = nil
 		s.out = append(s.out, 0x00, 0xFF)
 	case 13: // SEND_STATUS
 		s.r1(0)
@@ -273,6 +278,7 @@ func (s *SDCard) command() {
 	case 25: // WRITE_MULTIPLE_BLOCK
 		s.r1(0)
 		s.multiAddr = s.blockAddr(arg)
+		s.multiWrite = true
 		s.writeToken = true
 		s.writeBuf = nil
 		s.writeCRC = 0
@@ -309,11 +315,20 @@ func (s *SDCard) queueData(data []byte) {
 	s.out = append(s.out, 0xFF, 0xFF)
 }
 
-// writeData consumes a WRITE_BLOCK frame: token, data and CRC, then a data
-// response token followed by a short busy period.
+// writeData consumes a WRITE_BLOCK or WRITE_MULTIPLE_BLOCK frame: the start
+// token, one 512-byte block and its CRC, then a data response token followed
+// by a short busy period. Multi-block writes accept one 0xFC token per block
+// and end on 0xFD.
 func (s *SDCard) writeData(tx byte) byte {
 	if s.writeBuf == nil {
-		if tx != 0xFE {
+		switch {
+		case s.multiWrite && tx == 0xFD: // stop transmission token
+			s.multiWrite = false
+			s.writeToken = false
+			return 0xFF
+		case s.multiWrite && tx != 0xFC:
+			return 0xFF // wait for the next block token
+		case !s.multiWrite && tx != 0xFE:
 			return 0xFF
 		}
 		s.writeBuf = make([]byte, 0, 512)
@@ -335,10 +350,14 @@ func (s *SDCard) writeData(tx byte) byte {
 	if s.writeCRC < 2 {
 		return 0xFF
 	}
-	s.writeToken = false
 	s.writeBuf = nil
 	s.writeCRC = 0
 	s.out = append(s.out, 0x05, 0x00, 0x00, 0xFF)
+	if s.multiWrite {
+		s.multiAddr++
+		return 0xFF
+	}
+	s.writeToken = false
 	return 0xFF
 }
 

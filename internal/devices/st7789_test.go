@@ -7,7 +7,7 @@ import (
 )
 
 func newTestDisplay() *ST7789 {
-	d := NewST7789(rp2350.New(), 9, 8, 12)
+	d := NewST7789(rp2350.New(), 9, 8, 12, 240, 320)
 	return d
 }
 
@@ -47,8 +47,9 @@ func TestST7789Framebuffer(t *testing.T) {
 		t.Fatalf("pixels = %d, want 8", got)
 	}
 	img := d.Framebuffer()
-	if img.Bounds().Dx() != 4 || img.Bounds().Dy() != 2 {
-		t.Fatalf("size = %v, want 4x2", img.Bounds().Size())
+	// MADCTL MV swaps the 240x320 panel to 320x240.
+	if img.Bounds().Dx() != 320 || img.Bounds().Dy() != 240 {
+		t.Fatalf("size = %v, want 320x240", img.Bounds().Size())
 	}
 	want := []struct{ r, g, b uint8 }{
 		{248, 0, 0}, {248, 0, 0}, {248, 0, 0}, {248, 0, 0},

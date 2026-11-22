@@ -175,3 +175,32 @@ func TestSDCardWrite(t *testing.T) {
 		t.Fatalf("read back %q", got[:len(want)])
 	}
 }
+
+// TestSDCardMultiBlockWrite drives CMD25 with the 0xFC block tokens and the
+// 0xFD stop token; only the first block used to be written.
+func TestSDCardMultiBlockWrite(t *testing.T) {
+	card := sdFixture(t)
+	if r := sdCommand(t, card, 25, 0); r != 0 {
+		t.Fatalf("CMD25 = %#x", r)
+	}
+	for blk := range 2 {
+		card.Transfer(0xFC)
+		for i := range 512 {
+			card.Transfer(byte(blk<<4 | i&0xF))
+		}
+		card.Transfer(0xFF)
+		card.Transfer(0xFF)
+		for range 4 { // data response and busy
+			card.Transfer(0xFF)
+		}
+	}
+	card.Transfer(0xFD)
+	for blk := range 2 {
+		for i := range 512 {
+			want := byte(blk<<4 | i&0xF)
+			if got := card.image[blk*512+i]; got != want {
+				t.Fatalf("block %d byte %d = %#x, want %#x", blk, i, got, want)
+			}
+		}
+	}
+}

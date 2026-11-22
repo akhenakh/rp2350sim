@@ -379,9 +379,16 @@ func (d *Device) Recv(sockfd int, buf []byte, _ int, deadline time.Time) (int, e
 
 	recvPtr := d.readUint16(sockRXReadPtr, sockAddr(sock.sockn))
 
-	buf = buf[:min(size, len(buf))]
-	d.read(recvPtr, bufferAddr(sock.sockn, blockRX), buf)
-	d.writeUint16(sockRXReadPtr, sockAddr(sock.sockn), recvPtr+uint16(len(buf)))
+	// UDP datagrams are stored with an 8-byte WIZnet header (peer IPv4, peer
+	// port, length); the payload follows it.
+	header := 0
+	if sock.protocol == 2 {
+		header = 8
+	}
+	payload := max(size-header, 0)
+	buf = buf[:min(payload, len(buf))]
+	d.read(recvPtr+uint16(header), bufferAddr(sock.sockn, blockRX), buf)
+	d.writeUint16(sockRXReadPtr, sockAddr(sock.sockn), recvPtr+uint16(size))
 	d.socketSendCmd(sock.sockn, sockCmdRecv)
 
 	return len(buf), nil

@@ -55,6 +55,9 @@ type w5sock struct {
 	conn     net.Conn
 	listener net.Listener
 	udp      *net.UDPConn
+	// udpServer is set when the socket owns a bound listener (UDP server)
+	// rather than a connected client.
+	udpServer bool
 
 	// destSet records that the host wrote a destination since the last OPEN.
 	// TinyGo's W5500 driver requests a client connection with destination
@@ -390,13 +393,22 @@ func (w *W5500) command(n int, cmd byte) {
 	case w5CmdConnect:
 		w.connect(n)
 	case w5CmdListen:
-		w.listen(n)
+		if s.proto == 2 {
+			w.bindUDP(n)
+		} else {
+			w.listen(n)
+		}
 	case w5CmdDisconnect:
 		w.closeSocket(n)
 		s.ints |= w5IntDisconnect
 	case w5CmdSend:
 		w.send(n)
 	case w5CmdRecv:
+		// A UDP socket with no connected client is a server: bind its
+		// configured source port on the first receive.
+		if s.proto == 2 && s.udp == nil {
+			w.bindUDP(n)
+		}
 		// Only the bytes the host consumed (by advancing Sn_RX_RD) leave
 		// the RX buffer.
 		consumed := min(int(s.rxReadPtr-s.rxReadAck), s.rxPending)
@@ -415,19 +427,26 @@ func (w *W5500) connect(n int) {
 	loggerOr(w.Logger).Debug("w5500 connect", slog.Int("sock", n), slog.String("target", dst))
 	if s.proto == 2 {
 		// UDP: bind a local socket and connect it to the destination.
-		conn, err := net.Dial("udp", dst)
+		var laddr *net.UDPAddr
+		if s.srcPort != 0 {
+			laddr = &net.UDPAddr{Port: int(s.srcPort)}
+		}
+		if s.udpServer && s.udp != nil {
+			_ = s.udp.Close()
+			s.udpServer = false
+		}
+		conn, err := net.DialUDP("udp", laddr, resolveUDP(dst))
 		if err != nil {
 			s.status = w5StatusClosed
 			s.ints |= w5IntTimeout
 			return
 		}
-		if uc, ok := conn.(*net.UDPConn); ok {
-			s.udp = uc
-			go w.udpReader(n, gen, uc)
-		}
+		s.udp = conn
 		s.conn = conn
+		s.udpServer = false
 		s.status = w5StatusUDP
 		s.ints |= w5IntConnect
+		go w.udpReader(n, gen, conn)
 		return
 	}
 	s.status = w5StatusInit
@@ -463,6 +482,28 @@ func (w *W5500) connect(n int) {
 		go w.tcpReader(n, gen, conn)
 		loggerOr(w.Logger).Debug("w5500 established", slog.Int("sock", n))
 	}()
+}
+
+// bindUDP binds the guest source port and starts the datagram reader. A W5500
+// UDP socket with no CONNECT is a server: datagrams arrive on Sn_PORT.
+func (w *W5500) bindUDP(n int) {
+	s := w.socks[n]
+	gen := s.gen
+	addr := &net.UDPAddr{Port: int(s.srcPort)}
+	uc, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		s.status = w5StatusClosed
+		s.ints |= w5IntTimeout
+		loggerOr(w.Logger).Debug("w5500 udp bind failed", slog.Int("sock", n), slog.String("addr", addr.String()), slog.Any("err", err))
+		return
+	}
+	s.udp = uc
+	s.udpServer = true
+	s.status = w5StatusUDP
+	loggerOr(w.Logger).Debug("w5500 udp bind", slog.Int("sock", n), slog.String("addr", addr.String()))
+	go w.udpReader(n, gen, uc)
+	// A datagram that arrived before the bind completes would be lost; the
+	// reader is the receive path from here on.
 }
 
 func (w *W5500) listen(n int) {
@@ -537,20 +578,22 @@ func (w *W5500) send(n int) {
 	var err error
 	if s.udp == nil && s.conn == nil && s.proto == 2 {
 		dst := net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))
-		local := ""
+		var laddr *net.UDPAddr
 		if s.srcPort != 0 {
-			local = ":" + strconv.Itoa(int(s.srcPort))
+			laddr = &net.UDPAddr{Port: int(s.srcPort)}
 		}
 		var conn *net.UDPConn
 		loggerOr(w.Logger).Debug("w5500 udp dial", slog.Int("sock", n), slog.String("target", dst))
-		conn, err = net.DialUDP("udp", nil, resolveUDP(dst))
+		conn, err = net.DialUDP("udp", laddr, resolveUDP(dst))
 		if err == nil {
 			s.udp = conn
+			s.udpServer = false
 			go w.udpReader(n, s.gen, conn)
 		}
-		_ = local
 	}
-	if s.udp != nil {
+	if s.udp != nil && s.udpServer {
+		_, err = s.udp.WriteToUDP(data, resolveUDP(net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))))
+	} else if s.udp != nil {
 		_, err = s.udp.Write(data)
 	} else if s.conn != nil {
 		_, err = s.conn.Write(data)
@@ -594,20 +637,38 @@ func (w *W5500) tcpReader(n int, gen uint64, conn net.Conn) {
 func (w *W5500) udpReader(n int, gen uint64, conn *net.UDPConn) {
 	buf := make([]byte, 2048)
 	for {
-		m, err := conn.Read(buf)
+		m, peer, err := conn.ReadFromUDP(buf)
 		w.mu.Lock()
 		if s := w.socks[n]; s.gen != gen {
 			w.mu.Unlock()
 			return
 		}
 		if m > 0 {
-			w.rxAppend(n, buf[:m])
+			w.rxAppendUDP(n, buf[:m], peer)
 		}
 		w.mu.Unlock()
 		if err != nil {
 			return
 		}
 	}
+}
+
+// rxAppendUDP stores the WIZnet 8-byte datagram header (peer IPv4, peer port,
+// payload length) followed by the payload. Firmware that reads Sn_RX_RSR sees
+// header+payload, as it does on the chip.
+func (w *W5500) rxAppendUDP(n int, data []byte, peer *net.UDPAddr) {
+	var hdr [8]byte
+	if peer != nil {
+		if ip := peer.IP.To4(); ip != nil {
+			copy(hdr[:4], ip)
+		}
+		hdr[4] = byte(peer.Port >> 8)
+		hdr[5] = byte(peer.Port)
+	}
+	hdr[6] = byte(len(data) >> 8)
+	hdr[7] = byte(len(data))
+	w.rxAppend(n, hdr[:])
+	w.rxAppend(n, data)
 }
 
 func resolveUDP(addr string) *net.UDPAddr {
@@ -644,6 +705,7 @@ func (w *W5500) closeSocket(n int) {
 		}
 		s.udp = nil
 	}
+	s.udpServer = false
 	if s.conn != nil {
 		_ = s.conn.Close()
 		s.conn = nil

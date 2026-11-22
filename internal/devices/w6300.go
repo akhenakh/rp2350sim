@@ -49,6 +49,9 @@ type w6sock struct {
 	conn     net.Conn
 	listener net.Listener
 	udp      *net.UDPConn
+	// udpServer is set when the socket owns a bound listener (UDP server)
+	// rather than a connected client.
+	udpServer bool
 
 	txReadPtr  uint16
 	txWritePtr uint16
@@ -415,10 +418,17 @@ func (w *W6300) command(n int, cmd byte) {
 	case w6CmdConnect:
 		w.connect(n)
 	case w6CmdListen:
-		w.listen(n)
+		if s.proto == 2 {
+			w.bindUDP(n)
+		} else {
+			w.listen(n)
+		}
 	case w6CmdSend:
 		w.send(n)
 	case w6CmdRecv:
+		if s.proto == 2 && s.udp == nil {
+			w.bindUDP(n)
+		}
 		// Only the bytes the host actually consumed (by advancing
 		// Sn_RX_RD) leave the RX buffer.
 		consumed := min(int(s.rxReadPtr-s.rxReadAck), s.rxPending)
@@ -436,19 +446,26 @@ func (w *W6300) connect(n int) {
 	dst := net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))
 	loggerOr(w.Logger).Debug("w6300 connect", slog.Int("sock", n), slog.String("target", dst))
 	if s.proto == 2 {
-		conn, err := net.Dial("udp", dst)
+		var laddr *net.UDPAddr
+		if s.srcPort != 0 {
+			laddr = &net.UDPAddr{Port: int(s.srcPort)}
+		}
+		if s.udpServer && s.udp != nil {
+			_ = s.udp.Close()
+			s.udpServer = false
+		}
+		uc, err := net.DialUDP("udp", laddr, resolveUDPAddr(dst))
 		if err != nil {
 			s.status = w6StatusClosed
 			s.irq |= w6IrTimeout
 			return
 		}
-		if uc, ok := conn.(*net.UDPConn); ok {
-			s.udp = uc
-			go w.udpReader(n, gen, uc)
-		}
-		s.conn = conn
+		s.udp = uc
+		s.conn = uc
+		s.udpServer = false
 		s.status = w6StatusUDP
 		s.irq |= w6IrCon
+		go w.udpReader(n, gen, uc)
 		return
 	}
 	s.status = w6StatusInit
@@ -482,6 +499,26 @@ func (w *W6300) connect(n int) {
 		go w.tcpReader(n, gen, conn)
 		loggerOr(w.Logger).Debug("w6300 established", slog.Int("sock", n))
 	}()
+}
+
+// bindUDP binds the guest source port and starts the datagram reader. A
+// W6300 UDP socket with no CONNECT is a server.
+func (w *W6300) bindUDP(n int) {
+	s := w.socks[n]
+	gen := s.gen
+	addr := &net.UDPAddr{Port: int(s.srcPort)}
+	uc, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		s.status = w6StatusClosed
+		s.irq |= w6IrTimeout
+		loggerOr(w.Logger).Debug("w6300 udp bind failed", slog.Int("sock", n), slog.String("addr", addr.String()), slog.Any("err", err))
+		return
+	}
+	s.udp = uc
+	s.udpServer = true
+	s.status = w6StatusUDP
+	loggerOr(w.Logger).Debug("w6300 udp bind", slog.Int("sock", n), slog.String("addr", addr.String()))
+	go w.udpReader(n, gen, uc)
 }
 
 func (w *W6300) listen(n int) {
@@ -555,14 +592,21 @@ func (w *W6300) send(n int) {
 	if s.udp == nil && s.conn == nil && s.proto == 2 {
 		// UDP without CONNECT: dial the destination lazily.
 		dst := net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))
+		var laddr *net.UDPAddr
+		if s.srcPort != 0 {
+			laddr = &net.UDPAddr{Port: int(s.srcPort)}
+		}
 		var conn *net.UDPConn
-		conn, err = net.DialUDP("udp", nil, resolveUDPAddr(dst))
+		conn, err = net.DialUDP("udp", laddr, resolveUDPAddr(dst))
 		if err == nil {
 			s.udp = conn
+			s.udpServer = false
 			go w.udpReader(n, s.gen, conn)
 		}
 	}
-	if s.udp != nil {
+	if s.udp != nil && s.udpServer {
+		_, err = s.udp.WriteToUDP(data, resolveUDPAddr(net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))))
+	} else if s.udp != nil {
 		_, err = s.udp.Write(data)
 	} else if s.conn != nil {
 		_, err = s.conn.Write(data)
@@ -614,20 +658,37 @@ func (w *W6300) tcpReader(n int, gen uint64, conn net.Conn) {
 func (w *W6300) udpReader(n int, gen uint64, conn *net.UDPConn) {
 	buf := make([]byte, 2048)
 	for {
-		m, err := conn.Read(buf)
+		m, peer, err := conn.ReadFromUDP(buf)
 		w.mu.Lock()
 		if s := w.socks[n]; s.gen != gen {
 			w.mu.Unlock()
 			return
 		}
 		if m > 0 {
-			w.rxAppend(n, buf[:m])
+			w.rxAppendUDP(n, buf[:m], peer)
 		}
 		w.mu.Unlock()
 		if err != nil {
 			return
 		}
 	}
+}
+
+// rxAppendUDP stores the WIZnet 8-byte datagram header (peer IPv4, peer port,
+// payload length) followed by the payload.
+func (w *W6300) rxAppendUDP(n int, data []byte, peer *net.UDPAddr) {
+	var hdr [8]byte
+	if peer != nil {
+		if ip := peer.IP.To4(); ip != nil {
+			copy(hdr[:4], ip)
+		}
+		hdr[4] = byte(peer.Port >> 8)
+		hdr[5] = byte(peer.Port)
+	}
+	hdr[6] = byte(len(data) >> 8)
+	hdr[7] = byte(len(data))
+	w.rxAppend(n, hdr[:])
+	w.rxAppend(n, data)
 }
 
 func (w *W6300) rxAppend(n int, data []byte) {
@@ -656,6 +717,7 @@ func (w *W6300) closeSocket(n int) {
 		}
 		s.udp = nil
 	}
+	s.udpServer = false
 	if s.conn != nil {
 		_ = s.conn.Close()
 		s.conn = nil
