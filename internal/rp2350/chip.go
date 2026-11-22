@@ -259,14 +259,16 @@ func (c *Chip) invalidateMonitors(addr uint32) {
 }
 
 // Run executes n cycles across both cores.
-func (c *Chip) Run(n uint64) {
+// Run executes n cycles across both cores and returns the number of cycles
+// actually consumed. A debugger stop ends the call early.
+func (c *Chip) Run(n uint64) uint64 {
 	// Count completed cycles locally: a reset rewinds Cycles to zero, and an
 	// absolute target would then make this call run for the old elapsed time
 	// again (a watchdog reboot loop would stretch a 1 ms chunk into minutes).
 	var done uint64
 	for done < n && (!c.Halted || c.ContinueAfterHalt) {
 		if c.Debug != nil && c.Debug.Stopped {
-			return
+			return done
 		}
 		// With both cores asleep and nothing that needs per-cycle attention,
 		// only timers can make progress; jump to the next microsecond tick
@@ -283,6 +285,7 @@ func (c *Chip) Run(n uint64) {
 		c.Step()
 		done++
 	}
+	return done
 }
 
 // canIdleSkip reports whether a jump to the next microsecond tick cannot

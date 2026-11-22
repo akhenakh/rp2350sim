@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
@@ -18,6 +19,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
+	"github.com/akhenakh/rp2350sim/internal/gdb"
 	"github.com/akhenakh/rp2350sim/internal/logging"
 	"github.com/akhenakh/rp2350sim/internal/m33"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -200,6 +202,7 @@ func main() {
 		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
 		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
 		regStr     = flag.String("watch-reg", "", "log every change of this register")
+		gdbAddr    = flag.String("gdb", "", "serve the GDB remote protocol on this address (e.g. 127.0.0.1:3333)")
 		logFormat  = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
 		logLevel   = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
 		showVer    = flag.Bool("version", false, "print the version and exit")
@@ -210,12 +213,22 @@ func main() {
 	flag.Var(&i2cTCPFlag, "i2c-tcp", "I2C target over TCP: bus:addr[,addr][@listen|=connect] (repeatable)")
 	flag.Var(&spiTCPFlag, "spi-tcp", "SPI device over TCP: bus:cs[@listen|=connect] (repeatable)")
 	flag.Parse()
+	explicitBudget := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "steps" || f.Name == "seconds" {
+			explicitBudget = true
+		}
+	})
 	if *showVer {
 		fmt.Println("rp2350sim", version)
 		return
 	}
 	if *sdImage != "" && *sdDir != "" {
 		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
+		exit(2)
+	}
+	if *gdbAddr != "" && *sampleN != 0 {
+		fmt.Fprintln(os.Stderr, "-gdb cannot be combined with -sample")
 		exit(2)
 	}
 	if *psramMB < 0 || *psramMB > 16 || *psramMB&(*psramMB-1) != 0 {
@@ -1010,12 +1023,40 @@ func main() {
 		*allowHalt = true
 	}
 	netLog := &networkReporter{log: log}
+	var debugMu sync.Mutex
+	if *gdbAddr != "" {
+		c.Debug = rp2350.NewDebugger()
+		tgt := &gdbTarget{chip: c, mu: &debugMu}
+		ln, err := net.Listen("tcp", *gdbAddr)
+		if err != nil {
+			log.Error("gdb listen", slog.String("addr", *gdbAddr), slog.Any("err", err))
+			exit(2)
+		}
+		srv := gdb.NewServer(tgt, func(msg string, args ...any) {
+			if !*quiet {
+				log.Info(msg, args...)
+			}
+		})
+		go func() {
+			if err := srv.Serve(ln); err != nil {
+				log.Error("gdb server", slog.Any("err", err))
+			}
+		}()
+		if !*quiet {
+			log.Info("gdb server listening", slog.String("addr", ln.Addr().String()))
+		}
+	}
 	start := time.Now()
 	timedOut := false
 	if *sampleN == 0 {
 		runCycles := uint64(*steps)
 		if *secs > 0 {
 			runCycles = uint64(*secs * 150_000_000)
+		}
+		if *gdbAddr != "" && !explicitBudget {
+			// A debugger session is usually longer than the default 50M-cycle
+			// budget; run like a real board until the user stops or detaches.
+			runCycles = 1 << 62
 		}
 		if len(inputData) > 0 {
 			warm := min(inputCycles, runCycles)
@@ -1042,8 +1083,11 @@ func main() {
 				break
 			}
 			n := min(runCycles, chunk)
-			c.Run(n)
-			runCycles -= n
+			debugMu.Lock()
+			done := c.Run(n)
+			stopped := c.Debug != nil && c.Debug.Stopped
+			debugMu.Unlock()
+			runCycles -= done
 			netLog.report(w5500, w6300, ch9120)
 			if b := c.BootCount(); b != lastBoot {
 				lastBoot = b
@@ -1056,6 +1100,11 @@ func main() {
 			flushUSB()
 			if *stdinFlag {
 				drainStdin()
+			}
+			if stopped && done == 0 {
+				// The GDB client is in control; poll cheaply instead of
+				// spinning the interpreter while it is stopped.
+				time.Sleep(2 * time.Millisecond)
 			}
 		}
 		flushUSB()

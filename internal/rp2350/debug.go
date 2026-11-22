@@ -14,6 +14,8 @@ type Debugger struct {
 	StopPC     uint32
 	StopCore   int
 	StopCycle  uint64
+	// StopAddr is the watched address for a watchpoint stop.
+	StopAddr uint32
 
 	skipPC    uint32
 	skipValid bool
@@ -77,6 +79,7 @@ func (d *Debugger) Resume() {
 	}
 	d.Stopped = false
 	d.StopReason = ""
+	d.StopAddr = 0
 }
 
 // Pause records a user-requested stop.
@@ -85,6 +88,7 @@ func (d *Debugger) Pause(pc uint32, cycle uint64) {
 	d.StopReason = "paused"
 	d.StopPC = pc
 	d.StopCycle = cycle
+	d.StopAddr = 0
 }
 
 // Reset clears the stop state but keeps user breakpoints and watches.
@@ -93,6 +97,7 @@ func (d *Debugger) Reset() {
 	d.StopReason = ""
 	d.StopPC = 0
 	d.StopCycle = 0
+	d.StopAddr = 0
 	d.skipValid = false
 }
 
@@ -123,6 +128,7 @@ func (d *Debugger) checkWrite(addr uint32, core int, pc uint32, cycle uint64) bo
 			d.StopPC = pc
 			d.StopCore = core
 			d.StopCycle = cycle
+			d.StopAddr = base
 			return true
 		}
 	}
@@ -142,7 +148,12 @@ func (c *Chip) StepDebug(core int) {
 	if core == 1 {
 		cpu = c.CPU1
 	}
-	if !cpu.Halted && !cpu.Sleeping && !cpu.Parked {
+	if cpu.Sleeping {
+		// A debugger step wakes a core sitting in WFE/WFI.
+		cpu.Sleeping = false
+		cpu.SleepOnEvent = false
+	}
+	if !cpu.Halted && !cpu.Parked {
 		c.stepCore(cpu)
 	}
 	c.Debug.Stopped = true
@@ -150,6 +161,7 @@ func (c *Chip) StepDebug(core int) {
 	c.Debug.StopCore = core
 	c.Debug.StopPC = cpu.R[15]
 	c.Debug.StopCycle = c.Cycles
+	c.Debug.StopAddr = 0
 }
 
 func (c *Chip) debugWrite(addr uint32, size int) {
