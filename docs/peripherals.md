@@ -395,6 +395,71 @@ USB CDC section as well).
 
 Reference board: `pico2-analog`. Task: `task ui:logic`.
 
+## Audio
+
+GPIO/PWM audio, I2S and PDM can be decoded into a WAV file, and the UI can
+play the capture. The decoder samples pins on every emulated cycle, so it
+needs no firmware support.
+
+**Headless.** Exactly one source, plus `-audio-out`:
+
+```sh
+rp2350sim -fw build/audio.elf -seconds 1 -audio-pwm 0 -audio-out tone.wav
+rp2350sim -fw fw.elf -seconds 2 -audio-i2s 4,5,6,16 -audio-out i2s.wav
+rp2350sim -fw fw.elf -seconds 2 -audio-pdm 6,7,64 -audio-out mic.wav
+```
+
+`-audio-pwm` averages the pin's high time over one output sample period, which
+works for both hardware PWM (the duty becomes the sample) and a plain GPIO
+square wave (TinyGo's `time.Sleep` toggle). I2S decodes Philips framing with
+16/24/32-bit slots; PDM averages one bit density over the decimation window.
+`-audio-rate` sets the output rate (48 kHz default). `tools/wavcheck` asserts
+the rate, channels, RMS and fundamental frequency in CI:
+
+```sh
+tools/wavcheck -rate 48000 -channels 1 -freq 440 -freq-tol 30 -min-rms 0.1 tone.wav
+```
+
+**UI.** The **Audio** tab shows the capture as a waveform with **Save WAV**,
+**Play** and **Stop**. Playback removes the DC offset and applies fixed
+headroom before handing the file to a host player: a decoded GPIO square wave
+is full scale, and a pin parked high is pure DC, which can damage speakers or
+hearing at system volume. The saved WAV is the unmodified capture.
+
+![Audio tab](images/audio.png)
+
+Reference board: `pico2-audio`; firmware `audio`. Task: `task audio:test`.
+
+## MIDI
+
+USB-MIDI (TinyGo `machine/usb/adc/midi`) and 31250-baud UART MIDI are
+supported headlessly and in the UI.
+
+**Headless.** `-usb-midi` enables the class endpoint; `-midi-uart` taps a UART;
+`-midi-monitor` logs parsed messages; `-midi-udp` exposes a bidirectional
+UDP-MIDI endpoint.
+
+```sh
+rp2350sim -fw build/midi.elf -seconds 5 -usb-midi -midi-monitor \
+  -midi-udp 127.0.0.1:5004
+```
+
+A datagram of raw MIDI bytes is parsed (running status included) and delivered
+to the firmware on endpoint 3 or the UART receive FIFO. Firmware messages are
+logged and sent back to the last UDP sender. The UART tap watches TX only, so
+an echo firmware cannot feed itself. The emulated host accepts the composite
+CDC+MIDI descriptor (`descriptor.CDCMIDI`) and enumerates endpoint 3 alongside
+the CDC console.
+
+**UI.** The **MIDI** tab lists messages newest first with raw bytes and cycle
+time, and provides a two-octave chromatic keyboard with octave buttons and
+**Panic** (Note Off for held keys plus All Notes Off on all channels). A key
+sends Note On on press and Note Off on release.
+
+![MIDI tab](images/midi.png)
+
+Reference boards: `pico2-midi` (USB) and `pico2-midi-uart`; firmware `midi`.
+
 ## Oscilloscope
 
 There is no headless oscilloscope. Use `-trace-pins`/`-logic-pins` for edges
@@ -466,5 +531,8 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` | `task ui:serial` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` | `task ui:bus` |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
+| `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task audio:test` |
+| `pico2-midi` | `-usb-midi -midi-monitor` | `task firmware:midi` |
+| `pico2-midi-uart` | `-midi-uart 1 -midi-monitor` | `task firmware:midi` |
 
 See [ui.md](ui.md) for the UI controls and [boards.md](boards.md) for wiring.

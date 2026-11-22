@@ -483,6 +483,59 @@ installs a per-cycle hook, which disables the idle fast-forward while the run
 is captured. The UI's **Save trace** writes the same format plus a USB CDC
 section.
 
+### Audio capture
+
+The runner decodes one audio source from GPIO pins and writes a WAV file when
+the run ends. Exactly one source flag is required, plus `-audio-out`.
+
+| flag | meaning |
+|---|---|
+| `-audio-out PATH` | write the decoded capture as 16-bit PCM WAV |
+| `-audio-i2s bclk,lrclk,data[,bits]` | Philips I2S, `bits` 16/24/32 (default 16) |
+| `-audio-pdm data,clock[,decimation]` | PDM microphone bitstream, density averaged (default 64 clocks per sample) |
+| `-audio-pwm PIN` | PWM or plain GPIO pin: average the duty cycle over the sample period |
+| `-audio-rate HZ` | output sample rate (default 48000) |
+
+```sh
+rp2350sim -fw build/audio.elf -seconds 1 -audio-pwm 0 -audio-out tone.wav
+tools/wavcheck -rate 48000 -channels 1 -freq 440 -min-rms 0.1 tone.wav
+```
+
+The PWM/GPIO mode is the useful one for TinyGo programs without an audio
+codec: it measures the pin's high time over one output sample period, so a
+square wave becomes a square wave and a hardware PWM carrier does not alias.
+I2S and PDM are decoded from edge streams and are covered by synthetic tests;
+`firmware/audio` is the PWM example. The capture is capped at ten minutes to
+bound memory.
+
+A decoded GPIO square wave is full scale (0 dBFS), and a pin parked high
+decodes as DC. The saved WAV is the raw capture, so attenuate it and remove
+any DC offset before playing it on a host.
+
+### MIDI
+
+USB-MIDI and UART-MIDI can be monitored, bridged to UDP-MIDI and driven from
+the host.
+
+| flag | meaning |
+|---|---|
+| `-usb-midi` | expose the USB-MIDI class on endpoint 3 (TinyGo `machine/usb/adc/midi`) |
+| `-midi-uart N` | tap UART `N` as 31250-baud MIDI |
+| `-midi-monitor` | log every parsed message |
+| `-midi-udp ADDR` | bidirectional UDP-MIDI endpoint; replies go to the last sender |
+
+```sh
+rp2350sim -fw build/midi.elf -usb-midi -midi-monitor -midi-udp 127.0.0.1:5004
+```
+
+A datagram with raw MIDI bytes (running status included) is parsed and
+delivered to the firmware: over USB-MIDI as event packets on endpoint 3, or
+over the UART receive FIFO. Firmware messages are logged and sent back to the
+last UDP sender. The UART tap watches the firmware's TX line only; an echo
+firmware cannot loop back into itself. USB-MIDI requires a composite
+CDC+MIDI descriptor (`descriptor.CDCMIDI`); the emulated host enumerates it
+like the CDC-only descriptor.
+
 ### Environment variables
 
 Each legacy variable enables one debug stream without changing the level of

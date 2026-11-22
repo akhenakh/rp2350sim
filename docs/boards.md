@@ -184,6 +184,20 @@ project.
 - Use `-ws2812 GPIO` or the `pico2-ws2812` UI board; the last frame is decoded
   into colours. Reference firmware: `firmware/ws2812`.
 
+## Audio and MIDI
+
+Both are host-side taps on GPIO or USB; no board wiring is needed beyond the
+pins the firmware drives.
+
+- **Audio:** `-audio-pwm PIN`, `-audio-i2s bclk,lrclk,data[,bits]` or
+  `-audio-pdm data,clock[,decimation]`, plus `-audio-out out.wav`. UI boards
+  `pico2-audio` (`audio: {kind: pwm, pin: 0}`) and any `audio:` key in
+  `boards.yaml`. Reference firmware: `firmware/audio` (GP0 square wave).
+- **MIDI:** `-usb-midi` for the USB-MIDI class endpoint, `-midi-uart N` for a
+  31250-baud UART, `-midi-monitor` and `-midi-udp ADDR` for the bridge. UI
+  boards `pico2-midi` (USB-MIDI) and `pico2-midi-uart` (UART1 GP4/GP5).
+  Reference firmware: `firmware/midi` (USB note traffic plus UART echo).
+
 ## UART over TCP
 
 Any board can expose UART0/UART1 as a TCP server for interactive work. The
@@ -211,9 +225,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   hardware); `SEL` does not model the GE flags. Unsigned-saturating and
   parallel DSP instructions (USAT/SSAT, QADD, SADD/UADD16, ...) halt rather
   than execute.
-- **USB host:** the emulated host enumerates the device and pumps CDC; arbitrary
-  USB devices are not supported. Buffer addresses are the TinyGo layout, not
-  the endpoint control words, and any IN endpoint is forwarded to the console.
+- **USB host:** the emulated host enumerates the device and pumps CDC and
+  USB-MIDI (endpoint 3); arbitrary USB devices are not supported. Buffer
+  addresses are the TinyGo layout, not the endpoint control words.
 - **DMA:** paced transfers, AL1/AL2/AL3 aliases and completion interrupts, but
   no DREQ pacing.
 - **Timers:** the 64-bit read pair is latched, but writes to TIMEHW/TIMELW are
@@ -241,6 +255,8 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/touchlcd` | Touch-LCD-2: ST7789, CST816D, QMI8658, ADC, microSD |
 | `firmware/piotest` | PIO API conformance (FIFOs, autopush/pull, IRQ, side-set) |
 | `firmware/ws2812` | WS2812B strip over PIO |
+| `firmware/audio` | GPIO square wave for the audio decoder and WAV export |
+| `firmware/midi` | USB-MIDI traffic and UART MIDI echo |
 | `firmware/cores` | `-scheduler=cores` and core 1 |
 | `firmware/echo` | USB CDC console input |
 | `firmware/uart` | UART output for the logic analyzer |

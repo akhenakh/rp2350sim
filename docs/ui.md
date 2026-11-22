@@ -95,6 +95,8 @@ addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
 | `ethernet` | `kind` (`w5500`/`w6300`), `spi`, `cs`; or `kind: ch9120` with `uart`, `cfg0`, `rst`, `tcpcs` | Ethernet |
 | `wifi` | `uart`, `cfg0`, `rst`, `tcpcs` | Wi-Fi |
 | `ws2812` | `pin` | LEDs |
+| `audio` | `kind` (`i2s`/`pdm`/`pwm`), pins, `rate`, `bits`, `decimation` | Audio |
+| `midi` | `kind` (`usb`/`uart`), `uart` | MIDI |
 | `psram` | `size_mb`, `cs`, `latency` (extra cycles per access) | Board status |
 | `scope` | list of GPIO pins | default scope channels |
 | `analog` | list of `{pin, wave, hz, amplitude, offset}` | generated signal (Scope/ADC) |
@@ -149,6 +151,20 @@ boards:
       uart: { tx: 0, rx: 1, baud: 115200 }
       i2c: { sda: 4, scl: 5 }
       spi: { sck: 18, mosi: 19, miso: 16, cs: 17 }
+
+  - id: pico2-audio
+    name: RP2350 + PWM audio
+    audio: { kind: pwm, pin: 0, rate: 48000 }
+
+  - id: pico2-midi
+    name: RP2350 + USB-MIDI
+    midi: { kind: usb }
+
+  - id: pico2-midi-uart
+    name: RP2350 + UART MIDI
+    midi: { kind: uart, uart: 1 }
+    logic:
+      uart: { bus: 1, tx: 4, rx: 5, baud: 31250 }
 ```
 
 `--list-boards` prints the full list. `docs/peripherals.md` maps each board to
@@ -228,6 +244,31 @@ the next event after a frozen capture. **Save trace** writes
 pin samples and decoded UART/I2C/SPI/USB sections.
 
 ![Logic tab](images/logic.png)
+
+### Audio
+
+Shown when the board declares an `audio:` source. The panel reports the
+decoded format, draws the capture as a waveform and offers **Save WAV** and
+**Play**. Playback is host-side only: the capture is written to a temporary
+WAV and handed to `paplay`, `aplay`, `afplay` or `ffplay`. **Play** removes
+the DC offset and applies a fixed headroom (−14 dB) first: a decoded GPIO or
+PWM square wave is full scale, and a pin parked high decodes as DC, either of
+which can damage speakers or hearing at system volume. **Save WAV** writes the
+raw, unattenuated capture for analysis.
+
+![Audio tab](images/audio.png)
+
+### MIDI
+
+Shown when the board declares `midi:`. The monitor lists messages from the
+firmware (USB-MIDI endpoint 3 or the tapped UART TX), newest first, with the
+virtual cycle and raw bytes. The chromatic keyboard spans two octaves;
+**−/+ Octave** moves it and **Panic** sends Note Off for held keys plus All
+Notes Off on all 16 channels. A key sends Note On on press and Note Off on
+release, so dragging across the keys plays a glissando. Host-to-device
+messages use the same USB-MIDI or UART endpoint as the headless runner.
+
+![MIDI tab](images/midi.png)
 
 ### OTP
 
