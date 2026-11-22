@@ -30,9 +30,18 @@ type usbBlock struct {
 
 	attached bool
 	addr     uint32
-	// midi enables the USB-MIDI bulk endpoint (EP3), as used by TinyGo's
-	// CDCMIDI composite descriptor.
+	// midi enables the USB-MIDI bulk endpoint, as used by TinyGo's CDCMIDI
+	// composite descriptor and by pico-sdk TinyUSB MIDI descriptors.
 	midi bool
+
+	// Endpoint numbers discovered from the configuration descriptor. Defaults
+	// match TinyGo's CDC (EP1 notification, EP2 data) and CDCMIDI (EP3 MIDI)
+	// so a run still works if the descriptor is truncated or malformed.
+	cdcNotify int
+	cdcIn     int
+	cdcOut    int
+	midiIn    int
+	midiOut   int
 
 	// Host enumeration state.
 	state    usbHostState
@@ -40,6 +49,14 @@ type usbBlock struct {
 	wait     int
 	pollTick int
 	outSent  bool
+	// needStatus/statusSent track the OUT zero-length status packet that ends
+	// a control-IN data stage (TinyUSB requires it to finish the request).
+	needStatus bool
+	statusSent bool
+
+	// outPID is the DATA0/DATA1 toggle the host sends on each OUT endpoint.
+	// Control EP0 data and status packets are always DATA1.
+	outPID [16]bool
 
 	collected []byte
 
@@ -104,6 +121,18 @@ const (
 	usbBufAvail  = 0x0400
 	usbBufLen    = 0x03FF
 	usbBufLenOff = 0x400
+	usbBuf1Shift = 16
+)
+
+// DPRAM endpoint-control registers start at EP1 (EP0 has fixed buffers).
+const (
+	usbEpCtrlBase   = 0x008
+	usbEpCtrlEnable = 1 << 31
+	usbEpCtrlDouble = 1 << 30
+	usbEpCtrlAddr   = 0xFFFF
+	usbEpDataBase   = 0x180 // end of EP0 buffers, start of the shared pool
+	usbEp0Buf       = 0x100
+	usbDPSRAMSize   = 0x1000
 )
 
 // DPRAM layout helpers.
@@ -113,12 +142,64 @@ func usbBufCtrlOff(ep int) uint32 { return 0x80 + uint32(ep)*8 } // IN buffer co
 // the IN register makes the guest read the configured 64-byte buffer size
 // instead of the transfer length (and arms a phantom IN packet).
 func usbBufCtrlOffOut(ep int) uint32 { return usbBufCtrlOff(ep) + 4 }
+
+// usbBufDataOff is the TinyGo buffer layout, used as the fallback when the
+// firmware has not programmed EP_CONTROL or the address is out of range.
 func usbBufDataOff(ep int, in bool) uint32 {
 	off := 0x100 + uint32(ep)*128
 	if ep != 0 && in {
 		off += 64 // IN endpoints other than EP0 use Buffer1
 	}
 	return off
+}
+
+// epDataAddr reads the buffer address the firmware programmed in EP_CONTROL.
+// TinyUSB allocates endpoint buffers dynamically and exposes the DPRAM offset
+// there; TinyGo programs the same register with its fixed layout.
+func (u *usbBlock) epDataAddr(ep int, in bool) uint32 {
+	if ep == 0 {
+		return usbEp0Buf
+	}
+	reg := uint32(usbEpCtrlBase + (ep-1)*8)
+	if !in {
+		reg += 4
+	}
+	ctrl := u.word(reg)
+	if ctrl&usbEpCtrlEnable != 0 {
+		if addr := ctrl & usbEpCtrlAddr; addr >= usbEpDataBase && addr+128 <= usbDPSRAMSize {
+			return addr
+		}
+	}
+	return usbBufDataOff(ep, in)
+}
+
+// epDouble reports whether EP_CONTROL enables the endpoint's second buffer.
+func (u *usbBlock) epDouble(ep int) bool {
+	if ep == 0 {
+		return false
+	}
+	return u.word(uint32(usbEpCtrlBase+(ep-1)*8))&usbEpCtrlDouble != 0
+}
+
+// epInReady reports whether the firmware fully armed buffer 0 of an IN
+// endpoint. TinyUSB writes the control twice (first without AVAIL, then with
+// AVAIL after a settle delay); ACKing the intermediate write would send the
+// same packet twice. TinyGo sets both bits in one write.
+func (u *usbBlock) epInReady(ep int) bool {
+	ctrl := u.word(usbBufCtrlOff(ep)) & 0xFFFF
+	return ctrl&usbBufFull != 0 && ctrl&usbBufAvail != 0
+}
+
+// epOutReady reports whether the device has armed buffer 0 of an OUT endpoint.
+func (u *usbBlock) epOutReady(ep int) bool {
+	ctrl := u.word(usbBufCtrlOffOut(ep))
+	return ctrl&usbBufAvail != 0 && ctrl&usbBufFull == 0
+}
+
+func (u *usbBlock) setEndpointDefaults() {
+	u.cdcNotify, u.cdcIn, u.cdcOut = 1, 2, 2
+	u.midiIn, u.midiOut = 3, 3
+	u.outPID = [16]bool{}
 }
 
 func (u *usbBlock) reset() {
@@ -132,7 +213,10 @@ func (u *usbBlock) reset() {
 	u.wait = 0
 	u.pollTick = 0
 	u.outSent = false
+	u.needStatus = false
+	u.statusSent = false
 	u.collected = u.collected[:0]
+	u.setEndpointDefaults()
 }
 
 func newUSB(c *Chip) *usbBlock {
@@ -143,6 +227,7 @@ func newUSB(c *Chip) *usbBlock {
 	u.regs.writeFn = u.write
 	u.regs.clearFn = u.clear
 	u.regs.resetFn = func(c *Chip) { u.reset() }
+	u.setEndpointDefaults()
 	return u
 }
 
@@ -334,6 +419,8 @@ func (u *usbBlock) beginStep() {
 	u.writeBytes(4, setup[4:])
 	u.intr |= usbINTSetupReq
 	u.outSent = false
+	u.needStatus = false
+	u.statusSent = false
 	u.collected = u.collected[:0]
 	u.state = usbHostControl
 	u.chip.Logger.Debug("usb setup request",
@@ -344,19 +431,28 @@ func (u *usbBlock) beginStep() {
 		slog.Int("length", int(req.length)))
 }
 
-// epInFull reports whether the firmware has armed the IN buffer of an endpoint.
-func (u *usbBlock) epInFull(ep int) bool {
-	return u.word(usbBufCtrlOff(ep))&usbBufFull != 0
-}
-
-// takeIN consumes one IN packet: it returns the payload and acknowledges the
-// packet to the controller (clearing the buffer and raising BUFF_STATUS).
+// takeIN consumes every armed IN buffer of an endpoint. It returns the payload
+// and acknowledges the packet to the controller: the hardware clears AVAIL and
+// FULL but preserves LENGTH, which TinyUSB reads to account the transfer.
+// Double-buffered endpoints (TinyUSB bulk IN) can hold two packets in the low
+// and high halves of the control word, with buffer 1 at +64.
 func (u *usbBlock) takeIN(ep int) []byte {
 	ctrl := u.word(usbBufCtrlOff(ep))
-	n := int(ctrl & usbBufLen)
-	data := u.readBytes(usbBufDataOff(ep, true), n)
-	u.chip.Logger.Debug("usb in packet", slog.Int("ep", ep), slog.Int("bytes", n))
-	u.setWord(usbBufCtrlOff(ep), 0)
+	low := ctrl & 0xFFFF
+	n := int(low & usbBufLen)
+	addr := u.epDataAddr(ep, true)
+	data := u.readBytes(addr, n)
+	keep := uint32(n)
+	if u.epDouble(ep) {
+		high := ctrl >> usbBuf1Shift
+		if high&(usbBufFull|usbBufAvail) != 0 {
+			n1 := int(high & usbBufLen)
+			data = append(data, u.readBytes(addr+64, n1)...)
+			keep |= uint32(n1) << usbBuf1Shift
+		}
+	}
+	u.chip.Logger.Debug("usb in packet", slog.Int("ep", ep), slog.Int("bytes", len(data)))
+	u.setWord(usbBufCtrlOff(ep), keep)
 	u.raiseBuff(1 << uint(ep*2))
 	return data
 }
@@ -364,6 +460,39 @@ func (u *usbBlock) takeIN(ep int) []byte {
 func (u *usbBlock) pollControl() {
 	req := hostEnumeration[u.step]
 	in := req.reqType&0x80 != 0
+
+	// A control-IN data stage ends with an OUT zero-length status packet from
+	// the host. TinyUSB arms the opposite direction and only completes the
+	// request (and processes the next SETUP) once that packet arrives.
+	if u.needStatus {
+		ctrl := u.word(usbBufCtrlOffOut(0))
+		if !u.statusSent {
+			// Wait until the firmware acknowledged the IN completion: the
+			// status buffer is armed from inside that same BUFF_STATUS ISR.
+			// TinyUSB's EP0 OUT starts unarmed and gets AVAIL when the stack
+			// arms the status; TinyGo leaves it armed, so AVAIL is enough.
+			if u.buffStatus&1 != 0 {
+				return
+			}
+			if ctrl&usbBufAvail == 0 || ctrl&usbBufFull != 0 {
+				return
+			}
+			u.setWord(usbBufCtrlOffOut(0), usbBufFull|usbBufData1)
+			u.raiseBuff(1 << 1) // EP0 OUT
+			u.statusSent = true
+			return
+		}
+		// The firmware clears the BUFF_STATUS bit when it handles the status;
+		// TinyUSB does not clear FULL afterwards, so the bit is the handshake.
+		if u.buffStatus&(1<<1) != 0 {
+			return
+		}
+		u.needStatus = false
+		u.statusSent = false
+		u.finishStep()
+		return
+	}
+
 	if in {
 		// Do not complete the next packet while the firmware has not yet
 		// acknowledged the previous IN completion: a multi-packet control
@@ -373,32 +502,49 @@ func (u *usbBlock) pollControl() {
 		if u.buffStatus&1 != 0 {
 			return
 		}
-		if !u.epInFull(0) {
+		if !u.epInReady(0) {
 			return
 		}
 		data := u.takeIN(0)
 		u.collected = append(u.collected, data...)
-		// A short packet ends the data stage.
+		// A short packet ends the data stage. A zero-length request is the
+		// firmware's IN status packet for an OUT request.
 		if len(data) < 64 || len(u.collected) >= int(req.length) {
-			u.finishStep()
+			if req.length == 0 {
+				u.finishStep()
+				return
+			}
+			u.needStatus = true
 		}
 		return
 	}
 
 	if req.length > 0 && !u.outSent {
-		// Host-to-device data stage, e.g. SET_LINE_CODING. The payload is not
-		// needed by the emulated host yet; send a zeroed line-coding record so
-		// the firmware's parser sees a valid shape.
+		// Host-to-device data stage, e.g. SET_LINE_CODING. Wait until the
+		// firmware has serviced the SETUP request and armed EP0 OUT, then send
+		// the first packet as DATA1.
+		if u.intr&usbINTSetupReq != 0 {
+			return
+		}
+		ctrl := u.word(usbBufCtrlOffOut(0))
+		if ctrl&usbBufAvail == 0 || ctrl&usbBufFull != 0 {
+			return
+		}
 		payload := make([]byte, req.length)
-		u.writeBytes(usbBufDataOff(0, false), payload)
+		u.writeBytes(u.epDataAddr(0, false), payload)
 		u.setWord(usbBufCtrlOffOut(0), uint32(req.length)|usbBufData1|usbBufFull)
 		u.raiseBuff(1 << 1) // EP0 OUT
 		u.outSent = true
 		return
 	}
+	if req.length > 0 && u.outSent {
+		if u.buffStatus&(1<<1) != 0 {
+			return // data stage still pending
+		}
+	}
 
 	// Status stage: the firmware arms an IN zero-length packet.
-	if !u.epInFull(0) {
+	if !u.epInReady(0) {
 		return
 	}
 	u.takeIN(0)
@@ -417,6 +563,11 @@ func (u *usbBlock) finishStep() {
 				slog.Int("bytes", len(u.collected)),
 				slog.String("head", fmt.Sprintf("% x", u.collected[:min(8, len(u.collected))])))
 		}
+		// The full configuration descriptor (not the 9-byte header) carries the
+		// interface classes and endpoints the host must address.
+		if req.request == 6 && req.value == 0x0200 && req.length > 9 && len(u.collected) >= 9 {
+			u.parseConfig(u.collected)
+		}
 	}
 	u.step++
 	if u.step < len(hostEnumeration) {
@@ -427,62 +578,144 @@ func (u *usbBlock) finishStep() {
 	u.chip.Logger.Debug("usb enumeration complete")
 }
 
-// pollEndpoints services the CDC data endpoints once enumeration is done: every
-// IN packet the firmware arms is drained and acknowledged.
+// parseConfig discovers the CDC and MIDI endpoints from the configuration
+// descriptor. TinyGo's CDCMIDI and pico-sdk TinyUSB are free to number their
+// interfaces and endpoints differently; the host must follow the descriptor
+// rather than assume EP2/EP3.
+func (u *usbBlock) parseConfig(desc []byte) {
+	u.setEndpointDefaults()
+	if len(desc) < 9 || desc[1] != 2 { // CONFIGURATION
+		return
+	}
+	total := int(desc[2]) | int(desc[3])<<8
+	total = min(total, len(desc))
+	var class, subclass byte
+	found := false
+	for off := 0; off+2 <= total; {
+		blen := int(desc[off])
+		if blen < 2 || off+blen > total {
+			break
+		}
+		typ := desc[off+1]
+		switch typ {
+		case 4: // INTERFACE
+			if blen >= 9 {
+				class, subclass = desc[off+5], desc[off+6]
+			}
+		case 5: // ENDPOINT
+			if blen >= 7 {
+				addr := desc[off+2]
+				xfer := desc[off+3] & 0x03
+				in := addr&0x80 != 0
+				ep := int(addr & 0x0F)
+				switch {
+				// CDC data interface: bulk IN/OUT.
+				case class == 0x0A:
+					if in {
+						u.cdcIn = ep
+					} else {
+						u.cdcOut = ep
+					}
+					found = true
+				// CDC communication interface: the interrupt notification EP.
+				case class == 0x02 && in && xfer == 3:
+					u.cdcNotify = ep
+					found = true
+				// MIDI streaming interface: bulk IN/OUT.
+				case class == 0x01 && subclass == 0x03:
+					if in {
+						u.midiIn = ep
+					} else {
+						u.midiOut = ep
+					}
+					found = true
+				}
+			}
+		}
+		off += blen
+	}
+	if found {
+		u.chip.Logger.Debug("usb endpoints",
+			slog.Int("cdc_notify", u.cdcNotify),
+			slog.Int("cdc_in", u.cdcIn),
+			slog.Int("cdc_out", u.cdcOut),
+			slog.Int("midi_in", u.midiIn),
+			slog.Int("midi_out", u.midiOut))
+	}
+}
+
+// pollEndpoints drains the IN packets the firmware arms for the descriptors'
+// endpoints: CDC data goes to the console, MIDI to the MIDI bridge. CDC
+// notification (serial state) packets are acknowledged and ignored.
 func (u *usbBlock) pollEndpoints(c *Chip) {
-	for ep := range 8 {
-		if !u.epInFull(ep) {
+	for ep := range 16 {
+		if !u.epInReady(ep) {
 			continue
 		}
 		data := u.takeIN(ep)
 		if len(data) == 0 {
 			continue
 		}
-		if ep == 3 && u.midi {
-			if c.OnUSBMIDI != nil {
+		switch ep {
+		case u.cdcIn:
+			if u.OnCDC != nil {
+				u.OnCDC(data)
+			}
+		case u.midiIn:
+			if u.midi && c.OnUSBMIDI != nil {
 				c.OnUSBMIDI(data)
 			}
-			continue
-		}
-		if u.OnCDC != nil {
-			u.OnCDC(data)
+		case u.cdcNotify:
+			// Serial-state notification: no host consumer.
+		default:
+			u.chip.Logger.Debug("usb in packet on unexpected endpoint", slog.Int("ep", ep), slog.Int("bytes", len(data)))
 		}
 	}
 }
 
-// MIDIReady reports whether the firmware has armed the MIDI OUT endpoint for
-// a host-to-device packet.
-func (u *usbBlock) MIDIReady() bool {
-	return u.midi && u.state == usbHostRunning && u.word(usbBufCtrlOffOut(3))&usbBufFull == 0
-}
-
-// SendMIDI queues a host-to-device USB-MIDI packet on endpoint 3.
-func (u *usbBlock) SendMIDI(data []byte) bool {
-	if !u.MIDIReady() {
+// sendOUT publishes one host-to-device packet on an OUT endpoint, toggling the
+// DATA0/DATA1 sequence the device expects.
+func (u *usbBlock) sendOUT(ep int, data []byte) bool {
+	if ep <= 0 || !u.epOutReady(ep) {
 		return false
 	}
 	if len(data) > 64 {
 		data = data[:64]
 	}
-	u.writeBytes(usbBufDataOff(3, false), data)
-	u.setWord(usbBufCtrlOffOut(3), uint32(len(data))|usbBufFull)
-	u.raiseBuff(1 << 7) // EP3 OUT
+	addr := u.epDataAddr(ep, false)
+	u.writeBytes(addr, data)
+	ctrl := uint32(len(data)) | usbBufFull
+	if u.outPID[ep] {
+		ctrl |= usbBufData1
+	}
+	u.outPID[ep] = !u.outPID[ep]
+	u.setWord(usbBufCtrlOffOut(ep), ctrl)
+	u.raiseBuff(1 << uint(ep*2+1))
 	return true
+}
+
+// MIDIReady reports whether the firmware has armed the MIDI OUT endpoint for
+// a host-to-device packet.
+func (u *usbBlock) MIDIReady() bool {
+	return u.midi && u.state == usbHostRunning && u.epOutReady(u.midiOut)
+}
+
+// SendMIDI queues a host-to-device USB-MIDI packet on the MIDI OUT endpoint.
+func (u *usbBlock) SendMIDI(data []byte) bool {
+	if !u.MIDIReady() {
+		return false
+	}
+	return u.sendOUT(u.midiOut, data)
 }
 
 // CDCReady reports whether the host can publish another CDC OUT packet; the
 // device consumes the previous one and clears the buffer control.
 func (u *usbBlock) CDCReady() bool {
-	return u.state == usbHostRunning && u.word(usbBufCtrlOffOut(2))&usbBufFull == 0
+	return u.state == usbHostRunning && u.epOutReady(u.cdcOut)
 }
 
 // SendCDC queues a packet for the host to deliver to the device's CDC OUT
-// endpoint (endpoint 2). The UI and console input will use it.
+// endpoint. The UI and console input use it.
 func (u *usbBlock) SendCDC(data []byte) {
-	if len(data) > 64 {
-		data = data[:64]
-	}
-	u.writeBytes(usbBufDataOff(2, false), data)
-	u.setWord(usbBufCtrlOffOut(2), uint32(len(data))|usbBufFull)
-	u.raiseBuff(1 << 5) // EP2 OUT
+	u.sendOUT(u.cdcOut, data)
 }
