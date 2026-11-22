@@ -46,7 +46,7 @@ func (c *CPU) exec32(pc uint32, hw1 uint16) {
 	case hw1&0xFF00 == 0xFB00:
 		c.exec32MulDiv(hw1, hw2)
 
-	// ---- Coprocessor (VFP and the RP2350 redundancy coprocessor) ----
+	// ---- Coprocessor (VFP, GPIO and the RP2350 DCP) ----
 	case hw1&0xEE00 == 0xEC00 || hw1&0xEE00 == 0xEE00:
 		c.exec32Coproc(hw1, hw2)
 
@@ -62,7 +62,7 @@ func (c *CPU) exec32(pc uint32, hw1 uint16) {
 // instruction rather than a wide conditional branch.
 func isSystem32(hw1, hw2 uint16) bool {
 	switch {
-	case hw1&0xFFF0 == 0xF380: // MSR
+	case hw1&0xFFF0 == 0xF380 && hw2&0xF000 == 0x8000: // MSR (USAT also uses 0xF38x)
 		return true
 	case hw1 == 0xF3EF: // MRS
 		return true
@@ -72,7 +72,7 @@ func isSystem32(hw1, hw2 uint16) bool {
 		hw1&0xFFF0 == 0xF360 || // BFI / BFC
 		hw1&0xFFF0 == 0xF3C0): // UBFX
 		return true
-	case hw1 == 0xF3AF && hw2 == 0x8000: // NOP.W
+	case hw1 == 0xF3AF && hw2&0x0F00 == 0: // NOP.W and the other hints
 		return true
 	}
 	return false
@@ -344,6 +344,10 @@ func (c *CPU) exec32DataProc(hw1, hw2 uint16, _ bool) {
 	if (typ == 1 || typ == 2) && amount == 0 {
 		amount = 32
 	}
+	// ADC/SBC use the carry flag as it was before the shifter runs; the
+	// shifter only updates C for AND/BIC/ORR/ORN/EOR. Capturing it here keeps
+	// the shift's carry-out from becoming the carry-in.
+	carryIn := boolToU32(c.flag(flagC))
 	carry := s && (typ != 0 || shift != 0)
 	var v uint32
 	switch typ {
@@ -407,15 +411,15 @@ func (c *CPU) exec32DataProc(hw1, hw2 uint16, _ bool) {
 		}
 	case 0xA: // ADC
 		if s {
-			res = c.addFlags(a, v, boolToU32(c.flag(flagC)))
+			res = c.addFlags(a, v, carryIn)
 		} else {
-			res = a + v + boolToU32(c.flag(flagC))
+			res = a + v + carryIn
 		}
 	case 0xB: // SBC
 		if s {
-			res = c.subFlags(a, v, boolToU32(c.flag(flagC)))
+			res = c.subFlags(a, v, carryIn)
 		} else {
-			res = a - v - 1 + boolToU32(c.flag(flagC))
+			res = a - v - 1 + carryIn
 		}
 	case 0xD: // SUB
 		if s {
@@ -478,7 +482,7 @@ func (c *CPU) exec32ImmData(hw1, hw2 uint16) {
 	s := hw1&0x0010 != 0
 	rn := uint32(hw1 & 0xF)
 	rd := uint32(hw2 >> 8 & 0xF)
-	imm := thumbExpandImm(uint32(hw1>>10&1), uint32(hw2>>12&7), uint32(hw2&0xFF))
+	imm, rotated, immCarry := thumbExpandImm(uint32(hw1>>10&1), uint32(hw2>>12&7), uint32(hw2&0xFF))
 
 	a := c.R[rn]
 	var res uint32
@@ -538,30 +542,39 @@ func (c *CPU) exec32ImmData(hw1, hw2 uint16) {
 	}
 	if s {
 		c.setNZ(res)
+		// For a rotated 12-bit modified immediate the shifter carry-out is
+		// the last bit rotated out (bit 31 of the expanded value), and the
+		// logical instructions write it to APSR.C. The replicated-byte
+		// encodings leave C unchanged.
+		if rotated && op <= 0x4 {
+			c.setFlag(flagC, immCarry)
+		}
 	}
 	if rd != 15 {
 		c.R[rd] = res
 	}
 }
 
-// thumbExpandImm expands the 12-bit modified immediate encoding.
-func thumbExpandImm(i, imm3, imm8 uint32) uint32 {
+// thumbExpandImm expands the 12-bit modified immediate encoding. rotated
+// reports the ROR form (imm12[11:10] != 0); carry is its last bit rotated out.
+func thumbExpandImm(i, imm3, imm8 uint32) (value uint32, rotated, carry bool) {
 	imm12 := i<<11 | imm3<<8 | imm8
 	if imm12>>10 == 0 {
 		switch (imm12 >> 8) & 3 {
 		case 0:
-			return imm8
+			return imm8, false, false
 		case 1:
-			return imm8<<16 | imm8
+			return imm8<<16 | imm8, false, false
 		case 2:
-			return imm8<<24 | imm8<<8
+			return imm8<<24 | imm8<<8, false, false
 		default:
-			return imm8<<24 | imm8<<16 | imm8<<8 | imm8
+			return imm8<<24 | imm8<<16 | imm8<<8 | imm8, false, false
 		}
 	}
 	unrotated := 0x80 | (imm12 & 0x7F)
 	rot := (imm12 >> 7) & 0x1F
-	return ror32(unrotated, rot)
+	v := ror32(unrotated, rot)
+	return v, true, v&0x80000000 != 0
 }
 
 func ror32(v, n uint32) uint32 {
@@ -633,7 +646,9 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 	u := hw1&0x0080 != 0
 	signed := hw1&0x0100 != 0
 
-	// Literal forms: Rn == 15 for word loads.
+	// Literal forms: Rn == 15 for word loads. LDRB/LDRSB with Rt == 15 is
+	// PLD/PLI, a preload hint that must not write a register (writing R15
+	// would jump into low memory).
 	if rn == 15 && (op == 5 || op == 1) {
 		imm := uint32(hw2 & 0xFFF)
 		var addr uint32
@@ -648,8 +663,12 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 			} else {
 				c.R[rt] = c.Bus.Read32(addr)
 			}
-		} else {
-			c.R[rt] = uint32(c.Bus.Read8(addr))
+		} else if rt != 15 {
+			if signed {
+				c.R[rt] = uint32(int32(int8(c.Bus.Read8(addr))))
+			} else {
+				c.R[rt] = uint32(c.Bus.Read8(addr))
+			}
 		}
 		return
 	}
@@ -670,6 +689,9 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 				offset = -offset
 			}
 			base := c.R[rn]
+			if rn == 15 {
+				base = c.pcRead() &^ 3
+			}
 			addr := base
 			if p {
 				addr = uint32(int32(base) + offset)
@@ -693,13 +715,22 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 	}
 
 	// Immediate 12-bit form (T3).
-	addr := c.R[rn] + uint32(hw2&0xFFF)
+	base := c.R[rn]
+	if rn == 15 {
+		base = c.pcRead() &^ 3 // literal loads use Align(PC,4)
+	}
+	addr := base + uint32(hw2&0xFFF)
 	c.doLoadStore(op, signed, addr, rt)
 }
 
 // doLoadStore performs the access for the load/store group.
 // op: 0 STRB, 1 LDRB, 2 STRH, 3 LDRH, 4 STR, 5 LDR, 6 LDRSB (signed), 7 LDRSH.
 func (c *CPU) doLoadStore(op uint32, signed bool, addr, rt uint32) {
+	if rt == 15 && op != 5 {
+		// LDRB/LDRSB/LDRH/LDRSH with Rt=15 encodes PLD/PLI (or is
+		// UNPREDICTABLE): a preload hint never writes a register.
+		return
+	}
 	if signed {
 		switch op & 3 {
 		case 1: // LDRSB
@@ -733,7 +764,7 @@ func (c *CPU) doLoadStore(op uint32, signed bool, addr, rt uint32) {
 
 func (c *CPU) exec32System(hw1, hw2 uint16) {
 	switch {
-	case hw1&0xFFF0 == 0xF380: // MSR
+	case hw1&0xFFF0 == 0xF380 && hw2&0xF000 == 0x8000: // MSR
 		rn := uint32(hw1 & 0xF)
 		sysm := uint32(hw2 & 0xFF)
 		c.writeSpecialReg(sysm, c.R[rn])
@@ -781,7 +812,15 @@ func (c *CPU) exec32System(hw1, hw2 uint16) {
 		v := c.R[rn] >> lsb
 		shift := 32 - width
 		c.R[rd] = uint32(int32(v<<shift) >> shift)
-	case hw1 == 0xF3AF && hw2 == 0x8000: // NOP.W
+	case hw1 == 0xF3AF && hw2&0x0F00 == 0: // NOP/YIELD/WFE/WFI/SEV/DBG hints
+		kind := uint8(hw2 & 0xFF)
+		switch {
+		case kind <= 4:
+			c.execHint(kind)
+		case kind&0xF0 == 0xF0: // DBG hint: no-op
+		default:
+			c.Halt("unimplemented hint instruction")
+		}
 	default:
 		if c.Unimplemented != nil && c.Unimplemented(c.R[15]-4, hw1, hw2) {
 			return
@@ -811,11 +850,9 @@ func (c *CPU) readSpecialReg(sysm uint32) uint32 {
 	case 0x10: // PRIMASK
 		return c.PRIMASK & 1
 	case 0x11: // FAULTMASK
-		return 0
-	case 0x12: // BASEPRI
-		return 0
-	case 0x13: // BASEPRI_MAX
-		return 0
+		return c.FAULTMASK & 1
+	case 0x12, 0x13: // BASEPRI (and BASEPRI_MAX reads the same field)
+		return c.BASEPRI
 	case 0x14: // CONTROL
 		return c.CONTROL
 	}
@@ -839,7 +876,14 @@ func (c *CPU) writeSpecialReg(sysm, v uint32) {
 	case 0x10: // PRIMASK
 		c.PRIMASK = v & 1
 	case 0x11: // FAULTMASK
-	case 0x12, 0x13: // BASEPRI
+		c.FAULTMASK = v & 1
+	case 0x12: // BASEPRI
+		c.BASEPRI = v & 0xFF
+	case 0x13: // BASEPRI_MAX: only raise the mask (numerically lower priority)
+		b := v & 0xFF
+		if b != 0 && (c.BASEPRI == 0 || b < c.BASEPRI) {
+			c.BASEPRI = b
+		}
 	case 0x14: // CONTROL
 		c.setControl(v)
 	}
@@ -852,9 +896,10 @@ func (c *CPU) exec32Unary(hw1, hw2 uint16) {
 	rd := uint32(hw2 >> 8 & 0xF)
 	rm := uint32(hw2 & 0xF)
 
-	// Register-shift forms (LSL/LSR/ASR/ROR) have zero in hw2[7:4].
-	// hw1[7:5] selects the shift type, hw1[4] is the S bit.
-	if op == 0x0 && hw1&0x00F0 != 0xF0 {
+	// Register-shift forms (LSL/LSR/ASR/ROR) have zero in hw2[7:4] and
+	// hw1[7] clear; the DSP/parallel group lives at 0xFA8x and above and
+	// must not be mistaken for a shift.
+	if op == 0x0 && hw1&0x0080 == 0 {
 		valueReg := uint32(hw1 & 0xF)
 		shiftReg := uint32(hw2 & 0xF)
 		shiftType := uint32(hw1>>5) & 3
@@ -912,6 +957,10 @@ func (c *CPU) exec32Unary(hw1, hw2 uint16) {
 			c.R[rd] = reverseBits(c.R[rm])
 		case 0xB:
 			c.R[rd] = uint32(int32(int16(rev16(c.R[rm]))))
+		default:
+			// Parallel DSP add/sub (SADD16, UADD8, SHADD16, ...) is not
+			// modelled. Halting is better than silently doing nothing.
+			c.Halt("unimplemented parallel DSP instruction")
 		}
 	case 0xFAA0: // SEL
 		c.R[rd] = c.R[rm]
@@ -978,8 +1027,35 @@ func (c *CPU) exec32MulDiv(hw1, hw2 uint16) {
 		} else {
 			c.R[rd] = uint32(int32(c.R[rn]) / int32(c.R[rm]))
 		}
-	case 0xFB10, 0xFB30, 0xFB50, 0xFB70: // SMULBB/SMULTT/SMULTB/SMULBT etc.
+	case 0xFB10: // SMULBB/BT/TB/TT and SMLAxy
 		c.smulDSP(hw1, hw2)
+	case 0xFB20: // SMLAD/SMLADX/SMUAD/SMUADX
+		c.smladDSP(hw1, hw2, false)
+	case 0xFB40: // SMLSD/SMLSDX/SMUSD
+		c.smladDSP(hw1, hw2, true)
+	case 0xFB50: // SMMUL/SMMULR/SMMLA/SMMLAR
+		c.smmDSP(hw1, hw2, false)
+	case 0xFB60: // SMMLS/SMMLSR
+		c.smmDSP(hw1, hw2, true)
+	case 0xFB70: // USAD8/USADA8
+		rn := uint32(hw1 & 0xF)
+		rm := uint32(hw2 & 0xF)
+		rd := uint32(hw2 >> 8 & 0xF)
+		ra := uint32(hw2 >> 12)
+		sum := uint32(0)
+		for i := range 4 {
+			a := uint32(byte(c.R[rn] >> (8 * uint(i))))
+			b := uint32(byte(c.R[rm] >> (8 * uint(i))))
+			if a < b {
+				sum += b - a
+			} else {
+				sum += a - b
+			}
+		}
+		if ra != 0xF {
+			sum += c.R[ra]
+		}
+		c.R[rd] = sum
 	default:
 		if c.Unimplemented != nil && c.Unimplemented(c.R[15]-4, hw1, hw2) {
 			return
@@ -1020,6 +1096,54 @@ func (c *CPU) smulDSP(hw1, hw2 uint16) {
 		r += int32(c.R[ra])
 	}
 	c.R[rd] = uint32(r)
+}
+
+// smladDSP implements SMLAD/SMLADX (sub=false) and SMLSD/SMLSDX (sub=true).
+// Ra == 0b1111 selects the non-accumulating SMUAD/SMUSD forms.
+func (c *CPU) smladDSP(hw1, hw2 uint16, sub bool) {
+	rn := uint32(hw1 & 0xF)
+	rm := uint32(hw2 & 0xF)
+	rd := uint32(hw2 >> 8 & 0xF)
+	ra := uint32(hw2 >> 12)
+	n := c.R[rn]
+	m := c.R[rm]
+	if hw2&0x10 != 0 { // X: exchange the halves of Rm
+		m = m>>16 | m<<16
+	}
+	lo := int64(int32(int16(n))) * int64(int32(int16(m)))
+	hi := int64(int32(int16(n>>16))) * int64(int32(int16(m>>16)))
+	if sub {
+		lo -= hi
+	} else {
+		lo += hi
+	}
+	if ra != 0xF {
+		lo += int64(int32(c.R[ra]))
+	}
+	c.R[rd] = uint32(lo)
+}
+
+// smmDSP implements SMMUL/SMMULR (sub=false, Ra=0xF) and
+// SMMLA/SMMLAR or SMMLS/SMMLSR. Bit 4 selects the rounding form.
+func (c *CPU) smmDSP(hw1, hw2 uint16, sub bool) {
+	rn := uint32(hw1 & 0xF)
+	rm := uint32(hw2 & 0xF)
+	rd := uint32(hw2 >> 8 & 0xF)
+	ra := uint32(hw2 >> 12)
+	p := int64(int32(c.R[rn])) * int64(int32(c.R[rm]))
+	if sub {
+		var acc int64
+		if ra != 0xF {
+			acc = int64(int32(c.R[ra])) << 32
+		}
+		p = acc - p
+	} else if ra != 0xF {
+		p += int64(int32(c.R[ra])) << 32
+	}
+	if hw2&0x10 != 0 {
+		p += 1 << 31
+	}
+	c.R[rd] = uint32(uint64(p) >> 32)
 }
 
 // Utility functions.

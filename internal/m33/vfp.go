@@ -16,10 +16,12 @@ import (
 // The D/N/M bits are the low bit of each register number.
 
 const (
-	fpscrN = 1 << 31
-	fpscrZ = 1 << 30
-	fpscrC = 1 << 29
-	fpscrV = 1 << 28
+	fpscrN   = 1 << 31
+	fpscrZ   = 1 << 30
+	fpscrC   = 1 << 29
+	fpscrV   = 1 << 28
+	fpscrIOC = 1 << 0
+	fpscrIXC = 1 << 4
 )
 
 func (c *CPU) vfpS(i int) float32       { return math.Float32frombits(c.S[i&31]) }
@@ -119,12 +121,58 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	case a == 0xEE80 && b == 0x0A40 && op == 8:
 		c.vfpSetS(sd, float32(c.S[sm])) // VCVT.F32.U32
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xD:
-		c.S[sd&31] = uint32(int32(c.vfpS(sm))) // VCVT.S32.F32 (truncate)
+		c.S[sd&31] = c.vfpToInt32(c.vfpS(sm)) // VCVT.S32.F32 (truncate)
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xC:
-		c.S[sd&31] = uint32(c.vfpS(sm)) // VCVT.U32.F32
+		c.S[sd&31] = c.vfpToUint32(c.vfpS(sm)) // VCVT.U32.F32
 	default:
 		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
 	}
+}
+
+// vfpToInt32 converts with the Arm rules: NaN gives zero, out-of-range values
+// saturate, and a fractional value raises IXC. Go's float-to-integer
+// conversion is host-dependent for NaN and out-of-range inputs, so it cannot
+// be used directly.
+func (c *CPU) vfpToInt32(f float32) uint32 {
+	d := float64(f)
+	switch {
+	case math.IsNaN(d):
+		c.FPSCR |= fpscrIOC
+		return 0
+	case d >= 2147483648.0:
+		c.FPSCR |= fpscrIOC
+		return 0x7FFFFFFF
+	case d < -2147483648.0:
+		c.FPSCR |= fpscrIOC
+		return 0x80000000
+	}
+	i := int32(d)
+	if float64(i) != d {
+		c.FPSCR |= fpscrIXC
+	}
+	return uint32(i)
+}
+
+// vfpToUint32 is the unsigned counterpart: NaN and negative values give zero,
+// out-of-range values saturate to 0xFFFFFFFF.
+func (c *CPU) vfpToUint32(f float32) uint32 {
+	d := float64(f)
+	switch {
+	case math.IsNaN(d):
+		c.FPSCR |= fpscrIOC
+		return 0
+	case d >= 4294967296.0:
+		c.FPSCR |= fpscrIOC
+		return 0xFFFFFFFF
+	case d < 0:
+		c.FPSCR |= fpscrIOC
+		return 0
+	}
+	i := uint32(d)
+	if float64(i) != d {
+		c.FPSCR |= fpscrIXC
+	}
+	return i
 }
 
 func (c *CPU) vfpCompare(a, b float32) {
@@ -208,9 +256,14 @@ func (c *CPU) vfpLoadStore(hw1, hw2 uint16) {
 	}
 
 	if hw1&0x0020 == 0 {
-		// VLDR/VSTR: imm8*4, U selects the sign.
+		// VLDR/VSTR: imm8*4, U selects the sign. The literal form (Rn=15)
+		// addresses Align(PC,4), not PC itself.
 		off := int32(imm8 * 4)
-		addr := c.R[rn]
+		base := c.R[rn]
+		if rn == 15 {
+			base = c.pcRead() &^ 3
+		}
+		addr := base
 		if hw1&0x0080 != 0 {
 			addr += uint32(off)
 		} else {

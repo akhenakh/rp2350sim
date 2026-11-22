@@ -71,7 +71,7 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 				c.setReg(rd, c.reg(rd)+c.reg(rm))
 			case 1: // CMP (hi registers)
 				rd := uint32(hw&7) | uint32(hw>>4)&8
-				c.subFlags(c.reg(rd), c.reg(rm), 1)
+				c.cmpFlags(c.reg(rd), c.reg(rm))
 			case 2: // MOV (hi registers)
 				rd := uint32(hw&7) | uint32(hw>>4)&8
 				c.setReg(rd, c.reg(rm))
@@ -285,10 +285,23 @@ func (c *CPU) exec16Misc(hw uint16) {
 		}
 		c.pushList(list)
 	case hw&0xFFE0 == 0xB660: // CPSIE/CPSID
+		// Bits: 0 = F (FAULTMASK), 1 = I (PRIMASK), 2 = A (async abort,
+		// not modelled), 4 = im (0 = enable, 1 = disable).
+		aif := hw & 0x7
 		if hw&0x0010 != 0 {
-			c.PRIMASK |= 1
+			if aif&0x2 != 0 {
+				c.PRIMASK |= 1
+			}
+			if aif&0x1 != 0 {
+				c.FAULTMASK |= 1
+			}
 		} else {
-			c.PRIMASK &^= 1
+			if aif&0x2 != 0 {
+				c.PRIMASK &^= 1
+			}
+			if aif&0x1 != 0 {
+				c.FAULTMASK &^= 1
+			}
 		}
 	case hw&0xFF00 == 0xBA00: // REV/REV16/REVSH
 		op := uint32(hw>>6) & 3
@@ -323,23 +336,8 @@ func (c *CPU) exec16Misc(hw uint16) {
 			return
 		}
 		switch cond {
-		case 0: // NOP
-		case 1: // YIELD
-		case 2: // WFE
-			if c.EventRegister {
-				c.EventRegister = false
-			} else {
-				c.Sleeping = true
-				c.SleepOnEvent = true
-			}
-		case 3: // WFI
-			c.Sleeping = true
-			c.SleepOnEvent = false
-		case 4: // SEV signals an event to every core in the system.
-			c.EventRegister = true
-			if w, ok := c.Bus.(interface{ SignalEvent() }); ok {
-				w.SignalEvent()
-			}
+		case 0, 1, 2, 3, 4: // NOP, YIELD, WFE, WFI, SEV
+			c.execHint(cond)
 		}
 	}
 }

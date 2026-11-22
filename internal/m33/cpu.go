@@ -1,9 +1,11 @@
 // Package m33 implements an ARMv8-M Mainline (Cortex-M33) interpreter.
 //
-// The implementation covers the integer instruction set used by TinyGo and the
+// The implementation covers the instruction set used by TinyGo and the
 // Raspberry Pi Pico SDK: Thumb-2, DSP multiply/divide, exclusives, exception
-// entry/return with a 16-entry system exception model and external interrupts
-// from the NVIC. Floating point, MVE and TrustZone isolation are out of scope.
+// entry/return with a 16-entry system exception model, external interrupts
+// from the NVIC and single-precision VFP (the RP2350 double-precision
+// coprocessor is modelled separately in dcp.go). MVE and TrustZone isolation
+// are out of scope.
 package m33
 
 import "fmt"
@@ -44,6 +46,11 @@ type CPU struct {
 	IPSR uint32
 	// PRIMASK disables configurable-priority interrupts when bit 0 is set.
 	PRIMASK uint32
+	// FAULTMASK blocks every configurable-priority exception, including
+	// faults (CPSID f).
+	FAULTMASK uint32
+	// BASEPRI masks interrupts at or below its priority when non-zero.
+	BASEPRI uint32
 	// itNoFlags suppresses flag updates from 16-bit data-processing
 	// instructions executing inside an IT block (ARMv8-M rule).
 	itNoFlags bool
@@ -123,6 +130,8 @@ func (c *CPU) Reset() {
 	c.APSR = 0
 	c.IPSR = 0
 	c.PRIMASK = 0
+	c.FAULTMASK = 0
+	c.BASEPRI = 0
 	c.CONTROL = 0
 	c.MSP = 0
 	c.PSP = 0
@@ -138,6 +147,9 @@ func (c *CPU) Reset() {
 	c.SleepOnEvent = false
 	c.Halted = false
 	c.Cycles = 0
+	c.VTOR = 0
+	c.monitorValid = false
+	c.EventRegister = false
 }
 
 // SetVectorTable points the core at a vector table whose first two words are
@@ -185,6 +197,42 @@ func (c *CPU) nzcv() (n, z, cy, v bool) {
 // pcRead is the value of PC seen by instructions reading R15.
 func (c *CPU) pcRead() uint32 { return c.curPC + 4 }
 
+// MonitorCovers reports whether the local exclusive monitor covers addr.
+func (c *CPU) MonitorCovers(addr uint32) bool { return c.monitorValid && c.monitor == addr }
+
+// InvalidateMonitor clears the local exclusive monitor. Any write by
+// another agent (the other core or DMA) to the monitored address must call
+// this, as must exception entry and return.
+func (c *CPU) InvalidateMonitor() { c.monitorValid = false }
+
+// execHint executes an architectural hint. kind is 0..4 for NOP, YIELD, WFE,
+// WFI and SEV; 0xF0..0xFF is the DBG hint (a no-op here).
+func (c *CPU) execHint(kind uint8) {
+	switch kind {
+	case 0: // NOP
+	case 1: // YIELD
+	case 2: // WFE
+		if c.EventRegister {
+			c.EventRegister = false
+		} else if !c.IRQPending {
+			// An enabled interrupt that is already pending is a wakeup
+			// event even when PRIMASK keeps it from being taken.
+			c.Sleeping = true
+			c.SleepOnEvent = true
+		}
+	case 3: // WFI
+		if !c.IRQPending {
+			c.Sleeping = true
+			c.SleepOnEvent = false
+		}
+	case 4: // SEV signals an event to every core in the system.
+		c.EventRegister = true
+		if w, ok := c.Bus.(interface{ SignalEvent() }); ok {
+			w.SignalEvent()
+		}
+	}
+}
+
 // reg returns a register, with PC reads adjusted for the pipeline.
 func (c *CPU) reg(i uint32) uint32 {
 	if i == 15 {
@@ -229,7 +277,7 @@ func (c *CPU) Step() int {
 	if c.Parked {
 		return 0
 	}
-	if c.itstate == 0 && c.IRQPending && c.IPSR == 0 && c.PRIMASK&1 == 0 && c.Interrupts != nil {
+	if c.itstate == 0 && c.IRQPending && c.IPSR == 0 && c.PRIMASK&1 == 0 && c.FAULTMASK&1 == 0 && c.Interrupts != nil {
 		if exc := c.Interrupts.NextPending(); exc != 0 {
 			c.Exception(uint32(exc))
 			return 12
@@ -343,6 +391,13 @@ func (c *CPU) Exception(n uint32) {
 	if usePSP {
 		sp = c.PSP
 	}
+	// ARMv8-M always aligns the exception frame to 8 bytes (CCR.STKALIGN is
+	// RES1). Bit 9 of the stacked xPSR records whether a padding word was
+	// inserted.
+	pad := sp&4 != 0
+	if pad {
+		sp -= 4
+	}
 	fp := c.FPUActive
 	if fp {
 		sp -= 72 // S0-S15, FPSCR and the reserved word
@@ -355,7 +410,15 @@ func (c *CPU) Exception(n uint32) {
 	c.Bus.Write32(sp+16, c.R[12])
 	c.Bus.Write32(sp+20, c.R[14])
 	c.Bus.Write32(sp+24, c.R[15])
-	c.Bus.Write32(sp+28, c.APSR)
+	xpsr := c.APSR | 1<<24 | c.IPSR&0x1FF
+	if c.itstate != 0 {
+		// IT[7:2] lives in xPSR[15:10], IT[1:0] in xPSR[26:25].
+		xpsr |= uint32(c.itstate>>2)<<10 | uint32(c.itstate&3)<<25
+	}
+	if pad {
+		xpsr |= 1 << 9
+	}
+	c.Bus.Write32(sp+28, xpsr)
 	if usePSP {
 		c.PSP = sp
 	} else {
@@ -384,6 +447,7 @@ func (c *CPU) Exception(n uint32) {
 	c.IPSR = n
 	c.APSR &^= flagQ
 	c.itstate = 0
+	c.monitorValid = false
 	// PC is loaded from the vector table, with the Thumb bit stripped.
 	c.R[15] = c.Bus.Read32(c.VectorBase()+4*n) &^ 1
 }
@@ -409,7 +473,9 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 	c.R[12] = c.Bus.Read32(sp + 16)
 	c.R[14] = c.Bus.Read32(sp + 20)
 	pc := c.Bus.Read32(sp + 24)
-	c.APSR = (c.APSR &^ 0xF8000000) | (c.Bus.Read32(sp+28) & 0xF8000000)
+	xpsr := c.Bus.Read32(sp + 28)
+	c.APSR = (c.APSR &^ 0xF8000000) | (xpsr & 0xF8000000)
+	it := uint8((xpsr>>10&0x3F)<<2 | (xpsr>>25)&3)
 	sp += 32
 	if excReturn&0x10 == 0 { // standard frame: restore the FP context
 		for i := range 16 {
@@ -421,13 +487,19 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 	} else {
 		c.FPUActive = false
 	}
+	if xpsr&(1<<9) != 0 {
+		sp += 4 // padding inserted to align the frame
+	}
 	if usePSP {
 		c.PSP = sp
 	} else {
 		c.MSP = sp
 	}
+	c.IPSR = xpsr & 0x1FF
+	c.itstate = it
+	c.FAULTMASK = 0
+	c.monitorValid = false
 	if toThread {
-		c.IPSR = 0
 		if usePSP {
 			c.CONTROL |= 2
 		} else {
