@@ -177,6 +177,9 @@ type Emu struct {
 	trigger LogicTrigger
 	frozen  frozenLogic
 
+	scopeTrig   ScopeTriggerConfig
+	frozenScope frozenScope
+
 	bridges    []*devices.UARTBridge
 	bridgeErrs []string
 	serialSig  string
@@ -348,12 +351,155 @@ func (e *Emu) SetScopePins(pins []int) {
 	if e.scope != nil {
 		e.scope.SetPins(pins)
 	}
+	e.frozenScope = frozenScope{}
+}
+
+// ScopeTriggerConfig selects a pin-edge trigger for the oscilloscope.
+type ScopeTriggerConfig struct {
+	// Mode is "", "rise", "fall", "high" or "low".
+	Mode string
+	Pin  int
+}
+
+type frozenScope struct {
+	triggered bool
+	info      string
+	pins      []int
+	samples   []devices.TraceSample
+	index     int
+	seen      uint64
+	lastBit   bool
+	haveLast  bool
+	found     bool
+	trigT     uint64
+}
+
+// SetScopeTrigger arms the scope trigger and clears any frozen capture.
+func (e *Emu) SetScopeTrigger(cfg ScopeTriggerConfig) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.scopeTrig = cfg
+	e.frozenScope = frozenScope{}
+}
+
+// RearmScope clears a frozen capture and waits for the next trigger.
+func (e *Emu) RearmScope() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.frozenScope = frozenScope{}
+}
+
+// ScopeTriggered reports whether the scope capture is frozen and why.
+func (e *Emu) ScopeTriggered() (bool, string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.frozenScope.triggered, e.frozenScope.info
+}
+
+// ScopeTriggerIndex is the index of the trigger sample in the frozen window.
+func (e *Emu) ScopeTriggerIndex() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.frozenScope.index
+}
+
+// checkScopeTriggerLocked scans the new scope samples for the configured edge
+// or level, then keeps a quarter-window of post-trigger data before freezing.
+// The caller holds e.mu.
+func (e *Emu) checkScopeTriggerLocked() {
+	if e.scope == nil || e.scopeTrig.Mode == "" {
+		return
+	}
+	if e.frozenScope.found {
+		pins, samples := e.scope.Snapshot()
+		post := 0
+		for i := len(samples) - 1; i >= 0; i-- {
+			if samples[i].T <= e.frozenScope.trigT {
+				break
+			}
+			post++
+		}
+		if post >= devices.ScopeDepth/4 {
+			e.freezeScopeLocked(pins, samples)
+		}
+		return
+	}
+
+	pins, samples := e.scope.Snapshot()
+	if len(samples) == 0 {
+		return
+	}
+	ch := -1
+	for i, pin := range pins {
+		if pin == e.scopeTrig.Pin {
+			ch = i
+			break
+		}
+	}
+	if ch < 0 {
+		return
+	}
+	if !e.frozenScope.haveLast {
+		e.frozenScope.lastBit = samples[0].Bit(ch)
+		e.frozenScope.haveLast = true
+		if (e.scopeTrig.Mode == "high" && e.frozenScope.lastBit) ||
+			(e.scopeTrig.Mode == "low" && !e.frozenScope.lastBit) {
+			e.frozenScope.trigT = samples[0].T
+			e.frozenScope.found = true
+		}
+	}
+	for _, s := range samples {
+		if s.T <= e.frozenScope.seen {
+			continue
+		}
+		bit := s.Bit(ch)
+		match := false
+		switch e.scopeTrig.Mode {
+		case "rise":
+			match = !e.frozenScope.lastBit && bit
+		case "fall":
+			match = e.frozenScope.lastBit && !bit
+		case "high":
+			match = bit
+		case "low":
+			match = !bit
+		}
+		e.frozenScope.lastBit = bit
+		e.frozenScope.seen = s.T
+		if match {
+			e.frozenScope.trigT = s.T
+			e.frozenScope.found = true
+			break
+		}
+	}
+}
+
+func (e *Emu) freezeScopeLocked(pins []int, samples []devices.TraceSample) {
+	idx := 0
+	for i, s := range samples {
+		if s.T >= e.frozenScope.trigT {
+			idx = i
+			break
+		}
+	}
+	e.frozenScope.triggered = true
+	e.frozenScope.pins = pins
+	e.frozenScope.samples = samples
+	e.frozenScope.index = idx
+	e.frozenScope.info = fmt.Sprintf("%s GP%d", e.scopeTrig.Mode, e.scopeTrig.Pin)
 }
 
 // ScopeData copies the scope trace for rendering.
 func (e *Emu) ScopeData() ([]int, []devices.TraceSample, uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.frozenScope.triggered {
+		interval := uint64(devices.ScopeInterval)
+		if e.scope != nil {
+			interval = e.scope.Interval
+		}
+		return e.frozenScope.pins, e.frozenScope.samples, interval
+	}
 	if e.scope == nil {
 		return nil, nil, 0
 	}
@@ -1209,6 +1355,7 @@ func (e *Emu) RunFor(cycles uint64) {
 		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
 		e.flushMIDILocked()
+		e.checkScopeTriggerLocked()
 		cycles -= n
 	}
 }
@@ -1259,6 +1406,7 @@ func (e *Emu) loop() {
 		if running {
 			e.chip.Run(chunk)
 			e.flushMIDILocked()
+			e.checkScopeTriggerLocked()
 			boots = e.chip.BootCount()
 			if e.debugger.Stopped {
 				e.running = false

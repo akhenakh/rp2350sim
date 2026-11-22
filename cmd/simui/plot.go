@@ -22,6 +22,7 @@ var tracePalette = []color.RGBA{
 var (
 	plotBackground = color.RGBA{R: 0x0d, G: 0x11, B: 0x18, A: 0xff}
 	plotGrid       = color.RGBA{R: 0x1d, G: 0x26, B: 0x33, A: 0xff}
+	triggerColor   = color.RGBA{R: 0xff, G: 0x9f, B: 0x43, A: 0xff}
 )
 
 func paletteAt(i int) color.RGBA { return tracePalette[i%len(tracePalette)] }
@@ -29,7 +30,7 @@ func paletteAt(i int) color.RGBA { return tracePalette[i%len(tracePalette)] }
 // scopeImage renders voltage-versus-time traces. Each pixel column spans the
 // min/max voltage of its sample range, so square waves stay solid and analog
 // waveforms keep their shape without aliasing.
-func scopeImage(pins []int, samples []devices.TraceSample, width, height int, vmax float32) *image.RGBA {
+func scopeImage(pins []int, samples []devices.TraceSample, width, height int, vmax float32, marker int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	fillRect(img, 0, 0, width, height, plotBackground)
 	for i := 1; i < 10; i++ {
@@ -65,6 +66,12 @@ func scopeImage(pins []int, samples []devices.TraceSample, width, height int, vm
 			ytop := height - 1 - int(float64(clampV(hi, vmax))/float64(vmax)*float64(height-1))
 			ybot := height - 1 - int(float64(clampV(lo, vmax))/float64(vmax)*float64(height-1))
 			drawV(img, x, ytop, ybot, paletteAt(ch))
+		}
+	}
+	if marker >= 0 && marker < n {
+		x := marker * (width - 1) / max(n-1, 1)
+		for y := 0; y < height; y += 8 {
+			drawV(img, x, y, min(y+4, height-1), triggerColor)
 		}
 	}
 	return img

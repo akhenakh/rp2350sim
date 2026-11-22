@@ -1313,20 +1313,41 @@ func networkCard(n *devices.NetworkInfo) {
 
 // ---- Oscilloscope tab ----
 
-// scopeCandidates are the pins offered as scope channels: the GPIO header
-// pins most demos use plus the four ADC inputs.
-var scopeCandidates = []int{
-	0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-	10, 11, 12, 13, 14, 15, 26, 27, 28, 29,
-}
+// scopeCandidates are all GPIOs the emulator models. RP2350A packages expose
+// 0..29; the RP2350B QFN-80 exposes 0..47. Showing the full range lets a B
+// board be scoped without a package switch.
+var scopeCandidates = func() []int {
+	out := make([]int, 48)
+	for i := range out {
+		out[i] = i
+	}
+	return out
+}()
+
+var (
+	scopeTrigMode = ""
+	scopeTrigPin  = 0
+)
 
 func scopePanel() {
 	pins, samples, interval := emu.ScopeData()
+	triggered, trigInfo := emu.ScopeTriggered()
+	trigIdx := -1
+	if triggered {
+		trigIdx = emu.ScopeTriggerIndex()
+	}
 	vmax := scopeRanges[scopeRangeIdx]
 	visible := samples
 	if scopeZoom > 1 && len(samples) > 0 {
 		n := max(len(samples)/int(scopeZoom), 4)
 		visible = samples[len(samples)-n:]
+	}
+	marker := -1
+	if trigIdx >= 0 {
+		start := len(samples) - len(visible)
+		if trigIdx >= start {
+			marker = trigIdx - start
+		}
 	}
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
@@ -1363,16 +1384,37 @@ func scopePanel() {
 				}
 			}
 		})
-		Container(Attrs(Gap(3)), func() {
-			for row := range 2 {
-				Container(Attrs(Row, Gap(4)), func() {
-					for col := range 10 {
-						i := row*10 + col
-						if i < len(scopeCandidates) {
-							scopePinChip(scopeCandidates[i])
-						}
-					}
-				})
+		Container(Attrs(Row, CrossMid, Gap(4)), func() {
+			Label("Trigger", FontSize(11), FontWeight(600))
+			scopeTriggerButton("Off", "")
+			scopeTriggerButton("Rise", "rise")
+			scopeTriggerButton("Fall", "fall")
+			scopeTriggerButton("High", "high")
+			scopeTriggerButton("Low", "low")
+			Container(Attrs(FixWidth(10)), func() {})
+			Label("GP", FontSize(11))
+			if Button(NoIcon, "−") {
+				scopeTrigPin = (scopeTrigPin + len(scopeCandidates) - 1) % len(scopeCandidates)
+				applyScopeTrigger()
+			}
+			Label(fmt.Sprintf("%d", scopeTrigPin), FontSize(12), FontWeight(600))
+			if Button(NoIcon, "+") {
+				scopeTrigPin = (scopeTrigPin + 1) % len(scopeCandidates)
+				applyScopeTrigger()
+			}
+			if triggered {
+				Label("TRIGGERED · "+trigInfo, FontSize(11), FontWeight(700), TextColor(0, 70, 55, 1))
+				if Button(NoIcon, "Rearm") {
+					emu.RearmScope()
+					RequestNextFrame()
+				}
+			} else if scopeTrigMode != "" {
+				Label("armed · "+scopeTrigMode, FontSize(11), TextColor(45, 60, 60, 1))
+			}
+		})
+		Container(Attrs(Row, Wrap, Gap(4)), func() {
+			for _, pin := range scopeCandidates {
+				scopePinChip(pin)
 			}
 		})
 		Container(Attrs(Row, Gap(6), Expand), func() {
@@ -1386,12 +1428,12 @@ func scopePanel() {
 				if w < 200 {
 					w = 1100 // first frame, before layout has resolved
 				}
-				img := scopeImage(pins, visible, int(w), 420, vmax)
+				img := scopeImage(pins, visible, int(w), 420, vmax, marker)
 				id := UseImage("scope", img)
 				ImageViewAt(id, Vec2{w, 420})
 			})
 		})
-		Container(Attrs(Row, CrossMid, Gap(16), Pad2(2, 0)), func() {
+		Container(Attrs(Row, Wrap, Gap(14), Pad2(2, 0)), func() {
 			if len(pins) == 0 {
 				Label("no channels selected", FontSize(11), TextColor(220, 5, 55, 1))
 				return
@@ -1400,18 +1442,71 @@ func scopePanel() {
 				if i >= 8 {
 					break
 				}
-				c := paletteAt(i)
-				h, s, l, a := rgbToHSLA(c)
-				Container(Attrs(FixSize(10, 10), Corners(5), Background(h, s, l, a)), func() {})
-				Label(fmt.Sprintf("GP%d", p), FontSize(12), FontWeight(600))
-				v := float32(0)
-				if len(visible) > 0 {
-					v = visible[len(visible)-1].V[i]
-				}
-				Label(fmt.Sprintf("%.2f V", v), FontSize(11))
+				Container(Attrs(Row, CrossMid, Gap(5)), func() {
+					c := paletteAt(i)
+					h, s, l, a := rgbToHSLA(c)
+					Container(Attrs(FixSize(10, 10), Corners(5), Background(h, s, l, a)), func() {})
+					Label(fmt.Sprintf("GP%d", p), FontSize(12), FontWeight(600))
+					v := float32(0)
+					if len(visible) > 0 {
+						v = visible[len(visible)-1].V[i]
+					}
+					Label(fmt.Sprintf("%.2f V", v), FontSize(11))
+					m := devices.MeasureDigital(visible, i, interval)
+					if m.Valid {
+						Label(fmt.Sprintf("%s · %.1f%% · %s", formatFreq(m.Frequency), m.Duty, formatPeriod(m.Period)),
+							FontSize(11), TextColor(200, 10, 62, 1))
+					} else {
+						level := "low"
+						if m.High > 0.5 {
+							level = "high"
+						}
+						Label("static "+level, FontSize(11), TextColor(200, 10, 55, 1))
+					}
+				})
 			}
 		})
 	})
+}
+
+func scopeTriggerButton(name, mode string) {
+	label := name
+	if scopeTrigMode == mode {
+		label = "● " + name
+	}
+	if Button(NoIcon, label) && scopeTrigMode != mode {
+		scopeTrigMode = mode
+		applyScopeTrigger()
+	}
+}
+
+func applyScopeTrigger() {
+	emu.SetScopeTrigger(ScopeTriggerConfig{Mode: scopeTrigMode, Pin: scopeTrigPin})
+	RequestNextFrame()
+}
+
+func formatFreq(hz float64) string {
+	switch {
+	case hz >= 1e6:
+		return fmt.Sprintf("%.3f MHz", hz/1e6)
+	case hz >= 1e3:
+		return fmt.Sprintf("%.3f kHz", hz/1e3)
+	default:
+		return fmt.Sprintf("%.1f Hz", hz)
+	}
+}
+
+func formatPeriod(sec float64) string {
+	switch {
+	case sec >= 1:
+		return fmt.Sprintf("%.3f s", sec)
+	case sec >= 1e-3:
+		return fmt.Sprintf("%.3f ms", sec*1e3)
+	case sec >= 1e-6:
+		return fmt.Sprintf("%.3f us", sec*1e6)
+	default:
+		return fmt.Sprintf("%.1f ns", sec*1e9)
+	}
 }
 
 func scopePinChip(pin int) {
@@ -1520,6 +1615,7 @@ func saveLogicTrace(pins []int, samples []devices.TraceSample, interval uint64) 
 	if text := usbTraceText(emu.USBEvents()); text != "" {
 		trace.Sections = append(trace.Sections, devices.LogicSection{Name: "USB CDC", Text: text})
 	}
+	trace.Sections = append(trace.Sections, fullEventSections()...)
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -1555,6 +1651,78 @@ func usbTraceText(events []USBEvent) string {
 	return b.String()
 }
 
+// fullEventSections dumps every captured controller event, across both UARTs
+// and directions, not just the board's configured protocol.
+func fullEventSections() []devices.LogicSection {
+	var out []devices.LogicSection
+	if ev := emu.UARTEvents(); len(ev) > 0 {
+		base := ev[0].Cycle
+		var b strings.Builder
+		for _, e := range ev {
+			dir := "TX"
+			if e.In {
+				dir = "RX"
+			}
+			fmt.Fprintf(&b, "%8.3fms UART%d %s 0x%02x %q\n",
+				float64(e.Cycle-base)/150e3, e.Bus, dir, e.Data, string(rune(e.Data)))
+		}
+		out = append(out, devices.LogicSection{Name: "UART events", Text: b.String()})
+	}
+	if ev := emu.SPIEvents(); len(ev) > 0 {
+		base := ev[0].Cycle
+		var b strings.Builder
+		for _, e := range ev {
+			fmt.Fprintf(&b, "%8.3fms SPI%d MOSI 0x%02x MISO 0x%02x\n",
+				float64(e.Cycle-base)/150e3, e.Bus, e.TX, e.RX)
+		}
+		out = append(out, devices.LogicSection{Name: "SPI events", Text: b.String()})
+	}
+	if ev := emu.I2CEvents(); len(ev) > 0 {
+		base := ev[0].Cycle
+		var b strings.Builder
+		for _, e := range ev {
+			fmt.Fprintf(&b, "%8.3fms I2C%d %s", float64(e.Cycle-base)/150e3, e.Bus, e.Kind)
+			switch e.Kind {
+			case "addr":
+				fmt.Fprintf(&b, " 0x%02x", e.Addr)
+			case "data", "read":
+				fmt.Fprintf(&b, " 0x%02x", e.Data)
+			}
+			if e.Kind == "data" || e.Kind == "read" {
+				if e.Ack {
+					b.WriteString(" ack")
+				} else {
+					b.WriteString(" nack")
+				}
+			}
+			b.WriteByte('\n')
+		}
+		out = append(out, devices.LogicSection{Name: "I2C events", Text: b.String()})
+	}
+	return out
+}
+
+// saveLogicVCD exports the current pin capture for GTKWave or PulseView.
+func saveLogicVCD(pins []int, samples []devices.TraceSample, interval uint64) (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(wd, devices.VCDFilename(selectedBoard.ID, time.Now()))
+	f, err := os.Create(path)
+	if err != nil {
+		return "", err
+	}
+	if err := devices.WriteVCD(f, pins, samples, interval); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func logicPanel() {
 	pins, samples, interval := emu.LogicData()
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
@@ -1570,6 +1738,17 @@ func logicPanel() {
 				path, err := saveLogicTrace(pins, samples, interval)
 				if err != nil {
 					logicSaveMsg = "save failed: " + err.Error()
+					logicSaveErr = true
+				} else {
+					logicSaveMsg = "saved " + path
+					logicSaveErr = false
+				}
+				RequestNextFrame()
+			}
+			if Button(NoIcon, "Save VCD") {
+				path, err := saveLogicVCD(pins, samples, interval)
+				if err != nil {
+					logicSaveMsg = "VCD failed: " + err.Error()
 					logicSaveErr = true
 				} else {
 					logicSaveMsg = "saved " + path
