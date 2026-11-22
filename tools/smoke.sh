@@ -490,13 +490,21 @@ else
 fi
 
 "$EMU" -fw "$BUILD/protocols.elf" -seconds 0.4 -quiet \
-	-logic-pins 0,1 -logic-uart 0,1,115200 -logic-out "$BUILD/logic-capture.txt" >/dev/null 2>&1
+	-logic-pins 0,1 -logic-uart 0,1,115200 -logic-out "$BUILD/logic-capture.txt" \
+	-vcd "$BUILD/logic-capture.vcd" >/dev/null 2>&1
 if grep -q "rp2350sim logic analyzer trace" "$BUILD/logic-capture.txt" &&
 	grep -q "# UART taps" "$BUILD/logic-capture.txt" &&
 	grep -q "# samples" "$BUILD/logic-capture.txt"; then
 	ok "CLI logic analyzer capture"
 else
 	bad "CLI logic analyzer capture" "$(head -20 "$BUILD/logic-capture.txt" 2>/dev/null)"
+fi
+if grep -q '^\$timescale 1ns \$end' "$BUILD/logic-capture.vcd" &&
+	grep -q '^\$var wire 1 ! GP0 \$end' "$BUILD/logic-capture.vcd" &&
+	grep -q '^\$enddefinitions \$end' "$BUILD/logic-capture.vcd"; then
+	ok "CLI VCD export"
+else
+	bad "CLI VCD export" "$(head -20 "$BUILD/logic-capture.vcd" 2>/dev/null)"
 fi
 
 if (cd cmd/simui && go run . --board pico2-analog --tab logic --run 0.05 	--png "../../$BUILD/logic-smoke.png" "../../$BUILD/protocols.elf" >/dev/null 2>&1) &&

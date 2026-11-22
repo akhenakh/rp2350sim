@@ -393,6 +393,27 @@ func (l *logicCapture) pinSections(samples []devices.TraceSample) []devices.Logi
 }
 
 // write saves the trace plus taps and returns the path written.
+// writeVCD exports the captured pin trace for GTKWave or PulseView.
+func (l *logicCapture) writeVCD(path string) (string, error) {
+	if l.trace == nil {
+		return path, fmt.Errorf("no pin trace captured")
+	}
+	pins, samples := l.trace.Snapshot()
+	f, err := os.Create(path)
+	if err != nil {
+		return path, err
+	}
+	if err := devices.WriteVCD(f, pins, samples, l.interval); err != nil {
+		_ = f.Close()
+		return path, err
+	}
+	if err := f.Close(); err != nil {
+		return path, err
+	}
+	abs, _ := filepath.Abs(path)
+	return abs, nil
+}
+
 func (l *logicCapture) write(path string) (string, error) {
 	var pins []int
 	var samples []devices.TraceSample

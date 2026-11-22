@@ -147,6 +147,7 @@ func main() {
 		tracePins   = flag.String("trace-pins", "", "comma separated GPIO numbers to log")
 		logicPins   = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
 		logicOut    = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
+		vcdOut      = flag.String("vcd", "", "write the logic capture as an IEEE 1364 VCD")
 		logicUART   = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
 		logicI2C    = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
 		logicSPI    = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
@@ -257,6 +258,8 @@ func main() {
 		exit(2)
 	}
 	logicEnabled := *logicPins != "" || *logicOut != "" || *logicUART != "" || *logicI2C != "" || *logicSPI != ""
+	writeTrace := logicEnabled
+	logicEnabled = logicEnabled || *vcdOut != ""
 	logicLabel := *logicBoard
 	if logicLabel == "" {
 		if *path != "" {
@@ -271,6 +274,10 @@ func main() {
 		logicCap, logicErr = newLogicCapture(*logicPins, *logicUART, *logicI2C, *logicSPI, *logicRate, *logicDepth, logicLabel)
 		if logicErr != nil {
 			fmt.Fprintln(os.Stderr, "logic capture:", logicErr)
+			exit(2)
+		}
+		if *vcdOut != "" && len(logicCap.pins) == 0 {
+			fmt.Fprintln(os.Stderr, "-vcd needs -logic-pins or a -logic-uart/-logic-i2c/-logic-spi pin set")
 			exit(2)
 		}
 	}
@@ -1200,15 +1207,25 @@ func main() {
 	logicPath := ""
 	logicSamples := 0
 	if logicCap != nil {
-		var logicErr error
-		logicPath, logicErr = logicCap.write(*logicOut)
-		if logicErr != nil {
-			log.Error("logic trace", slog.String("path", logicPath), slog.Any("err", logicErr))
-		} else {
-			logicSamples = logicCap.samples
-			log.Info("logic trace saved",
-				slog.String("path", logicPath),
-				slog.Int("samples", logicSamples))
+		if writeTrace {
+			var logicErr error
+			logicPath, logicErr = logicCap.write(*logicOut)
+			if logicErr != nil {
+				log.Error("logic trace", slog.String("path", logicPath), slog.Any("err", logicErr))
+			} else {
+				logicSamples = logicCap.samples
+				log.Info("logic trace saved",
+					slog.String("path", logicPath),
+					slog.Int("samples", logicSamples))
+			}
+		}
+		if *vcdOut != "" {
+			vcdPath, err := logicCap.writeVCD(*vcdOut)
+			if err != nil {
+				log.Error("vcd", slog.String("path", vcdPath), slog.Any("err", err))
+			} else {
+				log.Info("vcd saved", slog.String("path", vcdPath))
+			}
 		}
 	}
 	wall := time.Since(start)
