@@ -182,7 +182,7 @@ func main() {
 		psramMB    = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
 		psramLat   = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
 		psramCS    = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
-		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
 		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
 		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
@@ -407,7 +407,7 @@ func main() {
 	var lcd *devices.ST7789
 	var lcdSPI = 1
 	if *lcdFlag || (*lcdPNG != "" && !*touchLCD2) {
-		lcd = devices.NewST7789(c, 9, 8, 12)
+		lcd = devices.NewST7789(c, 9, 8, 12, 135, 240)
 		lcdSPI = 1
 		if os.Getenv("RP2350SIM_LCD_LOG") != "" {
 			lcd.Logger = debugLog()
@@ -423,7 +423,7 @@ func main() {
 			log.Error("-lcd and -touch-lcd2 are mutually exclusive")
 			exit(2)
 		}
-		lcd = devices.NewST7789(c, 17, 16, 20)
+		lcd = devices.NewST7789(c, 17, 16, 20, 240, 320)
 		lcdSPI = 0
 		if os.Getenv("RP2350SIM_LCD_LOG") != "" {
 			lcd.Logger = debugLog()
@@ -741,7 +741,8 @@ func main() {
 	}
 
 	var bp uint64
-	if *bpStr != "" {
+	bpSet := *bpStr != ""
+	if bpSet {
 		addr, err := resolveAddress(*bpStr, dbgInfo)
 		if err != nil {
 			log.Error("breakpoint", slog.Any("err", err))
@@ -750,7 +751,8 @@ func main() {
 		bp = uint64(addr)
 	}
 	var bp2 uint64
-	if *bp2Str != "" {
+	bp2Set := *bp2Str != ""
+	if bp2Set {
 		addr, err := resolveAddress(*bp2Str, dbgInfo)
 		if err != nil {
 			log.Error("secondary breakpoint", slog.Any("err", err))
@@ -761,12 +763,16 @@ func main() {
 	var ring []string
 	zeros := 0
 	bpHits := 0
-	if *traceLast || bp != 0 || bp2 != 0 {
+	if *traceLast || bpSet || bp2Set || *regStr != "" || *stopOnMMIO {
 		prevTrace := c.CPU0.TracePC
 		watchReg := -1
 		lastReg := uint32(0)
 		if *regStr != "" {
-			n, _ := strconv.Atoi(*regStr)
+			n, err := strconv.Atoi(*regStr)
+			if err != nil || n < 0 || n > 15 {
+				log.Error("-watch-reg needs a register number 0..15", slog.String("value", *regStr))
+				exit(2)
+			}
 			watchReg = n
 		}
 		maxAddr := uint32(0)
@@ -801,11 +807,11 @@ func main() {
 					lastReg = v
 				}
 			}
-			if bp2 != 0 && uint64(pc) == bp2 {
+			if bp2Set && uint64(pc) == bp2 {
 				attrs := append([]any{slog.String("pc", hex(pc))}, regAttrs(cpu)...)
 				log.Info("breakpoint", attrs...)
 			}
-			if bp != 0 && uint64(pc) == bp {
+			if bpSet && uint64(pc) == bp {
 				if *msgFlag {
 					p, n := c.Read32(cpu.R[1]), c.Read32(cpu.R[1]+4)
 					b := make([]byte, 0, n)
@@ -831,7 +837,7 @@ func main() {
 				}
 				return
 			}
-			if !*traceLast {
+			if !*traceLast && !*stopOnMMIO {
 				return
 			}
 			if hw1 == 0 {
@@ -936,6 +942,8 @@ func main() {
 		c.SendUART(0, data)
 		usbPending = append(usbPending, data...)
 		if len(usbPending) > 8192 {
+			dropped := len(usbPending) - 4096
+			log.Warn("USB console input queue full, dropping oldest bytes", slog.Int("dropped", dropped))
 			usbPending = append([]byte(nil), usbPending[len(usbPending)-4096:]...)
 		}
 		flushUSB()
@@ -1052,7 +1060,28 @@ func main() {
 		}
 		flushUSB()
 	} else {
+		if len(inputData) > 0 {
+			warm := min(inputCycles, uint64(*sampleN)*10_000_000)
+			if warm > 0 {
+				c.Run(warm)
+				flushUSB()
+				if *stdinFlag {
+					drainStdin()
+				}
+			}
+			queueConsole(inputData)
+		}
 		for i := 0; i < *sampleN; i++ {
+			if c.CPU0.Halted || c.CPU1.Halted || c.Halted {
+				break
+			}
+			if *stopExpect && expects.all {
+				break
+			}
+			if *wallLimit > 0 && time.Since(start) > *wallLimit {
+				timedOut = true
+				break
+			}
 			c.Run(10_000_000)
 			netLog.report(w5500, w6300, ch9120)
 			if b := c.BootCount(); b != lastBoot {
@@ -1068,8 +1097,9 @@ func main() {
 				slog.String("pc", hex(c.CPU0.R[15])), slog.String("lr", hex(c.CPU0.R[14])),
 				slog.String("sp", hex(c.CPU0.R[13])),
 				slog.String("r0", hex(c.CPU0.R[0])), slog.String("r1", hex(c.CPU0.R[1])))
-			if c.CPU0.Halted || c.Halted {
-				break
+			flushUSB()
+			if *stdinFlag {
+				drainStdin()
 			}
 		}
 	}
@@ -1123,7 +1153,9 @@ func main() {
 			slog.Uint64("irqs", c.IRQCount),
 			slog.Uint64("sio_pushes", c.SIOPushes()),
 			slog.Uint64("core1_launches", c.Core1Launches()))
-		log.Info("runqueue",
+		// These are TinyGo task-scheduler internals for the pico2 runtime; the
+		// absolute addresses are version-specific and meaningless for C images.
+		log.Debug("runqueue",
 			slog.String("head", hex(c.Read32(0x200017c0))),
 			slog.String("tail", hex(c.Read32(0x200017c4))),
 			slog.String("sleep", hex(c.Read32(0x2000179c))),

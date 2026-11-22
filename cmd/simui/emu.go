@@ -116,19 +116,24 @@ type OTPState struct {
 
 // Emu owns the emulated machine and steps it in the background.
 type Emu struct {
-	mu         sync.Mutex
-	chip       *rp2350.Chip
-	lcd        *devices.ST7789
-	img        *firmware.Image
-	debugInfo  *debug.Info
-	debugger   *rp2350.Debugger
-	fwPath     string
-	flashPath  string
-	lastBoots  uint64
-	errText    string
-	running    bool
-	console    []byte
-	consolePos int64
+	mu        sync.Mutex
+	chip      *rp2350.Chip
+	lcd       *devices.ST7789
+	img       *firmware.Image
+	debugInfo *debug.Info
+	debugger  *rp2350.Debugger
+	fwPath    string
+	flashPath string
+	lastBoots uint64
+	// bootCount and flashWrites are cumulative across UI resets, which
+	// recreate the chip and therefore restart its own counters.
+	bootCount   uint64
+	flashWrites uint64
+	lastChipFW  uint64
+	errText     string
+	running     bool
+	console     []byte
+	consolePos  int64
 
 	lcdGen   int
 	lcdFrame *image.RGBA
@@ -478,7 +483,13 @@ func (e *Emu) resetChip() {
 		}
 
 		if d := b.LCD; d != nil {
-			e.lcd = devices.NewST7789(c, d.CS, d.DC, d.RST)
+			// boards.yaml carries the logical (landscape) size; the panel's
+			// native address space is the swap for a 90/270 rotation.
+			w, h := d.Width, d.Height
+			if d.Rotation == 90 || d.Rotation == 270 {
+				w, h = h, w
+			}
+			e.lcd = devices.NewST7789(c, d.CS, d.DC, d.RST, w, h)
 			e.blPin = d.BacklightPin()
 			attachSPI(d.SPI, d.CS, e.lcd.Transfer)
 		}
@@ -840,6 +851,9 @@ func (e *Emu) loadLocked() {
 	}
 	e.chip.Boot()
 	e.lastBoots = e.chip.BootCount()
+	e.bootCount = e.lastBoots
+	e.flashWrites = 0
+	e.lastChipFW = e.chip.FlashWrites()
 	e.console = e.console[:0]
 	e.consolePos = 0
 }
@@ -850,14 +864,33 @@ func (e *Emu) rebootLocked() {
 	if e.chip != nil {
 		flash = e.chip.FlashCopy()
 	}
+	e.syncFlashStatsLocked()
 	e.resetChip()
 	if flash != nil {
 		copy(e.chip.Flash, flash)
 	}
 	e.chip.Boot()
 	e.lastBoots = e.chip.BootCount()
+	e.bootCount++
+	e.lastChipFW = e.chip.FlashWrites()
 	e.console = e.console[:0]
 	e.consolePos = 0
+}
+
+// syncFlashStatsLocked folds the current chip's flash-write count into the
+// cumulative UI counter. A new chip starts at zero, so a lower value is a
+// reset rather than a negative delta.
+func (e *Emu) syncFlashStatsLocked() {
+	if e.chip == nil {
+		return
+	}
+	n := e.chip.FlashWrites()
+	if n >= e.lastChipFW {
+		e.flashWrites += n - e.lastChipFW
+	} else {
+		e.flashWrites += n
+	}
+	e.lastChipFW = n
 }
 
 // SetFlashPath sets the raw flash backing file used to persist self-updates.
@@ -924,6 +957,9 @@ func (e *Emu) LoadFlash(path string) error {
 	e.chip.LoadFlashImage(data)
 	e.chip.Boot()
 	e.lastBoots = e.chip.BootCount()
+	e.bootCount = e.lastBoots
+	e.flashWrites = 0
+	e.lastChipFW = e.chip.FlashWrites()
 	e.console = e.console[:0]
 	e.consolePos = 0
 	e.running = true
@@ -1023,6 +1059,11 @@ func (e *Emu) loop() {
 			shirei.RequestNextFrame()
 		}
 		if boots != e.lastBoots {
+			if boots > e.lastBoots {
+				e.bootCount += boots - e.lastBoots
+			} else {
+				e.bootCount++
+			}
 			e.lastBoots = boots
 			e.SaveFlash()
 		}
@@ -1041,8 +1082,9 @@ func (e *Emu) Snapshot() MachineState {
 	s.Running = e.running
 	s.Firmware = e.fwPath
 	s.FlashPath = e.flashPath
-	s.Boots = e.chip.BootCount()
-	s.FlashWrites = e.chip.FlashWrites()
+	e.syncFlashStatsLocked()
+	s.Boots = e.bootCount
+	s.FlashWrites = e.flashWrites
 	s.BootEntry = e.chip.BootEntry()
 	s.ResetReason = e.chip.LastResetReason()
 	s.PSRAMBytes = e.chip.PSRAMSize()

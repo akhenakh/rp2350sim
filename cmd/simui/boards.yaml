@@ -66,6 +66,7 @@ boards:
       rst: 12
       width: 240
       height: 135
+      rotation: 90
 
   - id: pico2-ws2812
     name: RP2350 + WS2812B strip
@@ -89,6 +90,7 @@ boards:
       rst: 12
       width: 240
       height: 135
+      rotation: 90
       backlight: 25
     sd:
       spi: 0

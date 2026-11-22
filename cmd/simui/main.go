@@ -1441,7 +1441,7 @@ func saveLogicTrace(pins []int, samples []devices.TraceSample, interval uint64) 
 	if l := selectedBoard.Logic; l != nil {
 		if d := l.UART; d != nil {
 			text := "no frames"
-			if ev := uartTXEvents(d.Bus); len(ev) > 0 {
+			if ev := uartTXEvents(d.Bus, 0); len(ev) > 0 {
 				text = uartEventText(ev)
 			} else if ch := channelOf(pins, d.TX); ch >= 0 && interval > 0 {
 				text = uartFrameText(devices.DecodeUART(samples, ch, float64(d.Baud), 150e6/float64(interval)), samples)
@@ -1470,7 +1470,7 @@ func saveLogicTrace(pins []int, samples []devices.TraceSample, interval uint64) 
 		}
 		if d := l.SPI; d != nil {
 			text := "no frames"
-			if ev := spiBusEvents(d.Bus); len(ev) > 0 {
+			if ev := spiBusEvents(d.Bus, 0); len(ev) > 0 {
 				text = spiEventText(ev)
 			} else {
 				sck, mosi := channelOf(pins, d.SCK), channelOf(pins, d.MOSI)
@@ -1624,7 +1624,7 @@ func logicUART(pins []int, samples []devices.TraceSample, interval uint64, d *UA
 	var wavePins []int
 	var waveSamples []devices.TraceSample
 	decoded := ""
-	if events := uartTXEvents(d.Bus); len(events) > 0 {
+	if events := uartTXEvents(d.Bus, 16); len(events) > 0 {
 		decoded = uartEventText(events)
 		wavePins, waveSamples = uartWave(events, d.Baud, d.TX)
 		lines = []logicLine{{Pin: d.TX, Label: "TX", Color: paletteAt(0)}}
@@ -1639,7 +1639,7 @@ func logicUART(pins []int, samples []devices.TraceSample, interval uint64, d *UA
 	logicSection("UART", fmt.Sprintf("%d baud · TX GP%d", d.Baud, d.TX), wavePins, waveSamples, lines, decoded)
 }
 
-func uartTXEvents(bus int) []UARTEvent {
+func uartTXEvents(bus, limit int) []UARTEvent {
 	all := emu.UARTEvents()
 	var out []UARTEvent
 	for _, ev := range all {
@@ -1647,8 +1647,8 @@ func uartTXEvents(bus int) []UARTEvent {
 			out = append(out, ev)
 		}
 	}
-	if len(out) > 16 {
-		out = out[len(out)-16:]
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
 	}
 	return out
 }
@@ -1818,7 +1818,7 @@ func logicSPI(pins []int, samples []devices.TraceSample, d *SPIDevice) {
 	var decoded string
 	var waveSamples []devices.TraceSample
 	var wavePins []int
-	events := spiBusEvents(d.Bus)
+	events := spiBusEvents(d.Bus, 8)
 	if len(events) > 0 {
 		decoded = spiEventText(events)
 		wavePins, waveSamples = spiWave(events, lines)
@@ -1833,7 +1833,7 @@ func logicSPI(pins []int, samples []devices.TraceSample, d *SPIDevice) {
 	logicSection("SPI", fmt.Sprintf("SCK GP%d · MOSI GP%d", d.SCK, d.MOSI), wavePins, waveSamples, lines, decoded)
 }
 
-func spiBusEvents(bus int) []SPIEvent {
+func spiBusEvents(bus, limit int) []SPIEvent {
 	all := emu.SPIEvents()
 	var out []SPIEvent
 	for _, ev := range all {
@@ -1841,8 +1841,8 @@ func spiBusEvents(bus int) []SPIEvent {
 			out = append(out, ev)
 		}
 	}
-	if len(out) > 8 {
-		out = out[len(out)-8:]
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
 	}
 	return out
 }
