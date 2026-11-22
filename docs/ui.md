@@ -87,6 +87,8 @@ addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
 
 | key | fields | tab |
 |---|---|---|
+| `package` | `qfn60` (RP2350A, 30 GPIOs) or `qfn80` (RP2350B, 48 GPIOs) | Board, GPIO |
+| `hstx` | `true` enables the DVI tab (HSTX command-stream decoder) | DVI |
 | `lcd` | `spi`, `cs`, `dc`, `rst`, `width`, `height`, `rotation`, `backlight` | LCD |
 | `touch` | `bus`, `addr`, `int`, `rst`, `width`, `height`, `rotation` | LCD, Sensors |
 | `imu` | `bus`, `addr`, `int`, `int2` | Sensors |
@@ -188,6 +190,17 @@ coordinate; the UI maps the displayed (rotated) frame back through the LCD
 `rotation`. Release injects a lift.
 
 ![LCD tab](images/lcd.png)
+
+### DVI
+
+Shown when the board declares `hstx: true`. It displays the last complete
+frame decoded from the HSTX command expander's RAW/TMDS stream (the Pico DVI
+sock wiring on GP12-19) and offers **Save PNG**. Frames are captured at the
+active width; the height is inferred from the common DVI modes (640x480,
+320x240, 800x600, 1280x720). `--tab dvi --run SECONDS --png out.png` renders
+one headlessly.
+
+![DVI tab](images/dvi.png)
 
 ### Sensors
 

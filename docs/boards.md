@@ -184,8 +184,45 @@ project.
 - Use `-ws2812 GPIO` or the `pico2-ws2812` UI board; the last frame is decoded
   into colours. Reference firmware: `firmware/ws2812`.
 
-## Audio and MIDI
+## RP2350B (QFN-80)
 
+- `-rp2350b`, or `package: qfn80` in `boards.yaml`, selects the QFN-80 variant:
+  `SYSINFO.PACKAGE_SEL` reads 0 and the Board tab lists 48 GPIOs. The default
+  is the RP2350A QFN-60 with 30 GPIOs.
+- PIO's block-wide `GPIOBASE` register selects a 0-31 or 16-47 pin window, so
+  programs that need GP32-47 use `pio_set_gpio_base(pio, 16)`. The UI boards
+  `pico2b` and the `-rp2350b` flag expose the extra pins in the scope and GPIO
+  table.
+
+## HSTX and DVI
+
+The RP2350 HSTX block is modelled at `0x400C0000` (control) and `0x50600000`
+(FIFO). The model decodes the command expander's RAW/TMDS command stream into
+pixels and renders complete DVI frames; it does not model the serial TMDS
+output or bit timing.
+
+- `-dvi-png PATH` writes the last frame headlessly. The **DVI** tab shows it
+  live and offers **Save PNG**.
+- The `pico2-dvi` UI board enables the tab. The reference firmware is the
+  stock `pico-examples` `hstx/dvi_out_hstx_encoder` (640x480 RGB332 on
+  GP12-19); `task picoexamples:build` builds it and the smoke suite asserts a
+  640x480 frame.
+- Frame height is inferred from the active width (640→480, 320→240, 800→600,
+  1280→720); HSTX itself carries no vertical timing.
+
+## TRNG, SHA-256 and the AON timer
+
+- TRNG at `0x400F0000`: deterministic splitmix64 EHR words, valid/busy flags
+  and interrupt clear. `pico_rand` and the `system/rand` example pass their
+  distribution checks.
+- SHA-256 at `0x400F8000`: START/BSWAP, WDATA (word/byte/halfword writes,
+  including DMA_SIZE_8), SUM0-7. The pico-examples `sha/sha256` vector and
+  1 MB NIST test pass with and without DMA. DREQ pacing is still absent.
+- POWMAN at `0x40100000`: the AON 1 kHz millisecond timer, set/read time,
+  alarm and timer IRQ (45). `firmware/c/aontimer` exercises `pico_aon_timer`;
+  deep-sleep power state sequencing is not modelled.
+
+## Audio and MIDI
 Both are host-side taps on GPIO or USB; no board wiring is needed beyond the
 pins the firmware drives.
 

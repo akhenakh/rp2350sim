@@ -176,6 +176,8 @@ every UI board to its flags and demo firmware. The flags are:
 | `-psram MIB` | attach PSRAM on QMI CS1 (1, 2, 4, 8 or 16 MiB; 0 disables) |
 | `-psram-latency CYCLES` | extra virtual time per PSRAM access (default 4) |
 | `-psram-cs GPIO` | QMI CS1 GPIO reported to firmware (default 8) |
+| `-rp2350b` | model the RP2350B QFN-80 package (48 GPIOs, PACKAGE_SEL=0) |
+| `-dvi-png PATH` | write the last HSTX/DVI frame to a PNG |
 
 `-sd-dir` and `-sd-image` are mutually exclusive. `-eth` and `-w6300` are
 mutually exclusive, as are `-lcd` and `-touch-lcd2`.
@@ -210,9 +212,14 @@ The runner logs each reset (`reason`, `boot`, `entry`) and `flash saved`. The
 summary JSON includes `flash_path`, `boots`, `flash_writes`, `reset_reason` and
 `boot_entry`. `task c:ota` runs the single-slot demo in `firmware/c/ota`.
 
-This models a **single flat slot**. A/B slots, rollback and secure-boot
-validation are not implemented; the loader still requires a vector table at
-`0x10000000`.
+This models a **single flat slot** by default. An A/B partition table is also
+recognised at the start of a raw flash image (`-flash`): magic `0x50543235`,
+two to sixteen 16-byte slot entries with offset/size/flags/version. Boot picks
+the highest-version executable slot (or the table's `active` entry), maps its
+storage offset to the `0x10000000` XIP window, and translates flash reads
+accordingly. `rom_reboot(REBOOT2_FLAG_REBOOT_TYPE_FLASH_UPDATE)` with a base
+inside another slot marks it preferred for the next boot. Secure boot, rollback
+policy and the picobin/picotool signed table are not implemented.
 
 ## PSRAM
 

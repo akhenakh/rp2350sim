@@ -27,6 +27,7 @@ task c:build      # cmake + ninja, PICO_BOARD=pico2
 task c:hello      # build and assert "hello c done"
 task c:usbhello   # TinyUSB CDC stdio ("hello usb done")
 task c:usbecho    # TinyUSB CDC input echo
+task c:aontimer   # POWMAN AON timer alarm
 task c:blinky     # build and trace GP25
 task c:float      # single-precision FPU demo
 task c:multicore  # core 1 launch through the SIO FIFO
@@ -68,7 +69,13 @@ toggling. `task c:usbhello` asserts the output and `task c:usbecho` feeds
 console input back through the CDC OUT endpoint.
 
 `pico_time` works: `sleep_ms`/`sleep_us`, `time_us_32/64`, alarms and the
-default alarm pool are driven by the emulated 1 MHz timer. `pico_multicore`
+default alarm pool are driven by the emulated 1 MHz timer. `pico_aon_timer`
+uses the emulated POWMAN millisecond counter (`task c:aontimer`).
+
+The hardware crypto blocks are functional: the stock `sha/sha256` example
+passes its vector and 1 MB NIST tests with and without DMA, and `system/rand`
+passes its distribution checks through the TRNG. The `hstx/dvi_out_hstx_encoder`
+example renders a 640x480 frame (`-dvi-png`, or the UI DVI tab). `pico_multicore`
 works: `multicore_launch_core1` uses the same SIO FIFO handshake as TinyGo.
 
 ## What runs today
