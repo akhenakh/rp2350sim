@@ -74,10 +74,7 @@ func midiPanel(snap MachineState) {
 		// Keyboard: a real piano layout spanning the full panel width. Held
 		// UI notes and notes the firmware is playing both light up.
 		base := midiOctave * 12
-		hi := base + 23
-		if hi > 127 {
-			hi = 127
-		}
+		hi := min(base+23, 127)
 		active := emu.SoundingNotes()
 		for note := range midiHeld {
 			active[note] = true
@@ -101,7 +98,7 @@ func panicMIDI() {
 		sendMIDI(midi.Message{Status: 0x80 | byte(midiChannel), Data: [2]byte{byte(note), 0}, Len: 3})
 	}
 	midiHeld = map[int]bool{}
-	for ch := 0; ch < 16; ch++ {
+	for ch := range 16 {
 		sendMIDI(midi.Message{Status: 0xB0 | byte(ch), Data: [2]byte{123, 0}, Len: 3})
 	}
 }

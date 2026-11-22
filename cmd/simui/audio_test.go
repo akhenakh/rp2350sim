@@ -44,7 +44,7 @@ func TestSafePlaybackWAVRemovesDCAndAttenuates(t *testing.T) {
 func TestSafePlaybackWAVHeadroom(t *testing.T) {
 	in := pcmWAV(0, 32767, -32768, 32767)
 	out := safePlaybackWAV(in)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		v := int(binary.LittleEndian.Uint16(out[44+i*2:]))
 		if v&0x8000 != 0 {
 			v -= 65536

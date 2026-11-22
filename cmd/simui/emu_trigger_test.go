@@ -18,7 +18,7 @@ func TestScopeTriggerRise(t *testing.T) {
 	bit := uint64(1) << pin
 	c.Pins.ExtValid |= bit
 
-	for i := 0; i < 9000; i++ {
+	for i := range 9000 {
 		if i%100 >= 50 {
 			c.Pins.ExtLevel |= bit
 		} else {

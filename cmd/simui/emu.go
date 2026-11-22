@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -418,8 +419,8 @@ func (e *Emu) checkScopeTriggerLocked() {
 	if e.frozenScope.found {
 		pins, samples := e.scope.Snapshot()
 		post := 0
-		for i := len(samples) - 1; i >= 0; i-- {
-			if samples[i].T <= e.frozenScope.trigT {
+		for _, sample := range slices.Backward(samples) {
+			if sample.T <= e.frozenScope.trigT {
 				break
 			}
 			post++

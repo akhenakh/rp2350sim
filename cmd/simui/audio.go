@@ -122,7 +122,7 @@ func audioImage(samples []int16, w, h int) *image.RGBA {
 		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = bg.R, bg.G, bg.B, 0xff
 	}
 	mid := h / 2
-	for x := 0; x < w; x++ {
+	for x := range w {
 		img.Set(x, mid, color.RGBA{0x30, 0x2a, 0x44, 0xff})
 	}
 	if len(samples) == 0 || w < 2 {
@@ -130,13 +130,10 @@ func audioImage(samples []int16, w, h int) *image.RGBA {
 	}
 	line := color.RGBA{0x6e, 0xe7, 0xb7, 0xff}
 	prev := mid
-	for x := 0; x < w; x++ {
+	for x := range w {
 		idx := int(float64(x) * float64(len(samples)-1) / float64(w-1))
 		v := int(float64(samples[idx]) / 32768 * float64(mid-8))
-		y := mid - v
-		if y < 1 {
-			y = 1
-		}
+		y := max(mid-v, 1)
 		if y >= h-1 {
 			y = h - 2
 		}
