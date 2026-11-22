@@ -9,6 +9,11 @@ type regBlock struct {
 	readFn func(c *Chip, off uint32) (uint32, bool)
 	// writeFn is called after the register file has been updated.
 	writeFn func(c *Chip, off uint32, v uint32)
+	// writeSizeFn handles a sub-word write before the usual read-merge-write.
+	// It receives the absolute address and the raw value; returning true
+	// consumes the access. Used by write-only registers whose byte order
+	// depends on the transfer size (SHA-256 WDATA).
+	writeSizeFn func(c *Chip, addr uint32, v uint32, size int) bool
 	// clearFn, when set, handles a write through the +0x3000 CLR alias. A
 	// W1C register needs the written mask rather than the resulting value, so
 	// such blocks bypass the default read-modify-write.
@@ -150,8 +155,8 @@ func newSysInfo(c *Chip) *regBlock {
 		switch off {
 		case 0x00: // CHIP_ID: revision A3, part RP4, manufacturer 0x926
 			return 0x3000_4927, true
-		case 0x04: // PACKAGE_SEL: 1 = QFN60 (RP2350A)
-			return 1, true
+		case 0x04: // PACKAGE_SEL: 1 = QFN60 (RP2350A), 0 = QFN80 (RP2350B)
+			return c.packageSel, true
 		case 0x08: // PLATFORM: ASIC, not FPGA/SIM
 			return 0, true
 		}

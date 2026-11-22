@@ -567,12 +567,19 @@ func (s *pioSM) applySide(instr uint16) int {
 
 // ---- pin access ----
 
+// gpioBase is the block-wide PIO GPIO base (PIO_GPIOBASE, values 0 or 16).
+// On RP2350B it shifts PIO's 32-pin window to GPIO 16..47.
+func (p *pioBlock) gpioBase() int { return int(p.block.regs[0x168/4] & 0x10) }
+
+// pinAt maps a PIO pin offset to a system GPIO using GPIOBASE.
+func (p *pioBlock) pinAt(offset int) int { return p.gpioBase() + (offset & 31) }
+
 func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 	if count <= 0 {
 		return
 	}
 	for i := range count {
-		pin := (base + i) & 31
+		pin := s.p.pinAt(base + i)
 		bit := uint32(1) << uint(pin)
 		val := v&(1<<uint(i)) != 0
 		if dirs {
@@ -602,7 +609,7 @@ func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 func (s *pioSM) readPins(base int) uint32 {
 	var v uint32
 	for i := range 32 {
-		if s.p.chip.Pins.Level((base + i) & 31) {
+		if s.p.chip.Pins.Level(s.p.pinAt(base + i)) {
 			v |= 1 << uint(i)
 		}
 	}
@@ -662,7 +669,7 @@ func (s *pioSM) execJmp(instr uint16) {
 	case 5:
 		jump = s.x != s.y
 	case 6:
-		jump = s.p.chip.Pins.Level(int((s.execctrl >> 24) & 0x1F))
+		jump = s.p.chip.Pins.Level(s.p.pinAt(int((s.execctrl >> 24) & 0x1F)))
 	case 7:
 		jump = s.outCount < s.pullThresh()
 	}
@@ -677,10 +684,10 @@ func (s *pioSM) execWait(instr uint16) bool {
 	src := int(instr>>5) & 3
 	index := int(instr & 0x1F)
 	switch src {
-	case 0: // GPIO, absolute
-		return s.p.chip.Pins.Level(index) == pol
+	case 0: // GPIO, relative to GPIOBASE
+		return s.p.chip.Pins.Level(s.p.pinAt(index)) == pol
 	case 1: // PIN, relative to IN_BASE
-		pin := (int((s.pinctrl>>15)&0x1F) + index) & 31
+		pin := s.p.pinAt(int((s.pinctrl>>15)&0x1F) + index)
 		return s.p.chip.Pins.Level(pin) == pol
 	case 2: // IRQ
 		mode := (index >> 3) & 3

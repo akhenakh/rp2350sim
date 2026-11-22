@@ -290,10 +290,26 @@ func (b *bootROM) stubGetSysInfo(c *Chip, cpu *m33.CPU) {
 }
 
 func (b *bootROM) stubReboot(c *Chip, cpu *m33.CPU) {
-	flags, delayMS := cpu.R[0], cpu.R[1]
-	if flags != 0 {
-		c.Logger.Debug("bootrom reboot type not modelled; resetting to flash",
-			slog.String("flags", fmtHex(flags)))
+	flags, delayMS, p0 := cpu.R[0], cpu.R[1], cpu.R[2]
+	kind := flags & 0xF
+	switch kind {
+	case 4: // REBOOT2_FLAG_REBOOT_TYPE_FLASH_UPDATE: p0 = updated region
+		if table, _ := c.Partition(); table != nil {
+			off := p0 - FlashBase
+			if idx := table.Find(off); idx >= 0 {
+				c.PreferPartition(idx)
+				c.Logger.Info("bootrom reboot into partition",
+					slog.Int("partition", idx), slog.String("update_base", fmtHex(p0)))
+			}
+		}
+	case 0xD: // REBOOT2_FLAG_REBOOT_TYPE_PC_SP: p0 = PC, p1 = SP
+		c.Logger.Warn("bootrom PC/SP reboot requested (not modelled)",
+			slog.String("pc", fmtHex(p0)), slog.String("sp", fmtHex(cpu.R[3])))
+	default:
+		if flags != 0 {
+			c.Logger.Debug("bootrom reboot type not modelled; resetting to flash",
+				slog.String("flags", fmtHex(flags)))
+		}
 	}
 	c.Logger.Debug("bootrom reboot", slog.Uint64("delay_ms", uint64(delayMS)))
 	c.requestReset("bootrom", uint64(delayMS)*cyclesPerMillisecond)
@@ -419,12 +435,13 @@ func (b *bootROM) stubFlashProgram(c *Chip, cpu *m33.CPU) {
 func (b *bootROM) stubFlashOp(c *Chip, cpu *m33.CPU) {
 	flags, addr, size, buf := cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3]
 	op := (flags >> 16) & 0x7
-	if flags&1 != 0 { // runtime address
-		if addr < FlashBase || addr > FlashBase+uint32(len(c.Flash)) {
+	if flags&1 != 0 { // runtime address, translated through the boot partition
+		off, ok := c.flashIndex(addr, 0)
+		if !ok {
 			cpu.R[0] = bootromErrInvalidAddr
 			return
 		}
-		addr -= FlashBase
+		addr = off
 	}
 	if addr > uint32(len(c.Flash)) || size > uint32(len(c.Flash))-addr {
 		cpu.R[0] = bootromErrInvalidAddr

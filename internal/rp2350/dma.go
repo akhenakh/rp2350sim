@@ -14,6 +14,9 @@ type dmaBlock struct {
 	// not scan all sixteen channels.
 	active uint16
 	intr   uint32 // INTR, write-1-to-clear
+	// chainPending latches a chain trigger whose target had a zero count;
+	// software reloading TRANS_COUNT starts it, matching the hardware.
+	chainPending uint16
 }
 
 type dmaChannel struct {
@@ -119,6 +122,18 @@ func newDMA(c *Chip) *dmaBlock {
 			d.trigger(int(off/0x40), v)
 			return
 		}
+		if off < 0x400 && off%0x40 == 0x08 { // TRANS_COUNT reload
+			d.checkChain(int(off / 0x40))
+			return
+		}
+		if off == 0x450 { // MULTI_CHAN_TRIGGER
+			for ch := range 16 {
+				if v&(1<<uint(ch)) != 0 {
+					d.start(ch)
+				}
+			}
+			return
+		}
 		if irq, kind, ok := dmaIntReg(off); ok {
 			switch kind {
 			case 0: // INTR write-1-to-clear
@@ -177,6 +192,7 @@ func (d *dmaBlock) reset() {
 	d.ch = [16]dmaChannel{}
 	d.active = 0
 	d.intr = 0
+	d.chainPending = 0
 }
 
 func (d *dmaBlock) start(ch int) {
@@ -287,6 +303,36 @@ func (d *dmaBlock) complete(n int) {
 		d.intr |= 1 << uint(n)
 		d.syncIRQ()
 	}
+	// A completed channel may trigger another channel (CHAIN_TO). The target
+	// was configured but not started, which is how the DVI example ping-pongs
+	// command lists and pixel buffers.
+	target := int((ch.ctrl >> 13) & 0xF)
+	if target != n && target < 16 {
+		// A chained trigger starts the target even though its EN bit was
+		// cleared when it completed; re-enable it for the new transfer. A
+		// zero count means software has not reloaded it yet; chaining now
+		// would immediately complete and recurse.
+		if d.block.regs[uint32(target*0x40)/4+2] != 0 {
+			v := d.block.regs[uint32(target*0x40)/4+3] | dmaCtrlEN
+			d.begin(target, v)
+		} else {
+			d.chainPending |= 1 << uint(target)
+		}
+	}
+}
+
+// checkChain starts a channel whose chain trigger arrived before software
+// reloaded its transfer count.
+func (d *dmaBlock) checkChain(ch int) {
+	if ch < 0 || ch >= 16 || d.chainPending&(1<<uint(ch)) == 0 {
+		return
+	}
+	base := uint32(ch * 0x40)
+	if d.block.regs[base/4+2] == 0 {
+		return
+	}
+	d.chainPending &^= 1 << uint(ch)
+	d.begin(ch, d.block.regs[base/4+3]|dmaCtrlEN)
 }
 
 // syncIRQ maps INTR through the four INTE masks onto the DMA IRQs.

@@ -123,3 +123,23 @@ func TestPIORestartBitsSelfClear(t *testing.T) {
 		t.Fatalf("enable restarted SM0 to wrap target %d, want 24", pc)
 	}
 }
+
+// TestPIOGPIOBase checks PIO_GPIOBASE (0x168): with a base of 16, PIO pin 4
+// drives system GPIO 20, which is how RP2350B programs reach GP32-47.
+func TestPIOGPIOBase(t *testing.T) {
+	c := New()
+	c.Write32(pioBase0+0x168, 0x10)
+	c.Pins.Func[20] = pioFuncSel(0)
+	p := c.pio[0]
+	p.sm[0].writePinRange(4, 1, 1, false)
+	if c.Pins.Out&(1<<20) == 0 {
+		t.Fatal("GPIOBASE=16: PIO pin 4 did not drive GP20")
+	}
+	if c.Pins.Out&(1<<4) != 0 {
+		t.Fatal("GPIOBASE=16: PIO pin 4 drove GP4")
+	}
+	p.sm[0].writePinRange(4, 1, 0, false)
+	if c.Pins.Out&(1<<20) != 0 {
+		t.Fatal("GPIOBASE=16: GP20 did not clear")
+	}
+}

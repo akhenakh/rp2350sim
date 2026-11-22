@@ -80,19 +80,33 @@ type Chip struct {
 
 	// Pin state and per-pin external drive for the board model.
 	Pins *PinState
+	// packageSel is the SYSINFO.PACKAGE_SEL value: 1 for QFN-60 (RP2350A,
+	// 30 GPIOs) and 0 for QFN-80 (RP2350B, 48 GPIOs).
+	packageSel uint32
 
-	io   ioBank
-	sio  sioBlock
-	tmr  [2]timerBlock
-	usb  *usbBlock
-	pwm  *pwmBlock
-	adc  *adcBlock
-	i2c  [2]*i2cBlock
-	pio  [3]*pioBlock
-	uart [2]*uartBlock
-	dma  *dmaBlock
-	otp  *otpBlock
-	wd   *watchdogBlock
+	// Booted flash partition (A/B slots). partSize is 0 for a flat image;
+	// runtime XIP addresses below it are translated by partOffset.
+	partTable          *PartitionTable
+	partOffset         uint32
+	partSize           uint32
+	preferredPartition int
+
+	io     ioBank
+	sio    sioBlock
+	tmr    [2]timerBlock
+	usb    *usbBlock
+	trng   *trngBlock
+	sha    *shaBlock
+	powman *powmanBlock
+	hstx   *hstxBlock
+	pwm    *pwmBlock
+	adc    *adcBlock
+	i2c    [2]*i2cBlock
+	pio    [3]*pioBlock
+	uart   [2]*uartBlock
+	dma    *dmaBlock
+	otp    *otpBlock
+	wd     *watchdogBlock
 	// pioActive has a bit per PIO block with at least one enabled state
 	// machine, so the per-cycle tick skips idle blocks.
 	pioActive uint8
@@ -171,13 +185,15 @@ func New() *Chip {
 		flash[i] = flashErased
 	}
 	c := &Chip{
-		Flash:       flash,
-		SRAM:        make([]byte, SRAMSize),
-		ROM:         make([]byte, ROMSize),
-		Logger:      slog.New(slog.DiscardHandler),
-		Unhandled:   map[uint32]uint32{},
-		byBase:      map[uint32]*regBlock{},
-		resetReason: "power-on",
+		Flash:              flash,
+		SRAM:               make([]byte, SRAMSize),
+		ROM:                make([]byte, ROMSize),
+		Logger:             slog.New(slog.DiscardHandler),
+		Unhandled:          map[uint32]uint32{},
+		byBase:             map[uint32]*regBlock{},
+		resetReason:        "power-on",
+		packageSel:         1, // QFN-60 / RP2350A
+		preferredPartition: -1,
 	}
 	c.rom = installBootROM(c)
 	c.Pins = NewPinState()
@@ -204,6 +220,15 @@ func New() *Chip {
 	c.addRegBlock(c.wd.block)
 	c.addRegBlock(newSysInfo(c))
 	c.addRegBlock(newTBMAN(c))
+	c.trng = newTRNG()
+	c.addRegBlock(c.trng.block)
+	c.sha = newSHA()
+	c.addRegBlock(c.sha.block)
+	c.powman = newPOWMAN()
+	c.addRegBlock(c.powman.block)
+	c.hstx = newHSTX()
+	c.addRegBlock(c.hstx.ctrl)
+	c.addRegBlock(c.hstx.fifo)
 	c.addRegBlock(newROSC(c))
 	c.xipCtrl = newXIPCtrl(c)
 	c.addRegBlock(c.xipCtrl)
@@ -417,6 +442,9 @@ func (c *Chip) tickPeripherals() {
 		if c.wd != nil {
 			c.wd.tick(t)
 		}
+		if c.powman != nil {
+			c.powman.tick(c)
+		}
 		c.nextMicros += cyclesPerMicrosecond
 	}
 	if c.dma != nil && c.dma.busy() {
@@ -452,6 +480,40 @@ func (c *Chip) tickPeripherals() {
 // NVIC delivers interrupts to the cores.
 
 // Reset performs a chip reset and starts both cores from flash.
+// Package identifies the bonded RP2350 variant: QFN-60 is the RP2350A with
+// 30 GPIOs, QFN-80 is the RP2350B with 48.
+type Package int
+
+const (
+	PackageQFN60 Package = iota
+	PackageQFN80
+)
+
+// SetPackage selects the SYSINFO.PACKAGE_SEL value and the bonded GPIO count.
+func (c *Chip) SetPackage(p Package) {
+	if p == PackageQFN80 {
+		c.packageSel = 0
+	} else {
+		c.packageSel = 1
+	}
+}
+
+// Package reports the selected package.
+func (c *Chip) Package() Package {
+	if c.packageSel == 0 {
+		return PackageQFN80
+	}
+	return PackageQFN60
+}
+
+// GPIOs is the number of bonded GPIOs for the selected package.
+func (c *Chip) GPIOs() int {
+	if c.packageSel == 0 {
+		return 48
+	}
+	return 30
+}
+
 func (c *Chip) Reset() {
 	c.Cycles = 0
 	c.lastMicros = 0
@@ -517,6 +579,7 @@ func (c *Chip) applyReset() {
 
 // Boot vectors core 0 at the image in flash.
 func (c *Chip) Boot() {
+	c.selectPartition()
 	c.Reset()
 	c.booted = true
 	c.CPU0.SetVectorTable(FlashBase)
@@ -524,6 +587,68 @@ func (c *Chip) Boot() {
 	c.boots++
 	c.bootSP = c.CPU0.MSP
 	c.bootEntry = c.CPU0.R[15]
+}
+
+// selectPartition parses a partition table at the flash base and maps the
+// chosen slot's storage offset into the 0x10000000 runtime window. A flat
+// image (no magic) keeps offset 0.
+func (c *Chip) selectPartition() {
+	c.partTable = ParsePartitionTable(c.Flash)
+	c.partOffset, c.partSize = 0, 0
+	if c.partTable == nil {
+		return
+	}
+	idx := c.partTable.BootPartition(c.preferredPartition)
+	if idx < 0 {
+		return
+	}
+	c.partOffset = c.partTable.Entries[idx].Offset
+	c.partSize = c.partTable.Entries[idx].Size
+}
+
+// Partition returns the parsed table, if any, and the booted slot index.
+func (c *Chip) Partition() (*PartitionTable, int) {
+	if c.partTable == nil {
+		return nil, -1
+	}
+	for i, p := range c.partTable.Entries {
+		if p.Offset == c.partOffset {
+			return c.partTable, i
+		}
+	}
+	return c.partTable, -1
+}
+
+// PreferPartition asks the next boot to run this slot (used by rom_reboot's
+// flash-update type).
+func (c *Chip) PreferPartition(idx int) { c.preferredPartition = idx }
+
+// flashIndex translates a runtime XIP address in the booted partition to a
+// storage offset in the flash array.
+func (c *Chip) flashIndex(addr uint32, size int) (uint32, bool) {
+	if addr < FlashBase || addr >= FlashBase+FlashSize {
+		return 0, false
+	}
+	off := addr - FlashBase
+	if c.partSize > 0 && off < c.partSize {
+		off += c.partOffset
+	}
+	if off > FlashSize-uint32(size) {
+		return 0, false
+	}
+	return off, true
+}
+
+// flashStorage maps a storage offset into the booted partition window for the
+// XIP alias views.
+func (c *Chip) flashStorage(off uint32, size int) (uint32, bool) {
+	if c.partSize > 0 && off < c.partSize {
+		off += c.partOffset
+	}
+	if off > FlashSize-uint32(size) {
+		return 0, false
+	}
+	return off, true
 }
 
 // BootCount is the number of times the chip has booted, including self-updates.
@@ -583,12 +708,12 @@ func (c *Chip) Read8(addr uint32) uint8 {
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
 		return c.SRAM[addr-SRAMBase]
 	}
-	if addr >= FlashBase && addr < FlashBase+FlashSize {
-		return c.Flash[addr-FlashBase]
+	if off, ok := c.flashIndex(addr, 1); ok {
+		return c.Flash[off]
 	}
 	if off, ok := flashAlias(addr); ok {
-		if off < FlashSize {
-			return c.Flash[off]
+		if o, ok := c.flashStorage(off, 1); ok {
+			return c.Flash[o]
 		}
 		return c.unhandledRead8(addr)
 	}
@@ -619,13 +744,12 @@ func (c *Chip) Read16(addr uint32) uint16 {
 		o := addr - SRAMBase
 		return binary.LittleEndian.Uint16(c.SRAM[o:])
 	}
-	if addr >= FlashBase && addr < FlashBase+FlashSize-1 {
-		o := addr - FlashBase
+	if o, ok := c.flashIndex(addr, 2); ok {
 		return binary.LittleEndian.Uint16(c.Flash[o:])
 	}
 	if off, ok := flashAlias(addr); ok {
-		if off < FlashSize-1 {
-			return binary.LittleEndian.Uint16(c.Flash[off:])
+		if o, ok := c.flashStorage(off, 2); ok {
+			return binary.LittleEndian.Uint16(c.Flash[o:])
 		}
 		return c.unhandledRead16(addr)
 	}
@@ -657,13 +781,12 @@ func (c *Chip) Read32(addr uint32) uint32 {
 		o := addr - SRAMBase
 		return binary.LittleEndian.Uint32(c.SRAM[o:])
 	}
-	if addr >= FlashBase && addr < FlashBase+FlashSize-3 {
-		o := addr - FlashBase
+	if o, ok := c.flashIndex(addr, 4); ok {
 		return binary.LittleEndian.Uint32(c.Flash[o:])
 	}
 	if off, ok := flashAlias(addr); ok {
-		if off < FlashSize-3 {
-			return binary.LittleEndian.Uint32(c.Flash[off:])
+		if o, ok := c.flashStorage(off, 4); ok {
+			return binary.LittleEndian.Uint32(c.Flash[o:])
 		}
 		return c.unhandledRead32(addr)
 	}
@@ -696,7 +819,7 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		c.SRAM[addr-SRAMBase] = v
 		return
 	}
-	if addr >= FlashBase && addr < FlashBase+FlashSize {
+	if _, ok := c.flashIndex(addr, 1); ok {
 		// Flash writes are ignored: XIP is read-only in this model.
 		return
 	}
@@ -741,7 +864,7 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		c.SRAM[o+1] = byte(v >> 8)
 		return
 	}
-	if addr >= FlashBase && addr < FlashBase+FlashSize-1 {
+	if _, ok := c.flashIndex(addr, 2); ok {
 		return
 	}
 	if off, ok := flashAlias(addr); ok {
@@ -786,7 +909,7 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		c.SRAM[o+3] = byte(v >> 24)
 		return
 	}
-	if addr >= FlashBase && addr < FlashBase+FlashSize-3 {
+	if _, ok := c.flashIndex(addr, 4); ok {
 		return
 	}
 	if off, ok := flashAlias(addr); ok {
@@ -951,6 +1074,9 @@ func (c *Chip) writeMMIO8(addr uint32, v uint8) {
 	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {
+			if b.writeSizeFn != nil && b.writeSizeFn(c, addr, uint32(v), 1) {
+				return
+			}
 			off := (addr - b.base) &^ 3
 			shift := (addr & 3) * 8
 			old := b.read(c, off)
@@ -978,6 +1104,9 @@ func (c *Chip) writeMMIO16(addr uint32, v uint16) {
 	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {
+			if b.writeSizeFn != nil && b.writeSizeFn(c, addr, uint32(v), 2) {
+				return
+			}
 			off := (addr - b.base) &^ 3
 			shift := (addr & 2) * 8
 			old := b.read(c, off)
