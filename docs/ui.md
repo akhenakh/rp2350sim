@@ -101,6 +101,11 @@ addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
 `listen` defaults to `127.0.0.1:0` (a free port). `connect: host:port` makes the
 emulator dial an external device server instead of listening.
 
+For `lcd`, `width`/`height` are the logical (post-rotation) panel size; with
+`rotation: 90` or `270` the model swaps them internally to the native portrait
+addressing the ST7789 driver expects. The same rotation is used for touch
+coordinate mapping.
+
 ```yaml
 boards:
   - id: pico2
@@ -197,6 +202,10 @@ the legend shows the latest voltage. **Time Zoom −/+** changes the window from
 1× to 64×; **Range −/+** selects 0.5, 1, 1.65, 2, 3.3 or 5 V full scale;
 **Reset** restores 1×/3.3 V. `analog:` board entries generate waveforms (the
 `pico2-analog` board puts a 1 kHz sine on GP26, which the ADC also reads).
+
+The scope and logic tabs sample pins every emulated cycle. That disables the
+idle fast-forward the headless runner uses, so sleep-heavy firmware costs the
+full per-cycle rate while the UI is open. The Debug tab still pauses the chip.
 
 ![Scope tab](images/scope.png)
 

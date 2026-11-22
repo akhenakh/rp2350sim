@@ -248,6 +248,13 @@ rp2350sim -fw build/ch9120.elf -seconds 2 -ch9120
 emulated identity, not a host route. The summary JSON contains the same data
 under `network`.
 
+W5500/W6300 sockets support TCP client/server and UDP client/server. A UDP
+client binds the guest `Sn_PORT` as its host source port; a UDP server binds it
+on the first `RECV` (or `LISTEN`). Received datagrams include the WIZnet 8-byte
+peer header, matching the chip; `drivers/w6300` strips it on receive. TCP
+listeners bind the host wildcard so another machine can connect; use the
+advertised `host=` address.
+
 **UI.** The **Ethernet** or **Wi-Fi** tab shows the guest identity, one row per
 socket with the reachable host address, and a live device log.
 

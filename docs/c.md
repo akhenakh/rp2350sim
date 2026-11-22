@@ -78,11 +78,12 @@ works: `multicore_launch_core1` uses the same SIO FIFO handshake as TinyGo.
 - Single-precision floating point (VFPv5-SP): arithmetic, comparisons,
   conversions, loads/stores and callee-saved `d8`-`d15` push/pop. The
   `floatdemo` example asserts exact IEEE bit patterns.
-- Double-precision arguments to `printf` (`%f`) are **not** correct yet: the
-  SDK routes libgcc's `__aeabi_d*` through the RP2350 double coprocessor
-  (DCP, CP4), and the emulator's functional DCP model handles arithmetic and
-  conversions but not the vararg/word-order path used by `printf`. Print
-  integer bit patterns instead of `%f` until that lands.
+- Double-precision arithmetic goes through the RP2350 double coprocessor
+  (DCP, CP4). `firmware/c/dcp` asserts the IEEE bit patterns for `+ - * /` and
+  `sqrt` through the SDK's canned sequences. Double varargs to `printf` (`%f`)
+  are still **not** correct: the model does not yet reproduce the SDK's
+  word-order path for variadic doubles. Print integer bit patterns instead of
+  `%f` until that lands.
 
 ## Debugging
 
@@ -98,10 +99,13 @@ coprocessor operation with its operands and result.
 
 ## Limitations
 
-- The DCP double path is incomplete (see above); single precision is complete.
+- The DCP arithmetic path used by `+ - * /` and `sqrt` is covered by
+  `firmware/c/dcp`; `%f` varargs remain unsupported (see above).
 - Bootrom coverage is a functional subset. Firmware that calls `rom_reboot`,
   `reset_usb_boot`, partition/OTP services or the ROM SF table halts with a
   clear "unsupported service" message rather than executing ROM zeros.
-- USB device stdio is not validated yet; use UART stdio.
+- USB device stdio is not validated yet; use UART stdio. The emulated host
+  uses TinyGo's endpoint buffer layout and forwards every IN endpoint to the
+  console; TinyUSB buffer-address programming is not modelled.
 - The RP2350 bootrom is not emulated; the image is entered at its vector table.
   `PICO_NO_FLASH` / `PICO_COPY_TO_RAM` images are out of scope.

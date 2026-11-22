@@ -119,7 +119,9 @@ to.
 - Use `-w6300` for the fitted controller.
 - The in-tree TinyGo netdev driver is `drivers/w6300`; the chip model is
   `internal/devices/w6300.go`.
-- Reference firmware: `firmware/w6300` (TCP client/server, UDP).
+- Reference firmware: `firmware/w6300` (TCP client/server, UDP client/server).
+  UDP sockets bind the guest `Sn_PORT`; received datagrams are stored with the
+  WIZnet 8-byte peer header, which `drivers/w6300` strips on receive.
 
 ## W5500 (breadboard)
 
@@ -127,9 +129,12 @@ to.
 - Use `-eth` (runner) or the `pico2-w5500` UI board.
 - The stock `tinygo.org/x/drivers/w5500` netdev driver runs unmodified; the
   chip model is `internal/devices/w5500.go`.
-- Reference firmware: `firmware/w5500` (TCP client/server, UDP). The stock
-  driver rejects the 16-byte IPv4-mapped address that `net.IPv4` returns, so
-  the client passes a 4-byte `net.IP{127,0,0,1}`.
+- Reference firmware: `firmware/w5500` (TCP client/server, UDP client/server).
+  UDP clients bind the guest source port and received datagrams carry the
+  WIZnet 8-byte peer header, as on hardware. The stock TinyGo driver's `Recv`
+  does not skip that header; use the socket API directly for UDP receives.
+  The stock driver rejects the 16-byte IPv4-mapped address that `net.IPv4`
+  returns, so the client passes a 4-byte `net.IP{127,0,0,1}`.
 
 ## Waveshare RP2350-ETH (CH9120, non-PoE)
 
@@ -193,15 +198,30 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   cores). The default TinyGo tasks scheduler is single-core.
 - **Interrupt nesting:** exceptions are delivered at IPSR 0; a pending
   higher-priority exception does not preempt the current handler yet.
+- **System exceptions:** SVC halts with an explicit message; SysTick and PendSV
+  are stored but do not pend an exception. A port that needs an RTOS kernel
+  (SVC/PendSV/SysTick, priority nesting, fault escalation) is not supported.
+- **Peripheral interrupts:** NVIC lines are wired for DMA, both timers, UART RX,
+  USB and PIO. SPI, I2C, ADC, GPIO-edge and PWM wrap interrupts are not
+  delivered yet.
 - **PIO OUT:** an empty OSR is refilled from the TX FIFO even when autopull is
   disabled, because TinyGo's `SetX`/`SetY` rely on it. Treat this as more
   permissive than hardware when porting hand-written PIO.
 - **VFP/DSP:** VFMA/VFMS are separate multiply/add (up to 1 ulp from fused
-  hardware); `SEL` does not model the GE flags. The timer's 64-bit read pair is
-  not latched across a 32-bit wrap.
+  hardware); `SEL` does not model the GE flags. Unsigned-saturating and
+  parallel DSP instructions (USAT/SSAT, QADD, SADD/UADD16, ...) halt rather
+  than execute.
 - **USB host:** the emulated host enumerates the device and pumps CDC; arbitrary
-  USB devices are not supported.
-- **DMA:** paced transfers and completion interrupts, but no DREQ pacing.
+  USB devices are not supported. Buffer addresses are the TinyGo layout, not
+  the endpoint control words, and any IN endpoint is forwarded to the console.
+- **DMA:** paced transfers, AL1/AL2/AL3 aliases and completion interrupts, but
+  no DREQ pacing.
+- **Timers:** the 64-bit read pair is latched, but writes to TIMEHW/TIMELW are
+  ignored; firmware cannot set the timer.
+- **Package/pins:** SYSINFO reports the RP2350A QFN-60 package while the model
+  exposes 48 GPIOs and the coprocessor can touch GP32-47. Treat the pin model
+  as a superset; the QMI CS1 constraint (GP0/GP8/GP19) is documented, not
+  enforced.
 - **High-speed peripheral buses:** UART/SPI/I2C traffic is tapped at the
   controller-model level for the logic analyzer; the emulated GPIO pins do not
   toggle at bus bit rates. PIO/bit-banged traffic is decoded from pins.
@@ -226,7 +246,10 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/uart` | UART output for the logic analyzer |
 | `firmware/protocols` | UART/I2C/SPI traffic for the logic analyzer |
 | `firmware/serialbridge` | UART1 echoed over TCP |
+| `firmware/busmaster`, `firmware/busdevice` | I2C/SPI Bus Pirate bridges |
+| `firmware/debugvars` | DWARF locals and globals for the Debug tab |
 | `firmware/w5500` | W5500 TCP client/server and UDP (stock driver) |
 | `firmware/w6300` | W6300 TCP client/server and UDP |
 | `firmware/ch9120` | CH9120 TCP client |
 | `firmware/wifi` | virtual Wi-Fi through `netdev` |
+| `firmware/c/*` | Pico SDK C examples (see [c.md](c.md)) |

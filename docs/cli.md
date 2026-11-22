@@ -161,7 +161,7 @@ every UI board to its flags and demo firmware. The flags are:
 | `-touch x,y` | inject a tap at native panel coordinates (needs `-touch-lcd2`) |
 | `-touch-at D`, `-touch-hold D` | when the tap goes down and how long it lasts (default 150 ms / 100 ms) |
 | `-sensors` | print touch, IMU, battery, backlight and SD state at exit |
-| `-lcd-png PATH` | write the LCD framebuffer to a PNG at exit |
+| `-lcd-png PATH` | write the LCD framebuffer to a PNG at exit (implies `-lcd` unless `-touch-lcd2` is used) |
 | `-sd` | microSD on SPI0 (CS GP23), GEEK wiring |
 | `-sd-dir PATH` | back the card with a host directory (read/write files from the host) |
 | `-sd-image PATH` | raw FAT16 image for `-sd`/`-touch-lcd2` (default: built-in FAT16) |
@@ -430,7 +430,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-watch ADDR\|SYMBOL`, `-watch-val V`, `-watch-reg N` | log writes at an address/symbol / value / register changes |
 | `-poke ADDR=VAL` | write memory after boot |
 | `-peek ADDR` | print a word at exit |
-| `-sample N` | print the PC in 10M-cycle chunks |
+| `-sample N` | print the PC in 10M-cycle chunks (obeys input, expectations and the wall timeout) |
 | `-continue-after-halt` | keep peripherals (PIO/PWM/DMA) running after a core halts |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | report unmapped accesses at exit |
@@ -449,6 +449,12 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-spi-tcp bus:cs[@listen|=connect]` | expose an SPI device over TCP (repeatable) |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
 | `-bus-wait D` | first-client wait for an I2C/SPI bridge (default 2s) |
+
+`-watch-reg` installs its own trace callback and works without `-bp` or
+`-trace-last`. Address zero is a valid breakpoint; the runner tracks whether
+`-bp`/`-bp2` were set rather than using zero as a sentinel. `-strict-mmio`
+keeps the instruction ring even without `-trace-last`, so the first unmapped
+access gets a backtrace.
 
 ### Logic analyzer capture
 
