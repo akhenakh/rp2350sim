@@ -76,6 +76,9 @@ add_subdirectory(${EX}/watchdog/hello_watchdog hello_watchdog)
 add_subdirectory(${EX}/i2c/bus_scan i2c_bus_scan)
 add_subdirectory(${EX}/divider divider)
 add_subdirectory(${EX}/dcp/hello_dcp hello_dcp)
+add_subdirectory(${EX}/sha/sha256 sha256)
+add_subdirectory(${EX}/system/rand rand)
+add_subdirectory(${EX}/hstx/dvi_out_hstx_encoder dvi_out_hstx_encoder)
 EOF
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

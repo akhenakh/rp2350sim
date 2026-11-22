@@ -35,6 +35,12 @@ type BoardDef struct {
 	Wifi        *WifiDevice    `yaml:"wifi"`
 	Audio       *AudioDevice   `yaml:"audio"`
 	MIDI        *MIDIDevice    `yaml:"midi"`
+	// Package selects the RP2350 variant: qfn60 (RP2350A, 30 GPIOs) or
+	// qfn80 (RP2350B, 48 GPIOs).
+	Package string `yaml:"package"`
+	// HSTX enables the DVI tab: it decodes the HSTX command stream into a
+	// framebuffer for Pico DVI demos.
+	HSTX bool `yaml:"hstx"`
 }
 
 // MIDIDevice selects the MIDI source for the MIDI tab.
@@ -461,6 +467,11 @@ func LoadBoards() ([]BoardDef, error) {
 			default:
 				return nil, fmt.Errorf("boards: %s: unknown midi kind %q", b.ID, d.Kind)
 			}
+		}
+		switch b.Package {
+		case "", "qfn60", "qfn80":
+		default:
+			return nil, fmt.Errorf("boards: %s: unknown package %q (qfn60 or qfn80)", b.ID, b.Package)
 		}
 		for i := range b.I2CTCP {
 			br := &b.I2CTCP[i]

@@ -28,6 +28,18 @@ boards:
     logic:
       uart: { tx: 0, rx: 1, baud: 115200 }
 
+  - id: pico2-dvi
+    name: RP2350 + HSTX DVI
+    description: HSTX TMDS output on GP12-19 · DVI tab and PNG export
+    hstx: true
+    scope: [12, 13, 14, 15]
+
+  - id: pico2b
+    name: RP2350B (QFN-80)
+    description: RP2350B · 48 GPIOs · any pin, PIO GPIOBASE 16 for GP32-47
+    package: qfn80
+    scope: [0, 16, 32, 47]
+
   - id: pico2-psram
     name: RP2350 + PSRAM
     description: RP2350A · 8 MB QSPI PSRAM on QMI CS1 (GP8) · slower than SRAM

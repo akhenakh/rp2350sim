@@ -63,6 +63,7 @@ var scopeRanges = []float32{0.5, 1, 1.65, 2, 3.3, 5}
 const (
 	tabBoard = iota
 	tabLCD
+	tabDVI
 	tabEth
 	tabWS
 	tabSensors
@@ -151,6 +152,8 @@ func RootView() {
 			switch activeTab {
 			case tabLCD:
 				lcdPanel(snap)
+			case tabDVI:
+				dviPanel(snap)
 			case tabEth:
 				ethPanel(snap)
 			case tabWS:
@@ -379,6 +382,10 @@ func setTab(name string) {
 		if selectedBoard != nil && selectedBoard.LCD != nil {
 			activeTab = tabLCD
 		}
+	case "dvi", "hstx":
+		if selectedBoard != nil && selectedBoard.HSTX {
+			activeTab = tabDVI
+		}
 	case "eth", "ethernet", "wifi", "wi-fi":
 		if selectedBoard != nil && (selectedBoard.Ethernet != nil || selectedBoard.Wifi != nil) {
 			activeTab = tabEth
@@ -425,6 +432,9 @@ func tabsBar() {
 		tabButton("Board", tabBoard)
 		if selectedBoard.LCD != nil {
 			tabButton("LCD", tabLCD)
+		}
+		if selectedBoard.HSTX {
+			tabButton("DVI", tabDVI)
 		}
 		if selectedBoard.Ethernet != nil {
 			tabButton("Ethernet", tabEth)
@@ -588,18 +598,30 @@ func toolbar(snap MachineState) {
 }
 
 func pinsPanel(snap MachineState) {
+	n := snap.GPIOs
+	if n <= 0 {
+		n = 30
+	}
+	cols := 3
+	if n > 30 {
+		cols = 4
+	}
+	rows := (n + cols - 1) / cols
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label("GPIO", FontSize(16), FontWeight(700))
 			Label("function · direction · level", FontSize(12))
 			Filler(1)
-			Label(fmt.Sprintf("%d active", countActive(snap)), FontSize(12))
+			Label(fmt.Sprintf("%d pins · %d active", n, countActive(snap)), FontSize(12))
 		})
 		Container(Attrs(Row, Grow(1), Expand, Gap(6)), func() {
-			for col := range 3 {
+			for col := range cols {
 				Container(Attrs(Gap(2), Grow(1), Expand), func() {
-					for row := range 10 {
-						p := col*10 + row
+					for row := range rows {
+						p := col*rows + row
+						if p >= n {
+							break
+						}
 						in := snap.Pins[p]
 						if pinView == 1 && !pinActive(in) {
 							continue
@@ -1110,7 +1132,7 @@ func boardPanel(snap MachineState) {
 	Container(Attrs(FixWidth(255), Gap(6)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label("Board", FontSize(16), FontWeight(700))
-			Label("Pico 2", FontSize(12))
+			Label(snap.Package, FontSize(12))
 			Filler(1)
 		})
 		Container(Attrs(Gap(1), Pad(10), Corners(12),

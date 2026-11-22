@@ -20,6 +20,9 @@ target_link_libraries(usbhello pico_stdlib)
 add_executable(usbecho usbecho/main.c)
 target_link_libraries(usbecho pico_stdlib)
 
+add_executable(aontimer aontimer/main.c)
+target_link_libraries(aontimer pico_stdlib pico_aon_timer)
+
 add_executable(blinky blinky/main.c)
 target_link_libraries(blinky pico_stdlib)
 
@@ -74,3 +77,7 @@ pico_add_extra_outputs(usbhello)
 pico_enable_stdio_uart(usbecho 0)
 pico_enable_stdio_usb(usbecho 1)
 pico_add_extra_outputs(usbecho)
+
+pico_enable_stdio_uart(aontimer 1)
+pico_enable_stdio_usb(aontimer 0)
+pico_add_extra_outputs(aontimer)

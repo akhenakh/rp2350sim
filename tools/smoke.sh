@@ -331,6 +331,9 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			-input "Z" -input-at 300ms 2>&1)
 		contains "Pico SDK USB echo ready" "usb echo ready" "$out"
 		contains "Pico SDK USB echo input" "echo Z" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/aontimer.elf" -seconds 2 -quiet \
+			-expect "aon alarm 1001" -stop-on-expect 2>&1)
+		contains "Pico SDK AON timer" "aon alarm 1001" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/dcp.elf" -seconds 1 -quiet 2>&1)
@@ -390,6 +393,27 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			contains "pico-examples hello_serial" "Hello, world!" "$out"
 			out=$("$EMU" -fw "$EX/hello_usb/hello_usb.elf" -seconds 1.2 -quiet 2>&1)
 			contains "pico-examples hello_usb" "Hello, world!" "$out"
+			out=$("$EMU" -fw "$EX/sha256/hello_sha256.elf" -seconds 3 -quiet \
+				-expect "Success" -stop-on-expect 2>&1)
+			contains "pico-examples SHA-256" "Success" "$out"
+			out=$("$EMU" -fw "$EX/rand/rand.elf" -seconds 3 -quiet \
+				-expect "All done" -stop-on-expect 2>&1)
+			contains "pico-examples TRNG rand" "All done" "$out"
+			out=$("$EMU" -fw "$EX/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf" -seconds 0.5 -quiet \
+				-dvi-png "$BUILD/dvi-smoke.png" 2>&1)
+			if "$BUILD/pngcheck" -w 640 -h 480 -colors 100 "$BUILD/dvi-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+				ok "pico-examples HSTX DVI frame"
+			else
+				bad "pico-examples HSTX DVI frame" "$("$BUILD/pngcheck" -w 640 -h 480 -colors 100 "$BUILD/dvi-smoke.png" 2>&1)"
+			fi
+			if (cd cmd/simui && go run . --board pico2-dvi --tab dvi --run 0.5 \
+				--png "../../$BUILD/dvi-ui-smoke.png" \
+				"../../$EX/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf" >/dev/null 2>&1) &&
+				"$BUILD/pngcheck" -w 2560 -h 1640 -colors 100 "$BUILD/dvi-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+				ok "UI DVI tab"
+			else
+				bad "UI DVI tab" "$(cat "$BUILD/smoke.log")"
+			fi
 			out=$("$EMU" -fw "$EX/hello_uart/hello_uart.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples hello_uart" "AB Hello, UART!" "$out"
 			out=$("$EMU" -fw "$EX/hello_dma/hello_dma.elf" -seconds 0.5 -quiet 2>&1)

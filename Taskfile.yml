@@ -666,6 +666,7 @@ tasks:
       - 'build/ota2.elf'
       - 'build/usbhello.elf'
       - 'build/usbecho.elf'
+      - 'build/aontimer.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
@@ -688,6 +689,12 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/usbecho.elf -seconds 1 -quiet -input "Z" -input-at 300ms -expect "echo Z" -stop-on-expect'
+
+  c:aontimer:
+    desc: Run the Pico SDK AON timer demo and wait for its alarm
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/aontimer.elf -seconds 2 -quiet -expect "aon alarm 1001" -stop-on-expect'
 
   c:blinky:
     desc: Run the Pico SDK blinky and trace GP25

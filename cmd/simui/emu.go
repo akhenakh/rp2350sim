@@ -32,6 +32,9 @@ type PinInfo struct {
 // MachineState is a consistent copy of the machine state for one UI frame.
 type MachineState struct {
 	Pins          [48]PinInfo
+	GPIOs         int
+	Package       string
+	DVI           *image.RGBA
 	Cycles        uint64
 	PC, SP        uint32
 	Halted        bool
@@ -179,6 +182,8 @@ type Emu struct {
 
 	scopeTrig   ScopeTriggerConfig
 	frozenScope frozenScope
+	dviGen      uint64
+	dviFrame    *image.RGBA
 
 	bridges    []*devices.UARTBridge
 	bridgeErrs []string
@@ -651,6 +656,9 @@ func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
 // resetChip builds a fresh machine and attaches the selected board's devices.
 func (e *Emu) resetChip() {
 	c := rp2350.New()
+	if e.board != nil && e.board.Package == "qfn80" {
+		c.SetPackage(rp2350.PackageQFN80)
+	}
 	e.debugger.Reset()
 	c.Debug = e.debugger
 	if e.sd != nil {
@@ -1451,6 +1459,16 @@ func (e *Emu) Snapshot() MachineState {
 	s.PSRAMBytes = e.chip.PSRAMSize()
 	s.PSRAMLatency = e.chip.PSRAMLatency()
 	s.Err = e.errText
+	if gen := e.chip.HSTXSerial(); gen != e.dviGen {
+		e.dviGen = gen
+		e.dviFrame = e.chip.HSTXFrame()
+	}
+	s.DVI = e.dviFrame
+	s.GPIOs = e.chip.GPIOs()
+	s.Package = "RP2350A"
+	if e.chip.Package() == rp2350.PackageQFN80 {
+		s.Package = "RP2350B"
+	}
 	for i := range 48 {
 		s.Pins[i] = PinInfo{
 			Func:     e.chip.Pins.Func[i],

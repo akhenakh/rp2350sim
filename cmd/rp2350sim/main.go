@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image/png"
 	"log/slog"
 	"net"
 	"os"
@@ -148,6 +149,7 @@ func main() {
 		logicPins   = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
 		logicOut    = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
 		vcdOut      = flag.String("vcd", "", "write the logic capture as an IEEE 1364 VCD")
+		dviPNG      = flag.String("dvi-png", "", "write the last HSTX/DVI frame to this PNG")
 		logicUART   = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
 		logicI2C    = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
 		logicSPI    = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
@@ -185,6 +187,7 @@ func main() {
 		psramMB     = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
 		psramLat    = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
 		psramCS     = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
+		rp2350b     = flag.Bool("rp2350b", false, "model the RP2350B QFN-80 package (48 GPIOs)")
 		ethFlag     = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
 		w6300Flag   = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag  = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
@@ -349,6 +352,9 @@ func main() {
 	}
 	c := rp2350.New()
 	c.Logger = log
+	if *rp2350b {
+		c.SetPackage(rp2350.PackageQFN80)
+	}
 	c.ConfigurePSRAM(uint32(*psramMB)<<20, uint32(*psramLat), *psramCS)
 	if *psramMB > 0 && !*quiet {
 		log.Info("psram attached",
@@ -404,6 +410,15 @@ func main() {
 		// Booting straight from a flash image: validate the vector table the
 		// same way a host-loaded firmware is validated.
 		head := append([]byte(nil), c.Flash[:8]...)
+		if table := rp2350.ParsePartitionTable(c.Flash); table != nil {
+			idx := table.BootPartition(-1)
+			if idx < 0 {
+				log.Error("flash partition table has no bootable slot", slog.String("path", *flashIn))
+				exit(1)
+			}
+			off := table.Entries[idx].Offset
+			head = append([]byte(nil), c.Flash[off:off+8]...)
+		}
 		bootImg := &firmware.Image{Format: "flash", Segments: []firmware.Segment{{Addr: rp2350.FlashBase, Data: head}}}
 		if err := bootImg.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
 			log.Error("unsupported flash image", slog.String("path", *flashIn), slog.Any("err", err))
@@ -1320,6 +1335,24 @@ func main() {
 			attrs = append(attrs, "battery", 3.9, "backlight", c.PinBrightness(15))
 		}
 		log.Info("sensors", attrs...)
+	}
+	if *dviPNG != "" {
+		if img := c.HSTXFrame(); img == nil {
+			log.Error("dvi png: no frame captured", slog.String("path", *dviPNG))
+		} else if f, err := os.Create(*dviPNG); err != nil {
+			log.Error("dvi png", slog.String("path", *dviPNG), slog.Any("err", err))
+		} else {
+			err := png.Encode(f, img)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				log.Error("dvi png", slog.String("path", *dviPNG), slog.Any("err", err))
+			} else if !*quiet {
+				log.Info("dvi frame saved", slog.String("path", *dviPNG),
+					slog.Int("width", img.Bounds().Dx()), slog.Int("height", img.Bounds().Dy()))
+			}
+		}
 	}
 	if lcd != nil && *lcdPNG != "" {
 		if err := lcd.WritePNG(*lcdPNG); err != nil {
