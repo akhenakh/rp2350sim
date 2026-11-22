@@ -20,6 +20,9 @@ target_link_libraries(blinky pico_stdlib)
 add_executable(floatdemo floatdemo/main.c)
 target_link_libraries(floatdemo pico_stdlib)
 
+add_executable(dcp dcp/main.c)
+target_link_libraries(dcp pico_stdlib)
+
 add_executable(multicore multicore/main.c)
 target_link_libraries(multicore pico_stdlib pico_multicore)
 
@@ -51,7 +54,7 @@ add_executable(ota ota/main.c ${OTA2_IMAGE_C})
 target_link_libraries(ota pico_stdlib hardware_flash)
 add_dependencies(ota ota2)
 
-foreach(app hello blinky floatdemo multicore otp psram debug ota ota2)
+foreach(app hello blinky floatdemo dcp multicore otp psram debug ota ota2)
     pico_enable_stdio_uart(${app} 1)
     pico_enable_stdio_usb(${app} 0)
     pico_add_extra_outputs(${app})

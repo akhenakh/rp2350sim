@@ -581,6 +581,7 @@ tasks:
       - 'build/hello.elf'
       - 'build/blinky.elf'
       - 'build/floatdemo.elf'
+      - 'build/dcp.elf'
       - 'build/multicore.elf'
       - 'build/otp.elf'
       - 'build/psram.elf'
@@ -609,6 +610,12 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/floatdemo.elf -seconds 1 -quiet'
+
+  c:dcp:
+    desc: Run the C double-precision DCP demo (arithmetic and sqrt)
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/dcp.elf -seconds 1 -quiet -expect "dcp ok" -stop-on-expect'
 
   c:multicore:
     desc: Run the C multicore (core 1 through the SIO FIFO) demo

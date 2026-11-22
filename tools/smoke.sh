@@ -302,12 +302,15 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 	command -v cmake >/dev/null 2>&1; then
 	if cmake -S firmware/c -B "$BUILD/pico-c" -G Ninja -DPICO_BOARD=pico2 \
 		-DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release \
+		-DPICO_NO_PICOTOOL=1 \
 		>>"$BUILD/smoke.log" 2>&1 &&
 		cmake --build "$BUILD/pico-c" >>"$BUILD/smoke.log" 2>&1; then
 		out=$("$EMU" -fw "$BUILD/pico-c/hello.elf" -seconds 1 -quiet 2>&1)
 		contains "Pico SDK C hello" "hello c done" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/dcp.elf" -seconds 1 -quiet 2>&1)
+		contains "C double DCP" "4010000000000000 c01e000000000000 4018000000000000 3fd5555555555555 3ff6a09e667f3bcd" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/multicore.elf" -seconds 1 -quiet 2>&1)
 		contains "C multicore" "worker=1" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/otp.elf" -seconds 0.3 -quiet \
