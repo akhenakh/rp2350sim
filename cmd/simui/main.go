@@ -68,6 +68,8 @@ const (
 	tabSensors
 	tabScope
 	tabLogic
+	tabAudio
+	tabMIDI
 	tabOTP
 	tabBus
 	tabDebug
@@ -159,6 +161,10 @@ func RootView() {
 				scopePanel()
 			case tabLogic:
 				logicPanel()
+			case tabAudio:
+				audioPanel(snap)
+			case tabMIDI:
+				midiPanel(snap)
 			case tabOTP:
 				otpPanel(snap)
 			case tabBus:
@@ -389,6 +395,14 @@ func setTab(name string) {
 		activeTab = tabScope
 	case "logic", "la":
 		activeTab = tabLogic
+	case "audio":
+		if selectedBoard != nil && selectedBoard.Audio != nil {
+			activeTab = tabAudio
+		}
+	case "midi":
+		if selectedBoard != nil && selectedBoard.MIDI != nil {
+			activeTab = tabMIDI
+		}
 	case "otp":
 		activeTab = tabOTP
 	case "bus", "i2c", "spi", "bridges":
@@ -426,6 +440,12 @@ func tabsBar() {
 		}
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
+		if selectedBoard.Audio != nil {
+			tabButton("Audio", tabAudio)
+		}
+		if selectedBoard.MIDI != nil {
+			tabButton("MIDI", tabMIDI)
+		}
 		tabButton("OTP", tabOTP)
 		tabButton("Debug", tabDebug)
 		if boardHasBuses(selectedBoard) {

@@ -33,6 +33,27 @@ type BoardDef struct {
 	I2CTCP      []I2CTCPBridge `yaml:"i2c_tcp"`
 	SPITCP      []SPITCPBridge `yaml:"spi_tcp"`
 	Wifi        *WifiDevice    `yaml:"wifi"`
+	Audio       *AudioDevice   `yaml:"audio"`
+	MIDI        *MIDIDevice    `yaml:"midi"`
+}
+
+// MIDIDevice selects the MIDI source for the MIDI tab.
+type MIDIDevice struct {
+	Kind string `yaml:"kind"` // usb or uart
+	UART int    `yaml:"uart"`
+}
+
+// AudioDevice selects an audio decoder for the Audio tab and WAV export.
+type AudioDevice struct {
+	Kind       string `yaml:"kind"` // i2s, pdm or pwm
+	BCLK       int    `yaml:"bclk"`
+	LRCLK      int    `yaml:"lrclk"`
+	Data       int    `yaml:"data"`
+	Clock      int    `yaml:"clock"`
+	Pin        int    `yaml:"pin"`
+	Bits       int    `yaml:"bits"`
+	Rate       int    `yaml:"rate"`
+	Decimation int    `yaml:"decimation"`
 }
 
 // SerialDevice exposes a hardware UART over TCP.
@@ -401,6 +422,45 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: serial uart must be 0 or 1", b.ID)
 			}
 			// An empty listen address means 127.0.0.1:0 (kernel-chosen port).
+		}
+		if d := b.Audio; d != nil {
+			pinOK := func(p int) bool { return p >= 0 && p <= 47 }
+			switch d.Kind {
+			case "i2s":
+				if !pinOK(d.BCLK) || !pinOK(d.LRCLK) || !pinOK(d.Data) {
+					return nil, fmt.Errorf("boards: %s: audio i2s needs bclk, lrclk and data pins", b.ID)
+				}
+			case "pdm":
+				if !pinOK(d.Data) || !pinOK(d.Clock) {
+					return nil, fmt.Errorf("boards: %s: audio pdm needs data and clock pins", b.ID)
+				}
+			case "pwm":
+				if !pinOK(d.Pin) {
+					return nil, fmt.Errorf("boards: %s: audio pwm needs pin", b.ID)
+				}
+			default:
+				return nil, fmt.Errorf("boards: %s: unknown audio kind %q", b.ID, d.Kind)
+			}
+			if d.Rate <= 0 {
+				d.Rate = 48000
+			}
+			if d.Bits <= 0 {
+				d.Bits = 16
+			}
+			if d.Decimation <= 0 {
+				d.Decimation = 64
+			}
+		}
+		if d := b.MIDI; d != nil {
+			switch d.Kind {
+			case "usb":
+			case "uart":
+				if d.UART < 0 || d.UART > 1 {
+					return nil, fmt.Errorf("boards: %s: midi uart must be 0 or 1", b.ID)
+				}
+			default:
+				return nil, fmt.Errorf("boards: %s: unknown midi kind %q", b.ID, d.Kind)
+			}
 		}
 		for i := range b.I2CTCP {
 			br := &b.I2CTCP[i]

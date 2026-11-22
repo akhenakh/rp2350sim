@@ -205,3 +205,28 @@ boards:
       uart: { tx: 0, rx: 1, baud: 115200 }
       i2c: { sda: 4, scl: 5 }
       spi: { sck: 18, mosi: 19, miso: 16, cs: 17 }
+
+  - id: pico2-audio
+    name: RP2350 + PWM audio
+    description: PWM/GPIO audio on GP0 · Audio tab and WAV export
+    scope: [0]
+    audio:
+      kind: pwm
+      pin: 0
+      rate: 48000
+
+  - id: pico2-midi
+    name: RP2350 + USB-MIDI
+    description: USB-MIDI device · MIDI tab monitor and virtual keyboard
+    midi:
+      kind: usb
+
+  - id: pico2-midi-uart
+    name: RP2350 + UART MIDI
+    description: 31250-baud MIDI on UART1 (GP4 TX / GP5 RX)
+    scope: [4, 5]
+    midi:
+      kind: uart
+      uart: 1
+    logic:
+      uart: { bus: 1, tx: 4, rx: 5, baud: 31250 }

@@ -15,6 +15,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
+	"github.com/akhenakh/rp2350sim/internal/midi"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 	"go.hasen.dev/shirei"
 )
@@ -30,31 +31,34 @@ type PinInfo struct {
 
 // MachineState is a consistent copy of the machine state for one UI frame.
 type MachineState struct {
-	Pins         [48]PinInfo
-	Cycles       uint64
-	PC, SP       uint32
-	Halted       bool
-	Running      bool
-	Firmware     string
-	FlashPath    string
-	Boots        uint64
-	FlashWrites  uint64
-	BootEntry    uint32
-	ResetReason  string
-	PSRAMBytes   uint32
-	PSRAMLatency uint32
-	Err          string
-	LCD          *image.RGBA
-	Console      string
-	ConsolePos   int64
-	WSColors     []color.RGBA
-	WSFrames     uint64
-	WSEnabled    bool
-	EthKind      string
-	Network      *devices.NetworkInfo
-	EthLog       []string
-	Serial       []string
-	Buses        []string
+	Pins          [48]PinInfo
+	Cycles        uint64
+	PC, SP        uint32
+	Halted        bool
+	Running       bool
+	Firmware      string
+	FlashPath     string
+	Boots         uint64
+	FlashWrites   uint64
+	BootEntry     uint32
+	ResetReason   string
+	PSRAMBytes    uint32
+	PSRAMLatency  uint32
+	Err           string
+	LCD           *image.RGBA
+	Console       string
+	ConsolePos    int64
+	WSColors      []color.RGBA
+	WSFrames      uint64
+	WSEnabled     bool
+	AudioRate     int
+	AudioChannels int
+	AudioSamples  int
+	EthKind       string
+	Network       *devices.NetworkInfo
+	EthLog        []string
+	Serial        []string
+	Buses         []string
 
 	Touch     *TouchState
 	IMU       *IMUState
@@ -119,6 +123,7 @@ type Emu struct {
 	mu        sync.Mutex
 	chip      *rp2350.Chip
 	lcd       *devices.ST7789
+	audio     *devices.AudioDecoder
 	img       *firmware.Image
 	debugInfo *debug.Info
 	debugger  *rp2350.Debugger
@@ -162,6 +167,12 @@ type Emu struct {
 	spiEvents  []SPIEvent
 	i2cEvents  []I2CEvent
 
+	midiKind    string
+	midiUART    int
+	midiEvents  []MIDIEvent
+	midiPending []midi.Message
+	midiParser  midi.Parser
+
 	trigger LogicTrigger
 	frozen  frozenLogic
 
@@ -190,6 +201,13 @@ type SPIEvent struct {
 	Cycle uint64
 	TX    byte
 	RX    byte
+}
+
+// MIDIEvent is one parsed MIDI message seen on the selected MIDI source.
+type MIDIEvent struct {
+	Cycle uint64
+	Text  string
+	Bytes string
 }
 
 // LogicTrigger arms a stop condition for the logic analyzer. Kind is "",
@@ -360,6 +378,52 @@ func (e *Emu) LogicData() ([]int, []devices.TraceSample, uint64) {
 	return pins, samples, e.logic.Interval
 }
 
+// AudioInfo reports the decoder's format and sample count.
+func (e *Emu) AudioInfo() (rate, channels, samples int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.audio == nil {
+		return 0, 0, 0
+	}
+	cfg := e.audio.Config()
+	return cfg.Rate, cfg.Channels, e.audio.Len()
+}
+
+// AudioWave returns the most recent maxSamples, so the waveform view shows a
+// short live window instead of collapsing a whole capture into stripes.
+func (e *Emu) AudioWave(maxSamples int) []int16 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.audio == nil || maxSamples <= 0 {
+		return nil
+	}
+	all := e.audio.Samples()
+	if len(all) <= maxSamples {
+		return all
+	}
+	return append([]int16(nil), all[len(all)-maxSamples:]...)
+}
+
+// AudioWAV returns the current capture as a PCM WAV file.
+func (e *Emu) AudioWAV() []byte {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.audio == nil {
+		return nil
+	}
+	return e.audio.WAV()
+}
+
+// SaveAudio writes the current capture to path.
+func (e *Emu) SaveAudio(path string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.audio == nil {
+		return fmt.Errorf("no audio source")
+	}
+	return e.audio.WriteWAV(path)
+}
+
 // USBEvents returns the recent CDC transfers.
 func (e *Emu) USBEvents() []USBEvent {
 	e.mu.Lock()
@@ -446,6 +510,7 @@ func (e *Emu) resetChip() {
 		_ = e.sd.Sync()
 	}
 	e.lcd = nil
+	e.audio = nil
 	e.ws = nil
 	e.touch = nil
 	e.imu = nil
@@ -558,6 +623,21 @@ func (e *Emu) resetChip() {
 			e.ws = devices.NewWS2812B(c, d.Pin)
 			c.CycleHooks = append(c.CycleHooks, e.ws.Tick)
 		}
+		if d := b.Audio; d != nil {
+			kind := devices.AudioPWM
+			switch d.Kind {
+			case "i2s":
+				kind = devices.AudioI2S
+			case "pdm":
+				kind = devices.AudioPDM
+			}
+			e.audio = devices.NewAudio(c, devices.AudioConfig{
+				Kind: kind, BCLK: d.BCLK, LRCLK: d.LRCLK, Data: d.Data,
+				Clock: d.Clock, Pin: d.Pin, Bits: d.Bits, Delay: 1,
+				Decimation: d.Decimation, Rate: d.Rate,
+			})
+			c.CycleHooks = append(c.CycleHooks, e.audio.Tick)
+		}
 
 		for _, sd := range b.Analog {
 			wave := devices.WaveSine
@@ -659,6 +739,7 @@ func (e *Emu) resetChip() {
 	}
 
 	e.attachSerial(c, e.board)
+	e.attachMIDI(c, e.board)
 
 	e.chip = c
 	e.lcdGen = 0
@@ -841,6 +922,100 @@ func (e *Emu) attachSerial(c *rp2350.Chip, b *BoardDef) {
 	}
 }
 
+// attachMIDI routes the board's MIDI source. USB-MIDI enables the class
+// endpoint; UART-MIDI taps the selected UART after the console and bridge
+// callbacks are in place.
+func (e *Emu) attachMIDI(c *rp2350.Chip, b *BoardDef) {
+	e.midiKind = ""
+	e.midiUART = -1
+	e.midiPending = e.midiPending[:0]
+	e.midiEvents = e.midiEvents[:0]
+	e.midiParser.Reset()
+	if b == nil || b.MIDI == nil {
+		return
+	}
+	switch b.MIDI.Kind {
+	case "usb":
+		e.midiKind = "usb"
+		c.EnableUSBMIDI()
+		c.SetUSBMIDI(func(data []byte) {
+			for _, m := range midi.DecodeUSB(data) {
+				e.addMIDI(c.Cycles, m)
+			}
+		})
+	case "uart":
+		e.midiKind = "uart"
+		e.midiUART = b.MIDI.UART
+		prev := c.OnUART0
+		if b.MIDI.UART == 1 {
+			prev = c.OnUART1
+		}
+		tap := func(v byte) {
+			if prev != nil {
+				prev(v)
+			}
+			for _, m := range e.midiParser.Feed(v) {
+				e.addMIDI(c.Cycles, m)
+			}
+		}
+		if b.MIDI.UART == 0 {
+			c.OnUART0 = tap
+		} else {
+			c.OnUART1 = tap
+		}
+	}
+}
+
+// addMIDI records a message for the UI monitor.
+func (e *Emu) addMIDI(cycle uint64, m midi.Message) {
+	e.midiEvents = append(e.midiEvents, MIDIEvent{
+		Cycle: cycle,
+		Text:  m.String(),
+		Bytes: midi.ParseText(m.Bytes()),
+	})
+	if len(e.midiEvents) > 256 {
+		e.midiEvents = e.midiEvents[len(e.midiEvents)-128:]
+	}
+}
+
+// MIDIEvents returns the recent parsed MIDI messages.
+func (e *Emu) MIDIEvents() []MIDIEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]MIDIEvent(nil), e.midiEvents...)
+}
+
+// SendMIDI queues a host-to-device message. It is flushed on the emulator
+// thread so the USB DPRAM is only touched while the chip is locked there.
+func (e *Emu) SendMIDI(m midi.Message) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.midiPending) < 64 {
+		e.midiPending = append(e.midiPending, m)
+	}
+}
+
+// flushMIDILocked delivers queued messages. The caller holds e.mu.
+func (e *Emu) flushMIDILocked() {
+	if len(e.midiPending) == 0 || e.chip == nil {
+		return
+	}
+	pending := e.midiPending
+	e.midiPending = nil
+	for _, m := range pending {
+		switch e.midiKind {
+		case "usb":
+			pkt := midi.USBMessage(m)
+			if !e.chip.SendUSBMIDI(pkt[:]) {
+				// The firmware has not armed the endpoint yet; retry later.
+				e.midiPending = append(e.midiPending, m)
+			}
+		case "uart":
+			e.chip.SendUART(e.midiUART, m.Bytes())
+		}
+	}
+}
+
 func (e *Emu) loadLocked() {
 	e.resetChip()
 	if e.img == nil {
@@ -1002,6 +1177,7 @@ func (e *Emu) RunFor(cycles uint64) {
 	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped {
 		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
+		e.flushMIDILocked()
 		cycles -= n
 	}
 }
@@ -1051,6 +1227,7 @@ func (e *Emu) loop() {
 		boots := e.lastBoots
 		if running {
 			e.chip.Run(chunk)
+			e.flushMIDILocked()
 			boots = e.chip.BootCount()
 			if e.debugger.Stopped {
 				e.running = false
@@ -1167,6 +1344,12 @@ func (e *Emu) Snapshot() MachineState {
 		s.WSEnabled = true
 		s.WSColors = e.ws.Colors()
 		s.WSFrames = e.ws.Frames()
+	}
+	if e.audio != nil {
+		cfg := e.audio.Config()
+		s.AudioRate = cfg.Rate
+		s.AudioChannels = cfg.Channels
+		s.AudioSamples = e.audio.Len()
 	}
 	s.EthKind = strings.ToUpper(e.ethKind)
 	switch {
