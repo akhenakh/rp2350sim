@@ -45,11 +45,11 @@ func TestNewAudioDecoderSources(t *testing.T) {
 
 func TestNewAudioDecoderDefaults(t *testing.T) {
 	c := rp2350.New()
-	dec, err := newAudioDecoder(c, "4,5,6", "", -1, 0)
+	_, err := newAudioDecoder(c, "4,5,6", "", -1, 0)
 	if err == nil {
 		t.Fatal("rate 0 should be rejected")
 	}
-	dec, err = newAudioDecoder(c, "4,5,6,24", "", -1, 44100)
+	dec, err := newAudioDecoder(c, "4,5,6,24", "", -1, 44100)
 	if err != nil {
 		t.Fatal(err)
 	}
