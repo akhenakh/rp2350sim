@@ -384,12 +384,15 @@ rp2350sim -fw build/protocols.elf -seconds 0.5 \
 `-logic-rate` sets the sample rate (2 MHz default) and `-logic-depth` the ring
 depth (16384). Without `-logic-out` the file is
 `logic-analyze-trace-<date>-<board>.txt` in the current directory; set the
-board name with `-logic-board`. Capturing pins installs a per-cycle hook and
-disables idle fast-forward.
+board name with `-logic-board`. The text includes complete UART/SPI/I2C tap
+logs for every bus. `-vcd PATH` writes the digital pin window as an IEEE 1364
+value change dump for GTKWave or PulseView. Capturing pins installs a
+per-cycle hook and disables idle fast-forward.
 
 **UI.** The **Logic** tab shows synthesised waveforms, decoded UART/I2C/SPI/USB
-sections and a **Save trace** button that writes the same text format (with a
-USB CDC section as well).
+sections and **Save trace**/**Save VCD** buttons. Save trace writes the same
+text format (with a USB CDC section and full event logs); Save VCD writes
+`logic-trace-<date>-<board>.vcd`.
 
 ![Logic tab](images/logic.png)
 
@@ -470,11 +473,14 @@ There is no headless oscilloscope. Use `-trace-pins`/`-logic-pins` for edges
 and `tools/pincheck` for frequency/duty measurements.
 
 The UI **Scope** has up to eight channels, each with its own colour, 1 MHz
-sampling and a ~16 ms window. Click header pins to add or remove traces; the
-legend shows the latest voltage. **Time Zoom** changes the window from 1× to
-64×, **Range** selects 0.5, 1, 1.65, 2, 3.3 or 5 V full scale, and **Reset**
-restores 1×/3.3 V. `analog:` board entries drive generated sine, square or
-triangle sources.
+sampling and a ~16 ms window. Any GPIO 0–47 can be added (RP2350A packages
+only bond 0–29). The legend shows the latest voltage and live
+frequency/duty/period readouts via the same edge measurement as `pincheck`.
+**Trigger** supports Off/Rise/Fall/High/Low on a chosen GPIO; a match freezes
+the window with a quarter of post-trigger data and marks the trigger instant.
+**Time Zoom** changes the window from 1× to 64×, **Range** selects 0.5, 1, 1.65,
+2, 3.3 or 5 V full scale, and **Reset** restores 1×/3.3 V. `analog:` board
+entries drive generated sine, square or triangle sources.
 
 ![Scope with the 1 kHz sine on GP26](images/scope.png)
 

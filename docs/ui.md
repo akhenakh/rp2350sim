@@ -218,11 +218,21 @@ The last WS2812B frame as large swatches with its RGB values.
 ### Scope
 
 Up to eight channels, each with its own colour, 0–3.3 V, 1 MHz sampling and a
-~16 ms window. Click header pins (GP0–GP15, GP26–GP29) to add/remove traces;
-the legend shows the latest voltage. **Time Zoom −/+** changes the window from
-1× to 64×; **Range −/+** selects 0.5, 1, 1.65, 2, 3.3 or 5 V full scale;
-**Reset** restores 1×/3.3 V. `analog:` board entries generate waveforms (the
-`pico2-analog` board puts a 1 kHz sine on GP26, which the ADC also reads).
+~16 ms window. Click header pins to add/remove traces; all GPIOs are offered
+(GP0–GP47; RP2350A packages only bond 0–29). The legend shows the latest
+voltage and a live measurement per channel: frequency, duty cycle and period,
+using the same first-to-last-rising-edge method as `tools/pincheck` (with
+"static high/low" when there are no edges).
+
+The **Trigger** row selects Off/Rise/Fall/High/Low on a GPIO and **Rearm**
+watches for the next event. On a match the scope keeps a quarter-window of
+post-trigger samples, freezes the trace and marks the trigger instant with an
+orange dashed line; measurements then reflect the frozen window.
+
+**Time Zoom −/+** changes the window from 1× to 64×; **Range −/+** selects 0.5,
+1, 1.65, 2, 3.3 or 5 V full scale; **Reset** restores 1×/3.3 V. `analog:` board
+entries generate waveforms (the `pico2-analog` board puts a 1 kHz sine on GP26,
+which the ADC also reads).
 
 The scope and logic tabs sample pins every emulated cycle. That disables the
 idle fast-forward the headless runner uses, so sleep-heavy firmware costs the
@@ -241,7 +251,10 @@ synthesised waveforms; USB CDC transfers are listed with direction.
 on the next event; **Pause: on** also stops the machine. **Rearm** waits for
 the next event after a frozen capture. **Save trace** writes
 `logic-analyze-trace-<date>-<board>.txt` in the current directory with the raw
-pin samples and decoded UART/I2C/SPI/USB sections.
+pin samples, the decoded UART/I2C/SPI/USB sections and complete event logs for
+every bus and direction. **Save VCD** writes
+`logic-trace-<date>-<board>.vcd`, an IEEE 1364 value change dump of the digital
+pins that opens directly in GTKWave or PulseView.
 
 ![Logic tab](images/logic.png)
 

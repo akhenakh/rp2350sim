@@ -446,6 +446,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-logic-rate HZ` | sample rate (default 2 MHz) |
 | `-logic-depth N` | ring depth in samples (default 16384) |
 | `-logic-board NAME` | board label for the file name and metadata (default: the firmware file name) |
+| `-vcd PATH` | write the captured pins as an IEEE 1364 VCD (GTKWave/PulseView) |
 | `-i2c-tcp bus:addr[,addr][@listen|=connect]` | expose I2C targets over TCP (repeatable) |
 | `-spi-tcp bus:cs[@listen|=connect]` | expose an SPI device over TCP (repeatable) |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
@@ -482,6 +483,16 @@ for the controller taps and pin protocols. A pin trace is a rolling window of
 installs a per-cycle hook, which disables the idle fast-forward while the run
 is captured. The UI's **Save trace** writes the same format plus a USB CDC
 section.
+
+`-vcd PATH` writes the same pin window as an IEEE 1364 value change dump
+(timescale 1 ns, one wire per GPIO), ready for GTKWave or PulseView. It needs
+at least one captured pin, from `-logic-pins` or the pins named by
+`-logic-uart`/`-logic-i2c`/`-logic-spi`:
+
+```sh
+rp2350sim -fw build/protocols.elf -seconds 0.2 \
+  -logic-uart 0,1,115200 -logic-i2c 4,5 -vcd trace.vcd
+```
 
 ### Audio capture
 
