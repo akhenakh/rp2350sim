@@ -96,6 +96,15 @@ func WriteLogicTrace(w io.Writer, t LogicTrace) error {
 
 // LogicTraceFilename builds logic-analyze-trace-<date>-<board>.txt.
 func LogicTraceFilename(board string, when time.Time) string {
+	return fmt.Sprintf("logic-analyze-trace-%s-%s.txt", when.Format("20060102-150405"), traceBoardSlug(board))
+}
+
+// VCDFilename is the default name for a value change dump.
+func VCDFilename(board string, when time.Time) string {
+	return fmt.Sprintf("logic-trace-%s-%s.vcd", when.Format("20060102-150405"), traceBoardSlug(board))
+}
+
+func traceBoardSlug(board string) string {
 	if board == "" {
 		board = "board"
 	}
@@ -112,5 +121,5 @@ func LogicTraceFilename(board string, when time.Time) string {
 	if name == "" {
 		name = "board"
 	}
-	return fmt.Sprintf("logic-analyze-trace-%s-%s.txt", when.Format("20060102-150405"), name)
+	return name
 }
