@@ -503,6 +503,15 @@ func toolbar(snap MachineState) {
 		if Button(NoIcon, "Reset") {
 			emu.Reset()
 		}
+		if gdbRunning() {
+			if Button(NoIcon, "Stop GDB") {
+				stopGDB()
+			}
+		} else if Button(NoIcon, "GDB") {
+			if err := startGDB(gdbDefaultAddr); err != nil {
+				fmt.Fprintln(os.Stderr, "gdb:", err)
+			}
+		}
 		if Button(NoIcon, "Board…") {
 			pendingBoardPicker = true
 			RequestNextFrame()
@@ -523,6 +532,9 @@ func toolbar(snap MachineState) {
 		Label(name, FontSize(12), FontWeight(600))
 		Label(fmt.Sprintf("virtual %.3fs", float64(snap.Cycles)/150_000_000), FontSize(12))
 		Label(fmt.Sprintf("PC %08x  SP %08x", snap.PC, snap.SP), FontSize(12), Fonts(Monospace...))
+		if addr := gdbListenAddr(); addr != "" {
+			Label("GDB "+addr, FontSize(12), FontWeight(600), TextColor(20, 90, 70, 1))
+		}
 		if snap.PSRAMBytes > 0 {
 			Label(fmt.Sprintf("PSRAM %d MB · %d cyc", snap.PSRAMBytes>>20, snap.PSRAMLatency),
 				FontSize(12), FontWeight(600), TextColor(140, 40, 70, 1))
@@ -2267,6 +2279,7 @@ func main() {
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, bus, debug, console")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
+	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")
 	debugTab := flag.String("debug-tab", "registers", "debug inspector tab: registers, memory, variables")
 	busConnect := flag.Bool("bus-connect", false, "auto-connect the Bus tab terminal to every bridge listener")
 	flag.Var(busAnswerFlags(busAnswers), "bus-answer", "queue Bus Pirate answers for a bridge: i2c=TOKENS or spi=TOKENS (repeatable)")
@@ -2327,6 +2340,13 @@ func main() {
 	if *debugBreak != "" {
 		if _, err := emu.AddBreakpoint(*debugBreak); err != nil {
 			fmt.Fprintln(os.Stderr, "breakpoint:", err)
+			os.Exit(2)
+		}
+	}
+	if *gdbFlag != "" {
+		gdbDefaultAddr = *gdbFlag
+		if err := startGDB(*gdbFlag); err != nil {
+			fmt.Fprintln(os.Stderr, "gdb:", err)
 			os.Exit(2)
 		}
 	}

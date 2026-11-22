@@ -1044,8 +1044,10 @@ func (e *Emu) loop() {
 		}
 		e.mu.Lock()
 		// The picker screen has no board yet; keep the machine idle so an
-		// empty reset vector is not executed in the background.
-		running := e.running && e.board != nil && e.chip != nil && !e.chip.Halted
+		// empty reset vector is not executed in the background. A debugger
+		// stop (GDB breakpoint/watchpoint) also parks the chip.
+		stopped := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
+		running := e.running && e.board != nil && e.chip != nil && !e.chip.Halted && !stopped
 		boots := e.lastBoots
 		if running {
 			e.chip.Run(chunk)
@@ -1080,6 +1082,9 @@ func (e *Emu) Snapshot() MachineState {
 	s.SP = e.chip.CPU0.R[13]
 	s.Halted = e.chip.Halted
 	s.Running = e.running
+	if e.chip.Debug != nil && e.chip.Debug.Stopped {
+		s.Running = false
+	}
 	s.Firmware = e.fwPath
 	s.FlashPath = e.flashPath
 	e.syncFlashStatsLocked()
