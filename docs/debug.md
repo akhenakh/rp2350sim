@@ -86,6 +86,52 @@ flags remain available for non-interactive diagnosis.
 `UF2` and raw binary images carry no symbol or DWARF data. Use an address, or
 load the matching ELF if one is available.
 
+## GDB remote protocol
+
+The runner and the UI can expose the same breakpoints, watchpoints, registers
+and memory over the GDB Remote Serial Protocol.
+
+```sh
+# Headless: listen for a client; the firmware runs until one attaches
+rp2350sim -fw build/blinky.elf -gdb 127.0.0.1:3333
+
+# In another terminal: load symbols from the ELF, then attach
+arm-none-eabi-gdb build/blinky.elf
+(gdb) target remote 127.0.0.1:3333
+(gdb) info threads
+(gdb) monitor reset
+(gdb) break main.main
+(gdb) continue
+(gdb) info registers
+(gdb) x/8xw 0x20000000
+(gdb) stepi
+(gdb) watch *(int*)0x400b0020
+(gdb) monitor reset
+(gdb) detach
+```
+
+- Threads are the two cores: `Thread 1 "core0"` and `Thread 2 "core1"`.
+  `thread 2` selects core 1 for registers and stepping.
+- `Z0`/`Z1` are execution breakpoints, `Z2`/`Z3`/`Z4` are write/read/access
+  watchpoints (the model checks writes only). They use the same debugger as
+  the Debug tab, so `-break` symbols and GDB breakpoints can coexist.
+- `s`/`stepi` and `vCont` step one instruction on the selected core; a step
+  wakes a core sleeping in WFE/WFI.
+- `continue` resumes all cores. A client interrupt (Ctrl-C) halts the target.
+- `monitor reset` reboots the image and leaves it stopped at the reset vector.
+- Memory reads cover ROM, flash, SRAM and PSRAM through side-effect-free
+  peeks. Reads of peripheral addresses (needed when GDB evaluates a watchpoint
+  expression) fall back to the bus, so they can have the same side effects as
+  firmware reading the register. `M`/`X` writes reach SRAM and peripherals;
+  writes to the flash range update the backing array so GDB `load` works.
+- The default `-steps` budget is disabled when `-gdb` is the only run limit, so
+  the target behaves like a board that keeps running. Pass `-seconds` or
+  `-steps` to bound it. `-gdb` and `-sample` are mutually exclusive.
+- The UI exposes the same server: `rp2350sim-ui --gdb 127.0.0.1:3333` starts it
+  at launch, and the toolbar **GDB** button starts or stops it on the configured
+  address (default `127.0.0.1:3333`). The second toolbar row shows the listening
+  address while it is active.
+
 ## Fixtures and tests
 
 Two deterministic fixtures exercise the debugger end to end:

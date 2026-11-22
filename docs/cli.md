@@ -436,6 +436,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-unhandled` | report unmapped accesses at exit |
 | `-msg` | at `-bp`, decode `r1` as a runtime message string |
 | `-cpuprofile PATH` | write a Go CPU profile |
+| `-gdb ADDR` | serve the GDB remote protocol on `ADDR` (e.g. `127.0.0.1:3333`) |
 | `-version` | print the version and exit |
 | `-logic-pins 0,1,4,5` | sample these GPIOs into the logic analyzer trace |
 | `-logic-out PATH` | write the trace file (default `logic-analyze-trace-<date>-<board>.txt`) |

@@ -51,6 +51,7 @@ Startup flags:
 | `--logic-trigger KIND` | arm the logic analyzer at startup: `off`, `any`, `uart`, `i2c`, `spi` |
 | `--logic-pause` | pause the machine when the startup logic trigger fires |
 | `--break SPEC` | add a breakpoint (address or symbol) after loading the firmware |
+| `--gdb ADDR` | start the GDB remote server at launch (the toolbar **GDB** button toggles it) |
 | `--debug-tab TAB` | debug inspector tab at startup: `registers`, `memory`, `variables` |
 | `--bus-connect` | connect the Bus tab terminal to every bridge listener automatically |
 | `--bus-answer KIND=TOKENS` | queue Bus Pirate responses for `i2c` or `spi`; repeatable |
@@ -62,12 +63,16 @@ so labels are present.
 ## Toolbar and machine lifecycle
 
 The toolbar shows the CPU/board identity, the firmware path, **Open…** (OS file
-dialog), **Load**, **Run**/**Pause**, **Reset**, **Board…** and the scope
-controls. The status line under it reports the image name, virtual time, PC and
-SP, or `(flash)` after a self-update.
+dialog), **Load**, **Run**/**Pause**, **Reset**, **GDB**, **Board…** and the
+scope controls. The status line under it reports the image name, virtual time,
+PC and SP, or `(flash)` after a self-update.
 
 - **Load** restarts the selected image, useful after a rebuild.
 - **Reset** restarts the current image, preserving a self-updated flash.
+- **GDB** starts or stops the GDB remote server on `--gdb ADDR` (default
+  `127.0.0.1:3333`); the status line shows the listening address while it is
+  active. Attach with `arm-none-eabi-gdb` and `target remote`; see
+  [debug.md](debug.md).
 - **Board…** returns to the picker; choosing another board reloads the current
   firmware onto the new hardware.
 - After an OTA reset the **Board** tab shows a banner naming the flash image,
