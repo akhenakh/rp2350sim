@@ -60,6 +60,7 @@ endfunction()
 
 set(EX ${PICO_EXAMPLES_PATH})
 add_subdirectory(${EX}/hello_world/serial hello_serial)
+add_subdirectory(${EX}/hello_world/usb hello_usb)
 add_subdirectory(${EX}/uart/hello_uart hello_uart)
 add_subdirectory(${EX}/blink blink)
 add_subdirectory(${EX}/timer/hello_timer hello_timer)

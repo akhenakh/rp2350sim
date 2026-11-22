@@ -325,6 +325,12 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		cmake --build "$BUILD/pico-c" >>"$BUILD/smoke.log" 2>&1; then
 		out=$("$EMU" -fw "$BUILD/pico-c/hello.elf" -seconds 1 -quiet 2>&1)
 		contains "Pico SDK C hello" "hello c done" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/usbhello.elf" -seconds 1 -quiet 2>&1)
+		contains "Pico SDK USB stdio" "hello usb done" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/usbecho.elf" -seconds 1 -quiet \
+			-input "Z" -input-at 300ms 2>&1)
+		contains "Pico SDK USB echo ready" "usb echo ready" "$out"
+		contains "Pico SDK USB echo input" "echo Z" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/dcp.elf" -seconds 1 -quiet 2>&1)
@@ -382,6 +388,8 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			EX="$BUILD/pico-examples/build"
 			out=$("$EMU" -fw "$EX/hello_serial/hello_serial.elf" -seconds 2.2 -quiet 2>&1)
 			contains "pico-examples hello_serial" "Hello, world!" "$out"
+			out=$("$EMU" -fw "$EX/hello_usb/hello_usb.elf" -seconds 1.2 -quiet 2>&1)
+			contains "pico-examples hello_usb" "Hello, world!" "$out"
 			out=$("$EMU" -fw "$EX/hello_uart/hello_uart.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples hello_uart" "AB Hello, UART!" "$out"
 			out=$("$EMU" -fw "$EX/hello_dma/hello_dma.elf" -seconds 0.5 -quiet 2>&1)

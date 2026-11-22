@@ -664,6 +664,8 @@ tasks:
       - 'build/debug.elf'
       - 'build/ota.elf'
       - 'build/ota2.elf'
+      - 'build/usbhello.elf'
+      - 'build/usbecho.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
@@ -674,6 +676,18 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/hello.elf -seconds 1 -quiet -expect "hello c done" -stop-on-expect'
+
+  c:usbhello:
+    desc: Run the Pico SDK USB CDC stdio hello world (TinyUSB)
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/usbhello.elf -seconds 1 -quiet -expect "hello usb done" -stop-on-expect'
+
+  c:usbecho:
+    desc: Run the Pico SDK USB CDC echo and feed it console input
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/usbecho.elf -seconds 1 -quiet -input "Z" -input-at 300ms -expect "echo Z" -stop-on-expect'
 
   c:blinky:
     desc: Run the Pico SDK blinky and trace GP25

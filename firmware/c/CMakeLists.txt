@@ -14,6 +14,12 @@ pico_sdk_init()
 add_executable(hello hello/main.c)
 target_link_libraries(hello pico_stdlib)
 
+add_executable(usbhello usbhello/main.c)
+target_link_libraries(usbhello pico_stdlib)
+
+add_executable(usbecho usbecho/main.c)
+target_link_libraries(usbecho pico_stdlib)
+
 add_executable(blinky blinky/main.c)
 target_link_libraries(blinky pico_stdlib)
 
@@ -59,3 +65,12 @@ foreach(app hello blinky floatdemo dcp multicore otp psram debug ota ota2)
     pico_enable_stdio_usb(${app} 0)
     pico_add_extra_outputs(${app})
 endforeach()
+
+# TinyUSB CDC stdio: exercises a descriptor-driven USB host (pico_enable_stdio_usb).
+pico_enable_stdio_uart(usbhello 0)
+pico_enable_stdio_usb(usbhello 1)
+pico_add_extra_outputs(usbhello)
+
+pico_enable_stdio_uart(usbecho 0)
+pico_enable_stdio_usb(usbecho 1)
+pico_add_extra_outputs(usbecho)
