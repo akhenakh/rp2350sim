@@ -140,72 +140,81 @@ func (e *expectSet) missing() []string {
 
 func main() {
 	var (
-		path       = flag.String("fw", "", "firmware file (.uf2, .elf or .bin)")
-		steps      = flag.Uint64("steps", 50_000_000, "maximum cycles to execute")
-		secs       = flag.Float64("seconds", 0, "virtual seconds to run (overrides -steps)")
-		unhandled  = flag.Bool("unhandled", false, "report unmapped peripheral accesses at exit")
-		tracePins  = flag.String("trace-pins", "", "comma separated GPIO numbers to log")
-		logicPins  = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
-		logicOut   = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
-		logicUART  = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
-		logicI2C   = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
-		logicSPI   = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
-		logicRate  = flag.Float64("logic-rate", 2e6, "logic analyzer sample rate in Hz")
-		logicDepth = flag.Int("logic-depth", devices.LogicDepth, "logic analyzer ring depth in samples")
-		logicBoard = flag.String("logic-board", "", "board label for the logic trace and filename")
-		busTimeout = flag.Duration("bus-timeout", time.Second, "I2C/SPI TCP bridge request timeout")
-		busWait    = flag.Duration("bus-wait", 2*time.Second, "I2C/SPI TCP bridge first-client wait")
-		stopOnMMIO = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
-		core1      = flag.Bool("core1", true, "start core 1")
-		quiet      = flag.Bool("quiet", false, "suppress the firmware header and final summary")
-		traceN     = flag.Int("trace", 0, "trace the first N instructions")
-		traceLast  = flag.Bool("trace-last", false, "dump the last 64 instructions on a fault")
-		bpStr      = flag.String("bp", "", "log a breakpoint at this address or symbol")
-		watchStr   = flag.String("watch", "", "log writes to this address or symbol")
-		bp2Str     = flag.String("bp2", "", "secondary breakpoint address or symbol")
-		pokeStr    = flag.String("poke", "", "comma separated addr=val pokes (hex) after boot")
-		sampleN    = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
-		msgFlag    = flag.Bool("msg", false, "at a breakpoint, decode r1 as a runtime message string")
-		valStr     = flag.String("watch-val", "", "log writes of this value (hex)")
-		lcdFlag    = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
-		lcdPNG     = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
-		touchLCD2  = flag.Bool("touch-lcd2", false, "attach the RP2350-Touch-LCD-2 hardware (touch LCD, IMU, battery, microSD)")
-		touchStr   = flag.String("touch", "", "inject a touch at x,y in native panel coordinates")
-		touchAt    = flag.Duration("touch-at", 150*time.Millisecond, "delay before -touch is applied")
-		touchHold  = flag.Duration("touch-hold", 100*time.Millisecond, "how long -touch stays down")
-		sensorsOut = flag.Bool("sensors", false, "print touch, IMU and battery state at exit")
-		sdFlag     = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
-		sdImage    = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
-		sdDir      = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
-		otpIn      = flag.String("otp", "", "load OTP rows from this JSON file before boot")
-		otpOut     = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
-		flashIn    = flag.String("flash", "", "load a raw flash image and write it back (enables self-update)")
-		flashOut   = flag.String("flash-out", "", "write the final raw flash image to this path")
-		psramMB    = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
-		psramLat   = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
-		psramCS    = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
-		ethFlag    = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
-		w6300Flag  = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
-		ch9120Flag = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
-		wsPin      = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
-		inputStr   = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
-		inputFile  = flag.String("input-file", "", "send the contents of this file at -input-at")
-		inputAt    = flag.Duration("input-at", 200*time.Millisecond, "delay before -input/-input-file are sent")
-		stdinFlag  = flag.Bool("stdin", false, "forward host stdin to USB CDC and UART0")
-		stopExpect = flag.Bool("stop-on-expect", false, "stop as soon as all -expect strings are seen")
-		wallLimit  = flag.Duration("wall-timeout", 0, "fail after this much wall time (0 = unlimited)")
-		summaryOut = flag.String("summary-file", "", "write a JSON run summary to this path")
-		allowHalt  = flag.Bool("allow-halt", false, "exit 0 even when a core halts")
-		keepAfter  = flag.Bool("continue-after-halt", false, "keep peripherals running after a core halts (PIO/PWM keep driving)")
-		serialTCP  = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
-		cpuProfile = flag.String("cpuprofile", "", "write a CPU profile to this path")
-		peekStr    = flag.String("peek", "", "print memory at this address (hex) at exit")
-		fromStr    = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
-		regStr     = flag.String("watch-reg", "", "log every change of this register")
-		gdbAddr    = flag.String("gdb", "", "serve the GDB remote protocol on this address (e.g. 127.0.0.1:3333)")
-		logFormat  = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
-		logLevel   = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
-		showVer    = flag.Bool("version", false, "print the version and exit")
+		path        = flag.String("fw", "", "firmware file (.uf2, .elf or .bin)")
+		steps       = flag.Uint64("steps", 50_000_000, "maximum cycles to execute")
+		secs        = flag.Float64("seconds", 0, "virtual seconds to run (overrides -steps)")
+		unhandled   = flag.Bool("unhandled", false, "report unmapped peripheral accesses at exit")
+		tracePins   = flag.String("trace-pins", "", "comma separated GPIO numbers to log")
+		logicPins   = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
+		logicOut    = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
+		logicUART   = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
+		logicI2C    = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
+		logicSPI    = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
+		logicRate   = flag.Float64("logic-rate", 2e6, "logic analyzer sample rate in Hz")
+		logicDepth  = flag.Int("logic-depth", devices.LogicDepth, "logic analyzer ring depth in samples")
+		logicBoard  = flag.String("logic-board", "", "board label for the logic trace and filename")
+		busTimeout  = flag.Duration("bus-timeout", time.Second, "I2C/SPI TCP bridge request timeout")
+		busWait     = flag.Duration("bus-wait", 2*time.Second, "I2C/SPI TCP bridge first-client wait")
+		stopOnMMIO  = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
+		core1       = flag.Bool("core1", true, "start core 1")
+		quiet       = flag.Bool("quiet", false, "suppress the firmware header and final summary")
+		traceN      = flag.Int("trace", 0, "trace the first N instructions")
+		traceLast   = flag.Bool("trace-last", false, "dump the last 64 instructions on a fault")
+		bpStr       = flag.String("bp", "", "log a breakpoint at this address or symbol")
+		watchStr    = flag.String("watch", "", "log writes to this address or symbol")
+		bp2Str      = flag.String("bp2", "", "secondary breakpoint address or symbol")
+		pokeStr     = flag.String("poke", "", "comma separated addr=val pokes (hex) after boot")
+		sampleN     = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
+		msgFlag     = flag.Bool("msg", false, "at a breakpoint, decode r1 as a runtime message string")
+		valStr      = flag.String("watch-val", "", "log writes of this value (hex)")
+		lcdFlag     = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
+		lcdPNG      = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
+		touchLCD2   = flag.Bool("touch-lcd2", false, "attach the RP2350-Touch-LCD-2 hardware (touch LCD, IMU, battery, microSD)")
+		touchStr    = flag.String("touch", "", "inject a touch at x,y in native panel coordinates")
+		touchAt     = flag.Duration("touch-at", 150*time.Millisecond, "delay before -touch is applied")
+		touchHold   = flag.Duration("touch-hold", 100*time.Millisecond, "how long -touch stays down")
+		sensorsOut  = flag.Bool("sensors", false, "print touch, IMU and battery state at exit")
+		sdFlag      = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
+		sdImage     = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
+		sdDir       = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
+		otpIn       = flag.String("otp", "", "load OTP rows from this JSON file before boot")
+		otpOut      = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
+		flashIn     = flag.String("flash", "", "load a raw flash image and write it back (enables self-update)")
+		flashOut    = flag.String("flash-out", "", "write the final raw flash image to this path")
+		psramMB     = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
+		psramLat    = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
+		psramCS     = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
+		ethFlag     = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
+		w6300Flag   = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		ch9120Flag  = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
+		wsPin       = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
+		inputStr    = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
+		inputFile   = flag.String("input-file", "", "send the contents of this file at -input-at")
+		inputAt     = flag.Duration("input-at", 200*time.Millisecond, "delay before -input/-input-file are sent")
+		stdinFlag   = flag.Bool("stdin", false, "forward host stdin to USB CDC and UART0")
+		stopExpect  = flag.Bool("stop-on-expect", false, "stop as soon as all -expect strings are seen")
+		wallLimit   = flag.Duration("wall-timeout", 0, "fail after this much wall time (0 = unlimited)")
+		summaryOut  = flag.String("summary-file", "", "write a JSON run summary to this path")
+		allowHalt   = flag.Bool("allow-halt", false, "exit 0 even when a core halts")
+		keepAfter   = flag.Bool("continue-after-halt", false, "keep peripherals running after a core halts (PIO/PWM keep driving)")
+		serialTCP   = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
+		cpuProfile  = flag.String("cpuprofile", "", "write a CPU profile to this path")
+		peekStr     = flag.String("peek", "", "print memory at this address (hex) at exit")
+		fromStr     = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
+		regStr      = flag.String("watch-reg", "", "log every change of this register")
+		gdbAddr     = flag.String("gdb", "", "serve the GDB remote protocol on this address (e.g. 127.0.0.1:3333)")
+		audioOut    = flag.String("audio-out", "", "write decoded audio to this WAV file")
+		audioI2S    = flag.String("audio-i2s", "", "decode I2S audio on bclk,lrclk,data[,bits]")
+		audioPDM    = flag.String("audio-pdm", "", "decode PDM audio on data,clock[,decimation]")
+		audioPWM    = flag.Int("audio-pwm", -1, "decode PWM/GPIO audio on this GPIO")
+		audioRate   = flag.Int("audio-rate", 48000, "audio sample rate in Hz")
+		usbMIDI     = flag.Bool("usb-midi", false, "enable the USB-MIDI class endpoint")
+		midiUART    = flag.Int("midi-uart", -1, "tap this UART (0/1) as 31250-baud MIDI")
+		midiMonitor = flag.Bool("midi-monitor", false, "log parsed MIDI messages")
+		midiUDP     = flag.String("midi-udp", "", "bidirectional UDP-MIDI endpoint (e.g. 127.0.0.1:5004)")
+		logFormat   = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
+		logLevel    = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
+		showVer     = flag.Bool("version", false, "print the version and exit")
 	)
 	var expectFlag stringList
 	var i2cTCPFlag, spiTCPFlag stringList
@@ -229,6 +238,10 @@ func main() {
 	}
 	if *gdbAddr != "" && *sampleN != 0 {
 		fmt.Fprintln(os.Stderr, "-gdb cannot be combined with -sample")
+		exit(2)
+	}
+	if *midiUART < -1 || *midiUART > 1 {
+		fmt.Fprintln(os.Stderr, "-midi-uart must be 0, 1 or -1")
 		exit(2)
 	}
 	if *psramMB < 0 || *psramMB > 16 || *psramMB&(*psramMB-1) != 0 {
@@ -1018,6 +1031,30 @@ func main() {
 	if logicCap != nil {
 		logicCap.attach(c)
 	}
+	var audioDec *devices.AudioDecoder
+	if *audioOut != "" || *audioI2S != "" || *audioPDM != "" || *audioPWM >= 0 {
+		if *audioOut == "" {
+			log.Error("-audio-i2s/-audio-pdm/-audio-pwm need -audio-out")
+			exit(2)
+		}
+		var audioErr error
+		audioDec, audioErr = newAudioDecoder(c, *audioI2S, *audioPDM, *audioPWM, *audioRate)
+		if audioErr != nil {
+			log.Error("audio", slog.Any("err", audioErr))
+			exit(2)
+		}
+		c.CycleHooks = append(c.CycleHooks, audioDec.Tick)
+	}
+	var midiBr *midiBridge
+	if *usbMIDI || *midiUART >= 0 || *midiUDP != "" || *midiMonitor {
+		midiBr = newMIDIBridge(c, *usbMIDI, *midiUART, *midiMonitor, log)
+		if *midiUDP != "" {
+			if err := midiBr.listenUDP(*midiUDP); err != nil {
+				log.Error("midi udp", slog.Any("err", err))
+				exit(2)
+			}
+		}
+	}
 	if *keepAfter {
 		c.ContinueAfterHalt = true
 		*allowHalt = true
@@ -1085,6 +1122,9 @@ func main() {
 			n := min(runCycles, chunk)
 			debugMu.Lock()
 			done := c.Run(n)
+			if midiBr != nil {
+				midiBr.tick()
+			}
 			stopped := c.Debug != nil && c.Debug.Stopped
 			debugMu.Unlock()
 			runCycles -= done
@@ -1132,6 +1172,9 @@ func main() {
 				break
 			}
 			c.Run(10_000_000)
+			if midiBr != nil {
+				midiBr.tick()
+			}
 			netLog.report(w5500, w6300, ch9120)
 			if b := c.BootCount(); b != lastBoot {
 				lastBoot = b
@@ -1265,6 +1308,16 @@ func main() {
 		if err := lcd.WritePNG(*lcdPNG); err != nil {
 			log.Error("lcd png", slog.String("path", *lcdPNG), slog.Any("err", err))
 		}
+	}
+	if audioDec != nil && *audioOut != "" {
+		if err := audioDec.WriteWAV(*audioOut); err != nil {
+			log.Error("audio wav", slog.String("path", *audioOut), slog.Any("err", err))
+		} else if !*quiet {
+			log.Info("audio saved", slog.String("path", *audioOut), slog.Int("samples", audioDec.Len()))
+		}
+	}
+	if midiBr != nil {
+		midiBr.close()
 	}
 
 	if *peekStr != "" {

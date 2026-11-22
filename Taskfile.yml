@@ -50,6 +50,8 @@ tasks:
     deps:
       - build
       - firmware:blinky
+      - firmware:audio
+      - firmware:midi
       - firmware:debugvars
       - firmware:lcd
       - firmware:touchlcd
@@ -74,6 +76,7 @@ tasks:
       - 'go build -o {{.BUILD}}/ethhost ./tools/ethhost'
       - 'go build -o {{.BUILD}}/pngcheck ./tools/pngcheck'
       - 'go build -o {{.BUILD}}/pincheck ./tools/pincheck'
+      - 'go build -o {{.BUILD}}/wavcheck ./tools/wavcheck'
       - 'go build -o {{.BUILD}}/serialcheck ./tools/serialcheck'
       - 'go build -o {{.BUILD}}/busfake ./tools/busfake'
       - 'bash tools/smoke.sh {{.BUILD}}'
@@ -82,6 +85,14 @@ tasks:
     desc: Differential instruction tests against QEMU (qemu-system-arm + arm-none-eabi-gdb)
     cmds:
       - go test -tags qemu ./internal/m33 -run TestQEMUInstructions
+
+  audio:test:
+    desc: Run the PWM audio firmware and check the exported WAV
+    deps: [build, firmware:audio]
+    cmds:
+      - go build -o {{.BUILD}}/wavcheck ./tools/wavcheck
+      - '{{.EMU}} -fw {{.BUILD}}/audio.elf -seconds 1 -quiet -audio-pwm 0 -audio-out {{.BUILD}}/audio.wav'
+      - '{{.BUILD}}/wavcheck -rate 48000 -channels 1 -freq 440 -freq-tol 30 -min-rms 0.1 {{.BUILD}}/audio.wav'
 
   firmware:blinky:
     desc: Build the TinyGo blinky firmware for the Pico 2
@@ -94,6 +105,30 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BLINKY}} .'
+
+  firmware:audio:
+    desc: Build the TinyGo PWM/GPIO audio example
+    dir: firmware/audio
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/audio.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/audio.elf .'
+
+  firmware:midi:
+    desc: Build the TinyGo USB-MIDI + UART MIDI example
+    dir: firmware/midi
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/midi.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/midi.elf .'
 
   firmware:blinky:uf2:
     desc: Build the blinky firmware as a UF2 image for flashing a real board

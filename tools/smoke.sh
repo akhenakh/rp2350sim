@@ -28,6 +28,24 @@ out=$("$EMU" -fw "$BUILD/blinky.elf" -seconds 1 -trace-pins 25 2>&1)
 n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
 if [ "$n" -ge 4 ]; then ok "blinky toggles GP25 ($n edges)"; else bad "blinky GP25" "$out"; fi
 
+# --- PWM/GPIO audio decode and WAV export -----------------------------------
+if [ -x "$BUILD/wavcheck" ]; then
+	"$EMU" -fw "$BUILD/audio.elf" -seconds 1 -quiet -audio-pwm 0 \
+		-audio-out "$BUILD/audio.wav" >/dev/null 2>&1
+	if "$BUILD/wavcheck" -rate 48000 -channels 1 -freq 440 -freq-tol 30 \
+		-min-rms 0.1 "$BUILD/audio.wav" >>"$BUILD/smoke.log" 2>&1; then
+		ok "PWM audio WAV"
+	else
+		bad "PWM audio WAV" "$(cat "$BUILD/smoke.log")"
+	fi
+fi
+
+# --- USB-MIDI class endpoint and monitor -------------------------------------
+if [ -f "$BUILD/midi.elf" ]; then
+	out=$("$EMU" -fw "$BUILD/midi.elf" -seconds 1 -usb-midi -midi-monitor 2>&1)
+	contains "USB-MIDI note on" '"msg":"midi"' "$out"
+fi
+
 # --- console input over USB CDC --------------------------------------------
 out=$("$EMU" -fw "$BUILD/echo.elf" -seconds 0.4 -input "smoke-input" 2>&1)
 contains "console echo" "smoke-input" "$out"
