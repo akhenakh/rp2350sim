@@ -172,6 +172,7 @@ type Emu struct {
 	midiEvents  []MIDIEvent
 	midiPending []midi.Message
 	midiParser  midi.Parser
+	midiNotes   map[int]bool
 
 	trigger LogicTrigger
 	frozen  frozenLogic
@@ -930,6 +931,7 @@ func (e *Emu) attachMIDI(c *rp2350.Chip, b *BoardDef) {
 	e.midiUART = -1
 	e.midiPending = e.midiPending[:0]
 	e.midiEvents = e.midiEvents[:0]
+	e.midiNotes = map[int]bool{}
 	e.midiParser.Reset()
 	if b == nil || b.MIDI == nil {
 		return
@@ -966,7 +968,8 @@ func (e *Emu) attachMIDI(c *rp2350.Chip, b *BoardDef) {
 	}
 }
 
-// addMIDI records a message for the UI monitor.
+// addMIDI records a message for the UI monitor and tracks sounding notes so
+// the keyboard can light keys the firmware plays.
 func (e *Emu) addMIDI(cycle uint64, m midi.Message) {
 	e.midiEvents = append(e.midiEvents, MIDIEvent{
 		Cycle: cycle,
@@ -976,6 +979,34 @@ func (e *Emu) addMIDI(cycle uint64, m midi.Message) {
 	if len(e.midiEvents) > 256 {
 		e.midiEvents = e.midiEvents[len(e.midiEvents)-128:]
 	}
+	if e.midiNotes == nil {
+		e.midiNotes = map[int]bool{}
+	}
+	switch m.Status & 0xF0 {
+	case 0x90:
+		if m.Data[1] == 0 {
+			delete(e.midiNotes, int(m.Data[0]))
+		} else {
+			e.midiNotes[int(m.Data[0])] = true
+		}
+	case 0x80:
+		delete(e.midiNotes, int(m.Data[0]))
+	case 0xB0:
+		if m.Data[0] == 120 || m.Data[0] == 123 { // all sound / notes off
+			e.midiNotes = map[int]bool{}
+		}
+	}
+}
+
+// SoundingNotes returns the notes the firmware is currently playing.
+func (e *Emu) SoundingNotes() map[int]bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[int]bool, len(e.midiNotes))
+	for note := range e.midiNotes {
+		out[note] = true
+	}
+	return out
 }
 
 // MIDIEvents returns the recent parsed MIDI messages.

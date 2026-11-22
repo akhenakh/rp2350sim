@@ -262,10 +262,11 @@ raw, unattenuated capture for analysis.
 
 Shown when the board declares `midi:`. The monitor lists messages from the
 firmware (USB-MIDI endpoint 3 or the tapped UART TX), newest first, with the
-virtual cycle and raw bytes. The chromatic keyboard spans two octaves;
-**−/+ Octave** moves it and **Panic** sends Note Off for held keys plus All
-Notes Off on all 16 channels. A key sends Note On on press and Note Off on
-release, so dragging across the keys plays a glissando. Host-to-device
+virtual cycle and raw bytes. The piano keyboard spans two octaves of the full
+panel width with real white/black key geometry; keys the firmware plays light
+up, and clicking or dragging plays a glissando. **−/+ Octave** moves the range
+and **Panic** sends Note Off for held keys plus All Notes Off on all 16
+channels. A key sends Note On on press and Note Off on release. Host-to-device
 messages use the same USB-MIDI or UART endpoint as the headless runner.
 
 ![MIDI tab](images/midi.png)

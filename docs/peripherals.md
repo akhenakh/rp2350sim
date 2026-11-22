@@ -453,9 +453,10 @@ CDC+MIDI descriptor (`descriptor.CDCMIDI`) and enumerates endpoint 3 alongside
 the CDC console.
 
 **UI.** The **MIDI** tab lists messages newest first with raw bytes and cycle
-time, and provides a two-octave chromatic keyboard with octave buttons and
-**Panic** (Note Off for held keys plus All Notes Off on all channels). A key
-sends Note On on press and Note Off on release.
+time, and provides a two-octave piano keyboard across the full panel width
+with octave buttons and **Panic** (Note Off for held keys plus All Notes Off
+on all channels). A key sends Note On on press and Note Off on release;
+clicking or dragging plays a glissando, and keys the firmware plays light up.
 
 ![MIDI tab](images/midi.png)
 

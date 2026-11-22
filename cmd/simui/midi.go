@@ -71,57 +71,26 @@ func midiPanel(snap MachineState) {
 			}
 		})
 
-		// Keyboard: two octaves of chromatic keys. A strip is unambiguous and
-		// keeps every note reachable, including the black ones.
-		Container(Attrs(Row, Gap(3), FixHeight(140)), func() {
-			for oct := 0; oct < 2; oct++ {
-				for semi := 0; semi < 12; semi++ {
-					note := (midiOctave+oct)*12 + semi
-					if note > 127 {
-						continue
-					}
-					midiKey(note, semi)
-				}
-			}
+		// Keyboard: a real piano layout spanning the full panel width. Held
+		// UI notes and notes the firmware is playing both light up.
+		base := midiOctave * 12
+		hi := base + 23
+		if hi > 127 {
+			hi = 127
+		}
+		active := emu.SoundingNotes()
+		for note := range midiHeld {
+			active[note] = true
+		}
+		pianoKeyboard(base, hi, 260, active, func(note int) {
+			midiHeld[note] = true
+			sendMIDI(midi.Message{Status: 0x90 | byte(midiChannel), Data: [2]byte{byte(note), 100}, Len: 3})
+		}, func(note int) {
+			delete(midiHeld, note)
+			sendMIDI(midi.Message{Status: 0x80 | byte(midiChannel), Data: [2]byte{byte(note), 0}, Len: 3})
 		})
 		Label("Click or drag the keys · host-to-device MIDI uses the board's USB-MIDI or UART endpoint.",
 			FontSize(11), TextColor(220, 6, 62, 1))
-	})
-}
-
-func midiKey(note, semi int) {
-	black := semi == 1 || semi == 3 || semi == 6 || semi == 8 || semi == 10
-	ContainerWithKey(fmt.Sprintf("midikey-%d", note), Attrs(Grow(1), Expand, Corners(4),
-		BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
-		st := ProcessButtonEvents(false)
-		held := midiHeld[note]
-		if st.Active && !held {
-			midiHeld[note] = true
-			sendMIDI(midi.Message{Status: 0x90 | byte(midiChannel), Data: [2]byte{byte(note), 100}, Len: 3})
-		} else if !st.Active && held {
-			delete(midiHeld, note)
-			sendMIDI(midi.Message{Status: 0x80 | byte(midiChannel), Data: [2]byte{byte(note), 0}, Len: 3})
-		}
-		switch {
-		case st.Active:
-			if black {
-				ModAttrs(Background(140, 45, 45, 1))
-			} else {
-				ModAttrs(Background(140, 45, 62, 1))
-			}
-		case black:
-			ModAttrs(Background(220, 12, 14, 1))
-		case st.Hovered:
-			ModAttrs(Background(220, 8, 88, 1))
-		default:
-			ModAttrs(Background(220, 6, 82, 1))
-		}
-		Container(Attrs(Grow(1), Expand), func() {})
-		textColor := TextColor(220, 8, 25, 1)
-		if black {
-			textColor = TextColor(220, 8, 88, 1)
-		}
-		Label(midi.NoteName(note), FontSize(10), textColor)
 	})
 }
 
