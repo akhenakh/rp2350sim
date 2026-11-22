@@ -225,9 +225,10 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   hardware); `SEL` does not model the GE flags. Unsigned-saturating and
   parallel DSP instructions (USAT/SSAT, QADD, SADD/UADD16, ...) halt rather
   than execute.
-- **USB host:** the emulated host enumerates the device and pumps CDC and
-  USB-MIDI (endpoint 3); arbitrary USB devices are not supported. Buffer
-  addresses are the TinyGo layout, not the endpoint control words.
+- **USB host:** the emulated host enumerates the device from its configuration
+  descriptor, follows the DPRAM buffer addresses in `EP_CONTROL`, and pumps
+  CDC (TinyGo and TinyUSB) and USB-MIDI; arbitrary USB classes and isochronous
+  endpoints are not supported.
 - **DMA:** paced transfers, AL1/AL2/AL3 aliases and completion interrupts, but
   no DREQ pacing.
 - **Timers:** the 64-bit read pair is latched, but writes to TIMEHW/TIMELW are

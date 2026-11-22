@@ -25,6 +25,8 @@ The repository keeps a small CMake project in `firmware/c`:
 ```sh
 task c:build      # cmake + ninja, PICO_BOARD=pico2
 task c:hello      # build and assert "hello c done"
+task c:usbhello   # TinyUSB CDC stdio ("hello usb done")
+task c:usbecho    # TinyUSB CDC input echo
 task c:blinky     # build and trace GP25
 task c:float      # single-precision FPU demo
 task c:multicore  # core 1 launch through the SIO FIFO
@@ -58,8 +60,12 @@ TinyGo's console:
 rp2350sim -fw build/hello.elf -seconds 1 -expect "hello c done"
 ```
 
-USB CDC stdio (`pico_enable_stdio_usb`) is not yet part of the verified path;
-keep UART enabled while the TinyUSB device stack is brought up.
+USB CDC stdio (`pico_enable_stdio_usb`) works with stock TinyUSB: the emulated
+host reads the configuration descriptor to find the CDC interfaces and
+endpoints, follows the DPRAM buffer addresses the stack programs in
+`EP_CONTROL`, and implements the control status stage and DATA0/DATA1
+toggling. `task c:usbhello` asserts the output and `task c:usbecho` feeds
+console input back through the CDC OUT endpoint.
 
 `pico_time` works: `sleep_ms`/`sleep_us`, `time_us_32/64`, alarms and the
 default alarm pool are driven by the emulated 1 MHz timer. `pico_multicore`
@@ -104,8 +110,9 @@ coprocessor operation with its operands and result.
 - Bootrom coverage is a functional subset. Firmware that calls `rom_reboot`,
   `reset_usb_boot`, partition/OTP services or the ROM SF table halts with a
   clear "unsupported service" message rather than executing ROM zeros.
-- USB device stdio is not validated yet; use UART stdio. The emulated host
-  uses TinyGo's endpoint buffer layout and forwards every IN endpoint to the
-  console; TinyUSB buffer-address programming is not modelled.
+- USB device stdio is validated end to end for TinyUSB (`hello_world/usb`,
+  `firmware/c/usbhello`, `firmware/c/usbecho`) and TinyGo (`firmware/echo`).
+  The host supports the CDC data/notification endpoints and USB-MIDI; other
+  USB classes and isochronous endpoints are not modelled.
 - The RP2350 bootrom is not emulated; the image is entered at its vector table.
   `PICO_NO_FLASH` / `PICO_COPY_TO_RAM` images are out of scope.
