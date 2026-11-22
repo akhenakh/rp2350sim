@@ -39,6 +39,68 @@ func TestUSBCdcOutControl(t *testing.T) {
 	}
 }
 
+// TestUSBMIDIEndpoints checks the EP3 buffers and the IN routing to the MIDI
+// callback rather than the CDC console.
+func TestUSBMIDIEndpoints(t *testing.T) {
+	c := New()
+	c.EnableUSBMIDI()
+	if c.SendUSBMIDI([]byte{0x09, 0x90, 60, 100}) {
+		t.Fatal("MIDI packet accepted before enumeration finished")
+	}
+	c.usb.state = usbHostRunning
+	pkt := []byte{0x09, 0x90, 60, 100}
+	if !c.SendUSBMIDI(pkt) {
+		t.Fatal("SendUSBMIDI refused an armed endpoint")
+	}
+	out := c.usb.word(usbBufCtrlOffOut(3))
+	if out&usbBufFull == 0 || out&0x3FF != 4 {
+		t.Fatalf("EP3 OUT control = %#x, want full/4", out)
+	}
+	if in := c.usb.word(usbBufCtrlOff(3)); in&usbBufFull != 0 {
+		t.Fatalf("EP3 IN control armed by SendUSBMIDI: %#x", in)
+	}
+	if got := c.usb.readBytes(usbBufDataOff(3, false), 4); string(got) != string(pkt) {
+		t.Fatalf("EP3 OUT data = % x", got)
+	}
+
+	var got []byte
+	c.SetUSBMIDI(func(b []byte) { got = append([]byte(nil), b...) })
+	c.usb.writeBytes(usbBufDataOff(3, true), []byte{0x08, 0x80, 60, 0})
+	c.usb.setWord(usbBufCtrlOff(3), 4|usbBufFull)
+	c.usb.pollEndpoints(c)
+	if string(got) != string([]byte{0x08, 0x80, 60, 0}) {
+		t.Fatalf("MIDI IN callback = % x", got)
+	}
+}
+
+// TestUSBControlWaitsForCompletionAck guards the multi-packet control path:
+// TinyGo sends the next EP0 chunk from the BUFF_STATUS ISR, so the host must
+// not complete a new packet before the firmware clears the previous bit. The
+// composite CDC+MIDI descriptor (175 bytes) is the first transfer long enough
+// to hit this.
+func TestUSBControlWaitsForCompletionAck(t *testing.T) {
+	c := New()
+	u := c.usb
+	u.state = usbHostControl
+	u.step = 4 // GET_DESCRIPTOR configuration, 255 bytes
+	u.buffStatus = 1
+	u.setWord(usbBufCtrlOff(0), 4|usbBufFull)
+	u.writeBytes(usbBufDataOff(0, true), []byte{1, 2, 3, 4})
+
+	u.pollControl()
+	if got := u.word(usbBufCtrlOff(0)); got&usbBufFull == 0 {
+		t.Fatal("host completed an EP0 packet before the firmware acked BUFF_STATUS")
+	}
+	u.write(c, usbBUFFSTATUS, 1)
+	u.pollControl()
+	if got := u.word(usbBufCtrlOff(0)); got&usbBufFull != 0 {
+		t.Fatalf("host did not complete the EP0 packet after the ack: %#x", got)
+	}
+	if u.step != 5 {
+		t.Fatalf("step = %d, want the transfer to finish at step 5", u.step)
+	}
+}
+
 // TestUSBInterruptLatches checks the write-1-to-clear interrupt path used by the
 // firmware's USB handler.
 func TestUSBInterruptLatches(t *testing.T) {

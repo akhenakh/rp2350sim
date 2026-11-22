@@ -36,6 +36,8 @@ const (
 
 const (
 	sysClkHz = 150_000_000
+	// SysClkHz is the exported system clock used by host-side devices.
+	SysClkHz = sysClkHz
 	// CPU is modelled at one instruction per cycle.
 	cyclesPerMicrosecond = sysClkHz / 1_000_000
 	cyclesPerMillisecond = sysClkHz / 1_000
@@ -115,6 +117,9 @@ type Chip struct {
 	// OnUART0 and OnUART1 receive console bytes written by firmware.
 	OnUART0 func(b byte)
 	OnUART1 func(b byte)
+	// OnUSBMIDI receives USB-MIDI event packets (4 bytes per event) sent by
+	// firmware on the MIDI IN endpoint.
+	OnUSBMIDI func(b []byte)
 
 	// Logger receives peripheral diagnostics. It is never nil: New installs a
 	// discarding logger so callers can log unconditionally.
@@ -1016,6 +1021,27 @@ func (c *Chip) SendUSBCDC(data []byte) { c.usb.SendCDC(data) }
 
 // USBCDCReady reports whether another host-to-device CDC packet can be queued.
 func (c *Chip) USBCDCReady() bool { return c.usb != nil && c.usb.CDCReady() }
+
+// EnableUSBMIDI routes endpoint 3 to the MIDI class instead of the CDC
+// console. It must be called before the firmware enumerates.
+func (c *Chip) EnableUSBMIDI() {
+	if c.usb != nil {
+		c.usb.midi = true
+	}
+}
+
+// SendUSBMIDI queues host-to-device USB-MIDI event packets (4 bytes each).
+// It reports false while the device has not armed the MIDI OUT endpoint.
+func (c *Chip) SendUSBMIDI(data []byte) bool {
+	return c.usb != nil && c.usb.SendMIDI(data)
+}
+
+// USBMIDIReady reports whether the firmware has armed its MIDI OUT endpoint.
+func (c *Chip) USBMIDIReady() bool { return c.usb != nil && c.usb.MIDIReady() }
+
+// SetUSBMIDI installs the callback that receives USB-MIDI packets from the
+// firmware's MIDI IN endpoint.
+func (c *Chip) SetUSBMIDI(fn func([]byte)) { c.OnUSBMIDI = fn }
 
 // SendUART delivers host bytes to a UART receive FIFO (0 or 1).
 func (c *Chip) SendUART(idx int, data []byte) {

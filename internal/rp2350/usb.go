@@ -30,6 +30,9 @@ type usbBlock struct {
 
 	attached bool
 	addr     uint32
+	// midi enables the USB-MIDI bulk endpoint (EP3), as used by TinyGo's
+	// CDCMIDI composite descriptor.
+	midi bool
 
 	// Host enumeration state.
 	state    usbHostState
@@ -314,7 +317,7 @@ func (u *usbBlock) tick(c *Chip) {
 		u.pollTick++
 		if u.pollTick >= 64 {
 			u.pollTick = 0
-			u.pollEndpoints()
+			u.pollEndpoints(c)
 		}
 	}
 }
@@ -362,6 +365,14 @@ func (u *usbBlock) pollControl() {
 	req := hostEnumeration[u.step]
 	in := req.reqType&0x80 != 0
 	if in {
+		// Do not complete the next packet while the firmware has not yet
+		// acknowledged the previous IN completion: a multi-packet control
+		// transfer (a config descriptor over 128 bytes) sends its next chunk
+		// from the BUFF_STATUS interrupt, and a second completion raised
+		// before that interrupt reads the register would be cleared unseen.
+		if u.buffStatus&1 != 0 {
+			return
+		}
 		if !u.epInFull(0) {
 			return
 		}
@@ -418,16 +429,45 @@ func (u *usbBlock) finishStep() {
 
 // pollEndpoints services the CDC data endpoints once enumeration is done: every
 // IN packet the firmware arms is drained and acknowledged.
-func (u *usbBlock) pollEndpoints() {
+func (u *usbBlock) pollEndpoints(c *Chip) {
 	for ep := range 8 {
 		if !u.epInFull(ep) {
 			continue
 		}
 		data := u.takeIN(ep)
-		if len(data) > 0 && u.OnCDC != nil {
+		if len(data) == 0 {
+			continue
+		}
+		if ep == 3 && u.midi {
+			if c.OnUSBMIDI != nil {
+				c.OnUSBMIDI(data)
+			}
+			continue
+		}
+		if u.OnCDC != nil {
 			u.OnCDC(data)
 		}
 	}
+}
+
+// MIDIReady reports whether the firmware has armed the MIDI OUT endpoint for
+// a host-to-device packet.
+func (u *usbBlock) MIDIReady() bool {
+	return u.midi && u.state == usbHostRunning && u.word(usbBufCtrlOffOut(3))&usbBufFull == 0
+}
+
+// SendMIDI queues a host-to-device USB-MIDI packet on endpoint 3.
+func (u *usbBlock) SendMIDI(data []byte) bool {
+	if !u.MIDIReady() {
+		return false
+	}
+	if len(data) > 64 {
+		data = data[:64]
+	}
+	u.writeBytes(usbBufDataOff(3, false), data)
+	u.setWord(usbBufCtrlOffOut(3), uint32(len(data))|usbBufFull)
+	u.raiseBuff(1 << 7) // EP3 OUT
+	return true
 }
 
 // CDCReady reports whether the host can publish another CDC OUT packet; the

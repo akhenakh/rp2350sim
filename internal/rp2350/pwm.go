@@ -128,6 +128,11 @@ func (p *pwmBlock) pinLevel(pin int) (bool, bool) {
 	return level, true
 }
 
+// PinIsPWM reports whether a GPIO is routed to a PWM slice.
+func (c *Chip) PinIsPWM(pin int) bool {
+	return pin >= 0 && pin <= 47 && int(c.Pins.Func[pin]) == pwmFuncSel
+}
+
 // PinBrightness returns the effective drive level of a pin as a 0..1 duty
 // cycle. It is used for backlight outputs: a plain GPIO reads as fully on or
 // off, a PWM pin as its compare/top ratio.
