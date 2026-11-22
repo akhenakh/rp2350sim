@@ -27,8 +27,17 @@ func (t *timerBlock) init(c *Chip, idx int) {
 		base = 0x400B8000
 	}
 	t.block = newRegBlock(base, 0x1000)
+	t.block.resetFn = func(c *Chip) { t.reset() }
 	t.block.readFn = t.read
 	t.block.writeFn = t.write
+	t.block.clearFn = func(c *Chip, off, v uint32) {
+		if off == 0x3C { // INTR is write-1-to-clear; the alias must clear bits
+			t.intR &^= v
+			t.block.regs[off/4] = t.intR
+			return
+		}
+		t.block.write(c, off, t.block.read(c, off)&^v)
+	}
 }
 
 func (t *timerBlock) reset() {

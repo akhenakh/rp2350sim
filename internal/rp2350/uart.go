@@ -39,8 +39,18 @@ const (
 	uartFRBUSY = 1 << 3 // UART busy
 )
 
+func (u *uartBlock) reset() {
+	u.rxMu.Lock()
+	u.rx = u.rx[:0]
+	u.imsc = 0
+	u.raw = 0
+	u.irqPending.Store(false)
+	u.rxMu.Unlock()
+}
+
 func newUART(c *Chip, base uint32, id int) *uartBlock {
 	u := &uartBlock{block: newRegBlock(base, 0x1000), chip: c, id: id, irq: uartRXIRQ + id}
+	u.block.resetFn = func(c *Chip) { u.reset() }
 	if id == 0 {
 		u.OnByte = func(b byte) {
 			if c.OnUART0 != nil {

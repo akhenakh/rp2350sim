@@ -36,6 +36,10 @@ const (
 	bootromDevinfoPtr   = 0x7700
 )
 
+// flashJEDEC is the JEDEC ID returned when direct mode selects CS0 (the
+// on-board W25Q128 flash).
+var flashJEDEC = []byte{0xEF, 0x40, 0x18}
+
 // qmiBlock holds the QMI direct-mode state in addition to the register file.
 type qmiBlock struct {
 	block   *regBlock
@@ -95,17 +99,30 @@ func newQMI() *qmiBlock {
 			}
 			if q.idMode {
 				resp := byte(0)
-				switch q.idIndex {
-				case 5:
-					resp = psramIDKGD
-				case 6:
-					resp = psramIDEID
+				csr := q.block.regs[0]
+				cs1 := csr&(1<<3|1<<7) != 0 // ASSERT_CS1N or AUTO_CS1N
+				cs0 := csr&(1<<2|1<<6) != 0 // ASSERT_CS0N or AUTO_CS0N
+				switch {
+				case cs1:
+					switch q.idIndex {
+					case 5:
+						resp = psramIDKGD
+					case 6:
+						resp = psramIDEID
+					}
+				case cs0:
+					// Direct mode also probes the boot flash. Return the
+					// on-board W25Q128 JEDEC ID rather than the PSRAM one.
+					if q.idIndex < len(flashJEDEC) {
+						resp = flashJEDEC[q.idIndex]
+					}
 				}
 				q.rx = append(q.rx, resp)
 				q.idIndex++
 			}
 		}
 	}
+	q.block.resetFn = func(c *Chip) { q.reset() }
 	return q
 }
 
@@ -132,6 +149,10 @@ func newXIPCtrl(c *Chip) *regBlock {
 		if off == 0 {
 			c.psramWritable = v&xipCtrlWritableM1 != 0
 		}
+	}
+	b.resetFn = func(c *Chip) {
+		b.regs[0] = 0x83
+		c.psramWritable = false
 	}
 	return b
 }

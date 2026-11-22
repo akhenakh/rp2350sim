@@ -179,6 +179,14 @@ func newOTP(c *Chip) *otpBlock {
 	o.block = newRegBlock(OTPBase, 0x1000)
 	o.block.readFn = o.readReg
 	o.block.writeFn = o.writeReg
+	o.block.resetFn = func(c *Chip) { o.resetLockState() }
+	o.block.clearFn = func(c *Chip, off, v uint32) {
+		if off == otpINTR { // write-1-to-clear
+			o.block.regs[off/4] &^= v
+			return
+		}
+		o.block.write(c, off, o.block.read(c, off)&^v)
+	}
 	o.block.regs[otpUSR/4] = 1 // DCTRL: the data bridge is enabled at reset
 	o.resetLockState()
 	// Manufacturing data: a 64-bit chip ID in rows 0-3. A real device has a

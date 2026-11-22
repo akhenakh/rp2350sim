@@ -1,15 +1,19 @@
 package rp2350
 
+import "fmt"
+
 // spiBlock models the PL022 SPI controllers (SPI0 at 0x40080000, SPI1 at
-// 0x40088000). Bytes written to the data register are handed to the attached
-// device; the returned bytes are served back through the receive FIFO.
+// 0x40088000). Frames written to the data register are handed to the attached
+// device; the returned frames are served back through the receive FIFO.
 type spiBlock struct {
 	block *regBlock
 	// Transfer is called for every byte written. It returns the byte clocked
 	// in on MISO (0xFF when nothing is attached).
 	Transfer  func(tx byte) (rx byte)
-	rx        []byte
+	rx        []uint32
 	transfers uint64
+	ror       bool
+	badDSS    bool
 }
 
 const (
@@ -17,10 +21,20 @@ const (
 	spiSRTNF = 1 << 1
 	spiSRRNE = 1 << 2
 	spiSRBSY = 1 << 4
+
+	spiRXDepth = 8 // PL022 receive FIFO depth on the RP2350
 )
+
+func (s *spiBlock) reset() {
+	s.rx = s.rx[:0]
+	s.transfers = 0
+	s.ror = false
+	s.badDSS = false
+}
 
 func newSPI(c *Chip, base uint32, id int) *spiBlock {
 	s := &spiBlock{block: newRegBlock(base, 0x1000)}
+	s.block.resetFn = func(c *Chip) { s.reset() }
 	s.Transfer = func(tx byte) byte {
 		if id == 0 && c.OnSPI0 != nil {
 			return c.OnSPI0(tx)
@@ -42,19 +56,55 @@ func newSPI(c *Chip, base uint32, id int) *spiBlock {
 			if len(s.rx) == 0 {
 				return 0, true
 			}
-			v := uint32(s.rx[0])
+			v := s.rx[0]
 			s.rx = s.rx[1:]
 			return v, true
+		case 0x14: // SSPRIS
+			ris := uint32(1 << 3) // TX FIFO not full
+			if s.ror {
+				ris |= 1
+			}
+			if len(s.rx) > 0 {
+				ris |= 1 << 2
+			}
+			return ris, true
+		case 0x20: // SSPICR
+			return 0, true
 		}
 		return 0, false
 	}
 	s.block.writeFn = func(c *Chip, off, v uint32) {
-		if off == 0x08 { // SSPDR: push a byte through the bus
+		switch off {
+		case 0x00: // SSPCR0: DSS selects 4..16 bits
+			// The register file keeps the value; nothing else to decode here.
+		case 0x08: // SSPDR
 			s.transfers++
-			rx := s.Transfer(byte(v))
-			s.rx = append(s.rx, rx)
-			if len(s.rx) > 32 {
-				s.rx = s.rx[len(s.rx)-32:]
+			dss := int(s.block.regs[0]&0xF) + 1
+			var frame uint32
+			switch dss {
+			case 8:
+				frame = uint32(s.Transfer(byte(v)))
+			case 16:
+				hi := s.Transfer(byte(v >> 8))
+				lo := s.Transfer(byte(v))
+				frame = uint32(hi)<<8 | uint32(lo)
+			default:
+				if !s.badDSS {
+					s.badDSS = true
+					c.Logger.Error("spi: unsupported frame size, treating as 8 bits",
+						"dss", dss, "base", fmt.Sprintf("%#x", s.block.base))
+				}
+				frame = uint32(s.Transfer(byte(v)))
+			}
+			if len(s.rx) >= spiRXDepth {
+				// Hardware drops the incoming frame and raises an overrun.
+				s.ror = true
+				return
+			}
+			s.rx = append(s.rx, frame)
+		case 0x20: // SSPICR: write-1-to-clear RORIC
+			if v&1 != 0 {
+				s.ror = false
 			}
 		}
 	}

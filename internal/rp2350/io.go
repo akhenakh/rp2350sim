@@ -194,6 +194,12 @@ func (io *ioBank) init(c *Chip) {
 			c.Pins.PullDown[pin] = v&(1<<2) != 0
 		}
 	}
+	// IO_BANK0 CTRL resets to FUNCSEL=NULL (0x1F), matching PinState.Func.
+	io.bank0.resetFn = func(c *Chip) {
+		for pin := range 48 {
+			io.bank0.regs[(0x04+pin*8)/4] = 0x1F
+		}
+	}
 }
 
 func (io *ioBank) reset() {}

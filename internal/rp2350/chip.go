@@ -60,6 +60,11 @@ type Chip struct {
 
 	// Cycles is the master clock counter, in CPU cycles at 150 MHz.
 	Cycles uint64
+	// lastMicros is the last microsecond tick applied to the slow
+	// peripherals. nextMicros is the cycle count of the next boundary, kept
+	// as a multiplication-free fast path for tickPeripherals.
+	lastMicros uint64
+	nextMicros uint64
 	// core is the CPU currently being stepped (0 or 1).
 	core int
 	// Paused advances time without executing instructions.
@@ -229,6 +234,7 @@ func New() *Chip {
 	}
 	c.otp = newOTP(c)
 	c.addRegBlock(c.otp.block)
+	c.Reset()
 	return c
 }
 
@@ -241,10 +247,24 @@ func (c *Chip) addRegBlock(b *regBlock) {
 // coreIdle reports whether a core has no instructions to run this cycle.
 func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 
+// invalidateMonitors clears the exclusive monitor of either core when a write
+// covers its monitored address. DMA writes go through the same path, so a
+// DMA update also breaks an in-flight ldrex/strex pair.
+func (c *Chip) invalidateMonitors(addr uint32) {
+	for _, cpu := range []*m33.CPU{c.CPU0, c.CPU1} {
+		if cpu != nil && cpu.MonitorCovers(addr) {
+			cpu.InvalidateMonitor()
+		}
+	}
+}
+
 // Run executes n cycles across both cores.
 func (c *Chip) Run(n uint64) {
-	target := c.Cycles + n
-	for c.Cycles < target && (!c.Halted || c.ContinueAfterHalt) {
+	// Count completed cycles locally: a reset rewinds Cycles to zero, and an
+	// absolute target would then make this call run for the old elapsed time
+	// again (a watchdog reboot loop would stretch a 1 ms chunk into minutes).
+	var done uint64
+	for done < n && (!c.Halted || c.ContinueAfterHalt) {
 		if c.Debug != nil && c.Debug.Stopped {
 			return
 		}
@@ -253,13 +273,15 @@ func (c *Chip) Run(n uint64) {
 		// instead of executing 150 empty cycles.
 		if c.Cycles&7 == 0 && c.canIdleSkip() {
 			skip := cyclesPerMicrosecond - c.Cycles%cyclesPerMicrosecond
-			skip = min(skip, target-c.Cycles)
+			skip = min(skip, n-done)
 			c.Cycles += skip
+			done += skip
 			c.usbPoll = 7 // check host input on this tick
 			c.tickPeripherals()
 			continue
 		}
 		c.Step()
+		done++
 	}
 }
 
@@ -267,7 +289,7 @@ func (c *Chip) Run(n uint64) {
 // change any observable state: both cores are asleep or parked, no DMA or PIO
 // engine is running, no cycle hook samples pins, and the USB device is off.
 func (c *Chip) canIdleSkip() bool {
-	if c.Paused || !coreIdle(c.CPU0) || !coreIdle(c.CPU1) {
+	if c.Paused || c.pendingReset || !coreIdle(c.CPU0) || !coreIdle(c.CPU1) {
 		return false
 	}
 	if c.dma != nil && c.dma.busy() {
@@ -372,18 +394,22 @@ func (c *Chip) advanceSleep(max uint64) {
 func (c *Chip) tickPeripherals() {
 	// Timers and PWM counters only need microsecond resolution; running them
 	// once per microsecond instead of once per cycle leaves the per-cycle
-	// budget to the CPU.
-	if c.Cycles%cyclesPerMicrosecond == 0 {
-		now := c.Cycles / cyclesPerMicrosecond
+	// budget to the CPU. Tick every boundary crossed since the last call: a
+	// PSRAM latency charge can advance Cycles mid-instruction, and skipping a
+	// boundary would delay an alarm by a whole microsecond.
+	for c.Cycles >= c.nextMicros {
+		c.lastMicros++
+		t := c.lastMicros
 		for i := range c.tmr {
-			c.tmr[i].tick(now)
+			c.tmr[i].tick(t)
 		}
 		if c.pwm != nil {
-			c.pwm.tick(now)
+			c.pwm.tick(t)
 		}
 		if c.wd != nil {
-			c.wd.tick(now)
+			c.wd.tick(t)
 		}
+		c.nextMicros += cyclesPerMicrosecond
 	}
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
@@ -420,41 +446,28 @@ func (c *Chip) tickPeripherals() {
 // Reset performs a chip reset and starts both cores from flash.
 func (c *Chip) Reset() {
 	c.Cycles = 0
+	c.lastMicros = 0
+	c.nextMicros = cyclesPerMicrosecond
 	c.Halted = false
 	c.core = 0
 	c.pendingReset = false
+	c.usbPoll = 0
+	c.pioLogN = 0
 	c.CPU0.Reset()
 	c.CPU1.Reset()
 	c.CPU0.Parked = false
 	c.CPU1.Parked = false
 	c.NVIC.reset()
 	c.Pins.reset()
-	for i := range c.tmr {
-		c.tmr[i].reset()
-	}
 	c.io.reset()
 	c.sio.reset()
-	if c.dma != nil {
-		c.dma.active = 0
+	// Every register block returns to its architectural reset state. The
+	// hooks restore values that are not zero (PIO/PWM/QMI/OTP/BOOTRAM) and
+	// clear the state those registers drive.
+	for _, b := range c.regs {
+		b.reset(c)
 	}
 	c.pioActive = 0
-	for _, p := range c.pio {
-		if p != nil {
-			p.writeCtrl(0)
-		}
-	}
-	for _, u := range c.uart {
-		if u != nil {
-			u.irqPending.Store(false)
-		}
-	}
-	if c.wd != nil {
-		c.wd.running = false
-		c.wd.deadline = 0
-	}
-	if c.otp != nil {
-		c.otp.resetLockState()
-	}
 	if c.Debug != nil {
 		c.Debug.Reset()
 	}
@@ -476,13 +489,21 @@ func (c *Chip) requestReset(reason string, delayCycles uint64) {
 // applyReset performs a pending reset and boots from the vector table in flash.
 func (c *Chip) applyReset() {
 	reason := c.pendingResetReason
+	force := c.wd != nil && c.wd.reason&wdReasonForce != 0
 	c.pendingReset = false
 	c.Boot()
 	c.resetReason = reason
-	if reason == "watchdog" && c.wd != nil && c.wd.reason&wdReasonForce == 0 {
-		// A forced TRIGGER reset already recorded its own cause; only an
-		// expiry reset sets the timer bit.
-		c.wd.reason |= wdReasonTimer
+	if c.wd != nil {
+		// The reason register reports the cause of this boot, not a stale one
+		// from an earlier watchdog reset.
+		c.wd.reason = 0
+		if reason == "watchdog" {
+			if force {
+				c.wd.reason |= wdReasonForce
+			} else {
+				c.wd.reason |= wdReasonTimer
+			}
+		}
 	}
 }
 
@@ -662,6 +683,7 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		c.OnWrite(addr, uint32(v), 1)
 	}
 	c.debugWrite(addr, 1)
+	c.invalidateMonitors(addr)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
 		c.SRAM[addr-SRAMBase] = v
 		return
@@ -704,6 +726,7 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		c.OnWrite(addr, uint32(v), 2)
 	}
 	c.debugWrite(addr, 2)
+	c.invalidateMonitors(addr)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-1 {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)
@@ -746,6 +769,7 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		c.OnWrite(addr, v, 4)
 	}
 	c.debugWrite(addr, 4)
+	c.invalidateMonitors(addr)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-3 {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)

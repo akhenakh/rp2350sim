@@ -64,7 +64,7 @@ func TestQMIProvidesPSRAMID(t *testing.T) {
 	c := New()
 	c.ConfigurePSRAM(8*1024*1024, 0, 8)
 
-	c.Write32(qmiBase, 1) // DIRECT_CSR.EN
+	c.Write32(qmiBase, 1|1<<7) // DIRECT_CSR.EN | AUTO_CS1N
 	if v := c.Read32(qmiBase); v&(1<<1) != 0 {
 		t.Fatalf("DIRECT_CSR reports busy: %#x", v)
 	}

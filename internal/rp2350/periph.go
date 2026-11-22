@@ -13,10 +13,22 @@ type regBlock struct {
 	// W1C register needs the written mask rather than the resulting value, so
 	// such blocks bypass the default read-modify-write.
 	clearFn func(c *Chip, off uint32, v uint32)
+	// resetFn, when set, restores any post-zero reset values and peripheral
+	// state after the register file has been cleared.
+	resetFn func(c *Chip)
 }
 
 func newRegBlock(base, size uint32) *regBlock {
 	return &regBlock{base: base, size: size, regs: make([]uint32, (size+3)/4)}
+}
+
+// reset clears the register file and lets the peripheral restore its
+// architectural reset values and internal state.
+func (b *regBlock) reset(c *Chip) {
+	clear(b.regs)
+	if b.resetFn != nil {
+		b.resetFn(c)
+	}
 }
 
 func (b *regBlock) read(c *Chip, off uint32) uint32 {
@@ -179,6 +191,7 @@ func newROSC(c *Chip) *regBlock {
 		}
 		return 0, false
 	}
+	b.resetFn = func(c *Chip) { state = 0x12345678 }
 	return b
 }
 
@@ -229,6 +242,10 @@ func newBootRAM(c *Chip) *regBlock {
 			n := (off - bootramLock0) / 4
 			unclaimed |= 1 << n
 		}
+	}
+	b.resetFn = func(c *Chip) {
+		b.regs[0] = 0x0000_4770 // boot2 stub
+		unclaimed = bootramUnclaimed
 	}
 	return b
 }

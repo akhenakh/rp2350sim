@@ -15,7 +15,6 @@ type NVIC struct {
 	prio   [64]byte
 
 	actlr uint32
-	vtor  uint32
 	aircr uint32
 	scr   uint32
 	ccr   uint32
@@ -37,10 +36,9 @@ func (n *NVIC) reset() {
 	n.active = [2]uint32{}
 	n.prio = [64]byte{}
 	n.actlr = 0
-	n.vtor = 0
 	n.aircr = 0
 	n.scr = 0
-	n.ccr = 0
+	n.ccr = 0x201 // RES1 bits 9 and 0, no unaligned trap
 	n.shpr = [12]byte{}
 	n.shcsr = 0
 	n.cfsr = 0
@@ -117,7 +115,7 @@ func (n *NVIC) bestPending(clear bool) int {
 	if cpu == nil {
 		return 0
 	}
-	if cpu.PRIMASK&1 != 0 {
+	if cpu.PRIMASK&1 != 0 || cpu.FAULTMASK&1 != 0 {
 		return 0
 	}
 	best := -1
@@ -130,6 +128,9 @@ func (n *NVIC) bestPending(clear bool) int {
 			continue
 		}
 		p := int(n.prio[irq])
+		if cpu.BASEPRI != 0 && p >= int(cpu.BASEPRI) {
+			continue
+		}
 		if best < 0 || p < bestPrio || (p == bestPrio && irq < best) {
 			best = irq
 			bestPrio = p
@@ -178,12 +179,11 @@ func (n *NVIC) read(off uint32) uint32 {
 		}
 		return v
 	case off == 0xD00:
-		return 0x410FD210 // Cortex-M33 r0p2
+		return 0x410FD210 // Cortex-M33: ARM, variant 1, part 0xD21, revision 0
 	case off == 0xD04:
-		v := uint32(n.chip.CPU0.IPSR)
-		return v
+		return uint32(n.chip.currentCPU().IPSR)
 	case off == 0xD08:
-		return n.vtor
+		return n.chip.currentCPU().VTOR
 	case off == 0xD0C:
 		return n.aircr
 	case off == 0xD10:
@@ -250,10 +250,8 @@ func (n *NVIC) write(off, v uint32) {
 		if v&(1<<28) != 0 { // PENDSVSET
 			n.chip.Logger.Debug("ppb: PENDSVSET ignored")
 		}
-	case off == 0xD08: // VTOR
-		n.vtor = v
-		n.chip.CPU0.VTOR = v
-		n.chip.CPU1.VTOR = v
+	case off == 0xD08: // VTOR is banked per core
+		n.chip.currentCPU().VTOR = v &^ 0x7F
 	case off == 0xD0C: // AIRCR
 		n.aircr = v & 0xFFFF
 		if v&(1<<2) != 0 {
@@ -263,7 +261,7 @@ func (n *NVIC) write(off, v uint32) {
 	case off == 0xD10:
 		n.scr = v
 	case off == 0xD14:
-		n.ccr = v
+		n.ccr = (v & 0x0000051A) | 0x201
 	case off >= 0xD18 && off < 0xD24:
 		i := (off - 0xD18) / 4
 		for k := range 4 {

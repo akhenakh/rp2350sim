@@ -10,6 +10,9 @@ type watchdogBlock struct {
 	deadline uint64 // virtual microseconds
 	load     uint32
 	reason   uint32
+	// scratch survives a watchdog/chip reset in hardware; the SDK stores the
+	// "enabled reboot" marker in scratch[4].
+	scratch [8]uint32
 }
 
 const (
@@ -30,6 +33,14 @@ func newWatchdog(c *Chip) *watchdogBlock {
 	w := &watchdogBlock{chip: c, block: newRegBlock(0x400D8000, 0x1000)}
 	w.block.readFn = w.read
 	w.block.writeFn = w.write
+	w.block.resetFn = func(c *Chip) {
+		w.running = false
+		w.deadline = 0
+		w.load = 0
+		for i := range w.scratch {
+			w.block.regs[(wdRegScratch+uint32(i)*4)/4] = w.scratch[i]
+		}
+	}
 	return w
 }
 
@@ -53,6 +64,12 @@ func (w *watchdogBlock) read(c *Chip, off uint32) (uint32, bool) {
 }
 
 func (w *watchdogBlock) write(c *Chip, off uint32, v uint32) {
+	if off >= wdRegScratch && off < wdRegScratch+4*8 {
+		i := (off - wdRegScratch) / 4
+		w.scratch[i] = v
+		w.block.regs[off/4] = v
+		return
+	}
 	switch off {
 	case wdRegCtrl:
 		if v&wdCtrlTrigger != 0 {

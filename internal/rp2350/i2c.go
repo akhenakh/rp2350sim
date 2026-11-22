@@ -85,8 +85,18 @@ const (
 	i2cABRTTXDataNoAck = 1 << 3
 )
 
+func (i *i2cBlock) reset() {
+	i.raw = i2cTXEmpty
+	i.enable = false
+	i.addr = 0
+	i.addrPhase = false
+	i.rx = i.rx[:0]
+	i.write = i.write[:0]
+}
+
 func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 	i := &i2cBlock{chip: c, block: newRegBlock(base, 0x1000), id: id}
+	i.block.resetFn = func(c *Chip) { i.reset() }
 	i.devices = map[uint8]I2CDevice{}
 	i.raw = i2cTXEmpty
 	i.block.readFn = func(c *Chip, off uint32) (uint32, bool) {

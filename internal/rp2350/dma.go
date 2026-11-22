@@ -50,16 +50,85 @@ func dmaIntReg(off uint32) (irq, kind int, ok bool) {
 	return irq, kind, true
 }
 
+// dmaAlias maps the AL1/AL2/AL3 per-channel aliases to the main register
+// offset (0x00 READ_ADDR, 0x04 WRITE_ADDR, 0x08 TRANS_COUNT, 0x0C CTRL) and
+// reports whether the write triggers the channel. The three alias groups use
+// different register orders.
+func dmaAlias(off uint32) (ch int, reg uint32, trig bool, ok bool) {
+	if off >= 0x400 {
+		return 0, 0, false, false // channel window only
+	}
+	ch = int(off / 0x40)
+	switch off % 0x40 {
+	case 0x10: // AL1_CTRL
+		return ch, 0x0C, false, true
+	case 0x14: // AL1_READ_ADDR
+		return ch, 0x00, false, true
+	case 0x18: // AL1_WRITE_ADDR
+		return ch, 0x04, false, true
+	case 0x1C: // AL1_TRANS_COUNT_TRIG
+		return ch, 0x08, true, true
+	case 0x20: // AL2_CTRL
+		return ch, 0x0C, false, true
+	case 0x24: // AL2_TRANS_COUNT
+		return ch, 0x08, false, true
+	case 0x28: // AL2_READ_ADDR
+		return ch, 0x00, false, true
+	case 0x2C: // AL2_WRITE_ADDR_TRIG
+		return ch, 0x04, true, true
+	case 0x30: // AL3_CTRL
+		return ch, 0x0C, false, true
+	case 0x34: // AL3_WRITE_ADDR
+		return ch, 0x04, false, true
+	case 0x38: // AL3_TRANS_COUNT
+		return ch, 0x08, false, true
+	case 0x3C: // AL3_READ_ADDR_TRIG
+		return ch, 0x00, true, true
+	}
+	return 0, 0, false, false
+}
+
 func newDMA(c *Chip) *dmaBlock {
 	d := &dmaBlock{chip: c, block: newRegBlock(0x50000000, 0x1000)}
+	d.block.resetFn = func(c *Chip) { d.reset() }
+	d.block.clearFn = func(c *Chip, off, v uint32) {
+		if irq, kind, ok := dmaIntReg(off); ok {
+			switch kind {
+			case 0: // INTR is write-1-to-clear
+				d.intr &^= v
+				d.syncIRQ()
+				return
+			case 3: // INTS acknowledges the enabled channels
+				inte := d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4]
+				d.intr &^= v & inte
+				d.syncIRQ()
+				return
+			}
+		}
+		d.block.write(c, off, d.block.read(c, off)&^v)
+	}
 	d.block.writeFn = func(c *Chip, off, v uint32) {
-		if off%0x40 == 0x0C { // CTRL_TRIG
+		if ch, reg, trig, ok := dmaAlias(off); ok {
+			d.block.regs[(uint32(ch)*0x40+reg)/4] = v
+			if trig {
+				d.start(ch)
+			}
+			return
+		}
+		if off < 0x400 && off%0x40 == 0x0C { // CTRL_TRIG
 			d.trigger(int(off/0x40), v)
 			return
 		}
-		if _, kind, ok := dmaIntReg(off); ok && kind == 0 {
-			d.intr &^= v
-			d.syncIRQ()
+		if irq, kind, ok := dmaIntReg(off); ok {
+			switch kind {
+			case 0: // INTR write-1-to-clear
+				d.intr &^= v
+				d.syncIRQ()
+			case 3: // INTS write-1-to-clear the enabled channels
+				inte := d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4]
+				d.intr &^= v & inte
+				d.syncIRQ()
+			}
 		}
 	}
 	d.block.readFn = func(c *Chip, off uint32) (uint32, bool) {
@@ -69,11 +138,24 @@ func newDMA(c *Chip) *dmaBlock {
 				return d.intr, true
 			case 1: // INTEn
 				return d.block.regs[off/4], true
-			default: // INTFn / INTSn
+			case 2: // INTFn
+				return d.block.regs[off/4], true
+			default: // INTSn
 				return d.intr & d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4], true
 			}
 		}
-		if off%0x40 == 0x0C {
+		if ch, reg, _, ok := dmaAlias(off); ok {
+			v := d.block.regs[(uint32(ch)*0x40+reg)/4]
+			if reg == 0x0C {
+				if d.ch[ch].active {
+					v |= dmaCtrlBusy
+				} else {
+					v &^= dmaCtrlBusy
+				}
+			}
+			return v, true
+		}
+		if off < 0x400 && off%0x40 == 0x0C {
 			// CTRL_TRIG reads back with BUSY while the channel is running.
 			v := d.block.regs[off/4]
 			if d.ch[off/0x40].active {
@@ -88,10 +170,31 @@ func newDMA(c *Chip) *dmaBlock {
 	return d
 }
 
+// start reads the channel's main registers and begins a transfer. The
+// AL1_TRANS_COUNT_TRIG, AL2_WRITE_ADDR_TRIG and AL3_READ_ADDR_TRIG aliases
+// update one register first and then call this.
+func (d *dmaBlock) reset() {
+	d.ch = [16]dmaChannel{}
+	d.active = 0
+	d.intr = 0
+}
+
+func (d *dmaBlock) start(ch int) {
+	if ch < 0 || ch >= len(d.ch) {
+		return
+	}
+	v := d.block.regs[uint32(ch*0x40)/4+3]
+	d.begin(ch, v)
+}
+
 func (d *dmaBlock) trigger(ch int, v uint32) {
 	if ch < 0 || ch >= len(d.ch) {
 		return
 	}
+	d.begin(ch, v)
+}
+
+func (d *dmaBlock) begin(ch int, v uint32) {
 	base := uint32(ch * 0x40)
 	ctrl := v &^ dmaCtrlBusy
 	chp := &d.ch[ch]

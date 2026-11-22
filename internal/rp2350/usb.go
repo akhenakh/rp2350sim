@@ -118,6 +118,20 @@ func usbBufDataOff(ep int, in bool) uint32 {
 	return off
 }
 
+func (u *usbBlock) reset() {
+	u.intr = 0
+	u.buffStatus = 0
+	u.sieStatus = 0
+	u.attached = false
+	u.addr = 0
+	u.state = usbHostDetached
+	u.step = 0
+	u.wait = 0
+	u.pollTick = 0
+	u.outSent = false
+	u.collected = u.collected[:0]
+}
+
 func newUSB(c *Chip) *usbBlock {
 	u := &usbBlock{chip: c}
 	u.dpram = newRegBlock(usbDPRAMBase, 0x1000)
@@ -125,6 +139,7 @@ func newUSB(c *Chip) *usbBlock {
 	u.regs.readFn = u.read
 	u.regs.writeFn = u.write
 	u.regs.clearFn = u.clear
+	u.regs.resetFn = func(c *Chip) { u.reset() }
 	return u
 }
 

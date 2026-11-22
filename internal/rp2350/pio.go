@@ -54,6 +54,12 @@ type pioSM struct {
 
 	waitingPush bool // autopush pending (RX FIFO was full)
 	pcSet       bool
+
+	// irq wait: the instruction raises the target flag first, then stalls
+	// until software (or another state machine) clears it.
+	irqWaiting   bool
+	irqWaitBlock *pioBlock
+	irqWaitFlag  int
 }
 
 const (
@@ -63,6 +69,14 @@ const (
 
 	pioSMBase   = 0xC8
 	pioSMStride = 0x18
+
+	// Block-level interrupt routing registers.
+	pioIRQ0INTE = 0x170
+	pioIRQ0INTF = 0x174
+	pioIRQ0INTS = 0x178
+	pioIRQ1INTE = 0x17C
+	pioIRQ1INTF = 0x180
+	pioIRQ1INTS = 0x184
 )
 
 // PIO reset values for the per-SM configuration registers.
@@ -77,6 +91,20 @@ func pioFuncSel(id int) uint8 { return uint8(6 + id) }
 
 func newPIO(c *Chip, base uint32, id int) *pioBlock {
 	p := &pioBlock{chip: c, block: newRegBlock(base, 0x1000), id: id}
+	p.block.resetFn = func(c *Chip) { p.reset() }
+	p.block.clearFn = func(c *Chip, off, v uint32) {
+		switch off {
+		case 0x30: // IRQ is write-1-to-clear
+			p.irq &^= v & 0xFF
+			p.block.regs[0x30/4] = p.irq
+			p.updateIRQ()
+		case 0x08: // FDEBUG is write-1-to-clear
+			p.fdebug &^= v
+			p.block.regs[0x08/4] = p.fdebug
+		default:
+			p.block.write(c, off, p.block.read(c, off)&^v)
+		}
+	}
 	for i := range p.sm {
 		s := &p.sm[i]
 		s.p = p
@@ -97,6 +125,45 @@ func newPIO(c *Chip, base uint32, id int) *pioBlock {
 	return p
 }
 
+func (p *pioBlock) reset() {
+	p.mem = [32]uint16{}
+	p.irq = 0
+	p.outVal = 0
+	p.outOE = 0
+	p.fdebug = 0
+	p.active = 0
+	p.chip.pioActive &^= 1 << uint(p.id)
+	for i := range p.sm {
+		s := &p.sm[i]
+		s.enabled = false
+		s.pc = 0
+		s.x, s.y = 0, 0
+		s.isr, s.osr = 0, 0
+		s.inCount, s.outCount = 0, 32
+		s.delay = 0
+		s.acc = 0
+		s.tx = [8]uint32{}
+		s.txN = 0
+		s.rx = [8]uint32{}
+		s.rxN = 0
+		s.waitingPush = false
+		s.pcSet = false
+		s.irqWaiting = false
+		s.irqWaitBlock = nil
+		s.irqWaitFlag = 0
+		s.clkdiv = pioClkdivReset
+		s.execctrl = pioExecctrlReset
+		s.shiftctrl = pioShiftctrlReset
+		s.pinctrl = pioPinctrlReset
+		base := uint32(pioSMBase + i*pioSMStride)
+		p.block.regs[base/4] = s.clkdiv
+		p.block.regs[(base+4)/4] = s.execctrl
+		p.block.regs[(base+8)/4] = s.shiftctrl
+		p.block.regs[(base+0x14)/4] = s.pinctrl
+	}
+	p.updateIRQ()
+}
+
 // ---- block registers ----
 
 func (p *pioBlock) read(c *Chip, off uint32) (uint32, bool) {
@@ -109,6 +176,12 @@ func (p *pioBlock) read(c *Chip, off uint32) (uint32, bool) {
 		return p.flevel(), true
 	case 0x030: // IRQ
 		return p.irq, true
+	case pioIRQ0INTE, pioIRQ0INTF, pioIRQ1INTE, pioIRQ1INTF:
+		return p.block.regs[off/4], true
+	case pioIRQ0INTS:
+		return (p.irq | p.block.regs[pioIRQ0INTF/4]) & p.block.regs[pioIRQ0INTE/4], true
+	case pioIRQ1INTS:
+		return (p.irq | p.block.regs[pioIRQ1INTF/4]) & p.block.regs[pioIRQ1INTE/4], true
 	case 0x044: // DBG_CFGINFO: 4-deep FIFOs, 32 instructions, PIO v1
 		return 4 | 32<<8 | 1<<16, true
 	}
@@ -150,10 +223,17 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 	case off == 0x030: // IRQ, write 1 to clear
 		p.irq &^= v & 0xFF
 		p.block.regs[off/4] = p.irq
+		p.updateIRQ()
 		return
 	case off == 0x034: // IRQ_FORCE
 		p.irq |= v & 0xFF
 		p.block.regs[0x30/4] = p.irq
+		p.updateIRQ()
+		return
+	case off == pioIRQ0INTE, off == pioIRQ0INTF, off == pioIRQ1INTE, off == pioIRQ1INTF:
+		p.updateIRQ()
+		return
+	case off == pioIRQ0INTS, off == pioIRQ1INTS: // read-only status
 		return
 	case off >= 0x048 && off < 0x048+32*4:
 		p.mem[(off-0x048)/4] = uint16(v)
@@ -187,6 +267,22 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 			s.execNow(uint16(v))
 		case 0x14: // PINCTRL
 			s.pinctrl = v
+		}
+	}
+}
+
+// updateIRQ drives the two PIO interrupt lines from the shared flags,
+// force registers and enables.
+func (p *pioBlock) updateIRQ() {
+	for i := range 2 {
+		inte := p.block.regs[(pioIRQ0INTE+uint32(i)*0xC)/4]
+		intf := p.block.regs[(pioIRQ0INTF+uint32(i)*0xC)/4]
+		active := (p.irq | intf) & inte
+		irq := 15 + 2*p.id + i
+		if active != 0 {
+			p.chip.NVIC.Pend(irq)
+		} else {
+			p.chip.NVIC.ClearPending(irq)
 		}
 	}
 }
@@ -258,6 +354,7 @@ func (s *pioSM) restart() {
 	s.delay = 0
 	s.acc = 0
 	s.waitingPush = false
+	s.irqWaiting = false
 }
 
 func (s *pioSM) txCap() int {
@@ -513,11 +610,8 @@ func (s *pioSM) readPins(base int) uint32 {
 }
 
 func (s *pioSM) outCountPins() int {
-	n := int((s.pinctrl >> 20) & 0x3F)
-	if n == 0 {
-		n = 32
-	}
-	return n
+	// PINCTRL.OUT_COUNT is 0..32 inclusive; 0 means no pins.
+	return int((s.pinctrl >> 20) & 0x3F)
 }
 
 // ---- execution ----
@@ -883,15 +977,26 @@ func (s *pioSM) execIrq(instr uint16) bool {
 	case 0: // set
 		p.irq |= 1 << uint(flag)
 		p.block.regs[0x30/4] = p.irq
-	case 1: // wait
-		if p.irq&(1<<uint(flag)) == 0 {
-			return false
+		p.updateIRQ()
+	case 1: // wait: raise the flag, then stall until it is cleared
+		if s.irqWaiting {
+			if s.irqWaitBlock.irq&(1<<uint(s.irqWaitFlag)) != 0 {
+				return false
+			}
+			s.irqWaiting = false
+			return true
 		}
+		p.irq |= 1 << uint(flag)
+		p.block.regs[0x30/4] = p.irq
+		p.updateIRQ()
+		s.irqWaiting = true
+		s.irqWaitBlock = p
+		s.irqWaitFlag = flag
+		return false
+	case 2, 3: // clear (Clear overrides Wait)
 		p.irq &^= 1 << uint(flag)
 		p.block.regs[0x30/4] = p.irq
-	case 2: // clear
-		p.irq &^= 1 << uint(flag)
-		p.block.regs[0x30/4] = p.irq
+		p.updateIRQ()
 	}
 	return true
 }
@@ -901,9 +1006,6 @@ func (s *pioSM) execSet(instr uint16) {
 	v := uint32(instr & 0x1F)
 	base := int((s.pinctrl >> 5) & 0x1F) // SET_BASE
 	count := int((s.pinctrl >> 26) & 7)
-	if count == 0 {
-		count = 32
-	}
 	switch dest {
 	case 0: // PINS
 		s.writePinRange(base, count, v, false)

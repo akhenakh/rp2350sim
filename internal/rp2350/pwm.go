@@ -13,13 +13,34 @@ type pwmBlock struct {
 const (
 	pwmBase    = 0x400A8000
 	pwmStride  = 0x14
-	pwmSlices  = 8
+	pwmSlices  = 12
 	pwmFuncSel = 4
 )
 
 func newPWM(c *Chip) *pwmBlock {
 	p := &pwmBlock{chip: c, block: newRegBlock(pwmBase, 0x1000)}
+	p.block.resetFn = func(c *Chip) { p.reset() }
+	p.reset()
 	return p
+}
+
+// pinSlice maps a GPIO to its PWM slice. GPIO 0-15 use slices 0-7,
+// GPIO 24-31 use slices 4-7, and GPIO 32-47 use slices 8-11.
+func pinSlice(pin int) int {
+	if pin >= 32 {
+		return 8 + (pin>>1)&3
+	}
+	return (pin >> 1) & 7
+}
+
+// reset restores the architectural reset values. TOP resets to 0xFFFF; a
+// programmed TOP of 0 is legal and must not be rewritten.
+func (p *pwmBlock) reset() {
+	clear(p.block.regs)
+	p.lastNow = 0
+	for slice := range pwmSlices {
+		p.block.regs[(slice*pwmStride+0x10)/4] = 0xFFFF
+	}
 }
 
 // tick updates slice counters and PWM-driven pins from the microsecond clock.
@@ -39,9 +60,6 @@ func (p *pwmBlock) tick(now uint64) {
 			div16 = 16 // DIV_INT 0 is clamped to 1 by the hardware
 		}
 		top := p.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
-		if top == 0 {
-			top = 0xFFFF
-		}
 		ctr := pwmCounter(now*(sysClkHz/1_000_000), div16, top)
 		p.block.regs[(slice*pwmStride+8)/4] = uint32(ctr)
 
@@ -50,8 +68,7 @@ func (p *pwmBlock) tick(now uint64) {
 			if int(p.chip.Pins.Func[pin]) != pwmFuncSel {
 				continue
 			}
-			pinSlice := (pin >> 1) & 7
-			if pinSlice != slice {
+			if pinSlice(pin) != slice {
 				continue
 			}
 			var level bool
@@ -60,8 +77,8 @@ func (p *pwmBlock) tick(now uint64) {
 			} else {
 				level = ctr < uint64(cc>>16)
 			}
-			// Inverted outputs flip the level.
-			if csr&(0x8<<uint(pin&1)) != 0 {
+			// A_INV/B_INV are bits 2/3: even pins are channel A, odd B.
+			if csr&(0x4<<uint(pin&1)) != 0 {
 				level = !level
 			}
 			p.chip.Pins.setOutput(pin, level)
@@ -86,7 +103,7 @@ func (p *pwmBlock) pinLevel(pin int) (bool, bool) {
 	if pin < 0 || pin > 47 || int(p.chip.Pins.Func[pin]) != pwmFuncSel {
 		return false, false
 	}
-	slice := (pin >> 1) & 7
+	slice := pinSlice(pin)
 	csr := p.block.regs[(slice*pwmStride+0)/4]
 	if csr&1 == 0 { // CSR_EN
 		return false, false
@@ -97,9 +114,6 @@ func (p *pwmBlock) pinLevel(pin int) (bool, bool) {
 		div16 = 16
 	}
 	top := p.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
-	if top == 0 {
-		top = 0xFFFF
-	}
 	ctr := pwmCounter(p.chip.Cycles, div16, top)
 	cc := p.block.regs[(slice*pwmStride+0x0C)/4]
 	var level bool
@@ -108,7 +122,7 @@ func (p *pwmBlock) pinLevel(pin int) (bool, bool) {
 	} else {
 		level = ctr < uint64(cc>>16)
 	}
-	if csr&(0x8<<uint(pin&1)) != 0 {
+	if csr&(0x4<<uint(pin&1)) != 0 {
 		level = !level
 	}
 	return level, true
@@ -127,15 +141,12 @@ func (c *Chip) PinBrightness(pin int) float32 {
 		}
 		return 0
 	}
-	slice := (pin >> 1) & 7
+	slice := pinSlice(pin)
 	csr := c.pwm.block.regs[(slice*pwmStride+0)/4]
 	if csr&1 == 0 {
 		return 0
 	}
 	top := c.pwm.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
-	if top == 0 {
-		return 0
-	}
 	cc := c.pwm.block.regs[(slice*pwmStride+0x0C)/4]
 	var cmp uint32
 	if pin&1 == 0 {
@@ -144,7 +155,7 @@ func (c *Chip) PinBrightness(pin int) float32 {
 		cmp = cc >> 16
 	}
 	duty := float32(cmp) / float32(top+1)
-	if csr&(0x8<<uint(pin&1)) != 0 {
+	if csr&(0x4<<uint(pin&1)) != 0 {
 		duty = 1 - duty
 	}
 	if duty < 0 {
