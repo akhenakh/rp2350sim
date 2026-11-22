@@ -94,6 +94,26 @@ tasks:
       - '{{.EMU}} -fw {{.BUILD}}/audio.elf -seconds 1 -quiet -audio-pwm 0 -audio-out {{.BUILD}}/audio.wav'
       - '{{.BUILD}}/wavcheck -rate 48000 -channels 1 -freq 440 -freq-tol 30 -min-rms 0.1 {{.BUILD}}/audio.wav'
 
+  run:audio:
+    desc: Decode the PWM audio demo to a WAV and report its properties
+    deps: [build, firmware:audio]
+    cmds:
+      - go build -o {{.BUILD}}/wavcheck ./tools/wavcheck
+      - '{{.EMU}} -fw {{.BUILD}}/audio.elf -seconds 1 -audio-pwm 0 -audio-out {{.BUILD}}/audio-demo.wav'
+      - '{{.BUILD}}/wavcheck {{.BUILD}}/audio-demo.wav'
+
+  run:midi:
+    desc: Run the USB-MIDI demo with the message monitor
+    deps: [build, firmware:midi]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/midi.elf -seconds 1.2 -usb-midi -midi-monitor'
+
+  run:midi:uart:
+    desc: Run the UART-MIDI demo (31250 baud on UART1)
+    deps: [build, firmware:midi]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/midi.elf -seconds 1.2 -midi-uart 1 -midi-monitor'
+
   firmware:blinky:
     desc: Build the TinyGo blinky firmware for the Pico 2
     dir: firmware/blinky
@@ -510,6 +530,27 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-psram '../../firmware/c/build/psram.elf'
+
+  ui:audio:
+    desc: Run the UI on the PWM audio board and open the Audio tab
+    deps: [firmware:audio]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-audio --tab audio '../../{{.BUILD}}/audio.elf'
+
+  ui:midi:
+    desc: Run the UI on the USB-MIDI board and open the MIDI tab
+    deps: [firmware:midi]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-midi --tab midi '../../{{.BUILD}}/midi.elf'
+
+  ui:midi:uart:
+    desc: Run the UI with MIDI on UART1 (31250 baud)
+    deps: [firmware:midi]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-midi-uart --tab midi '../../{{.BUILD}}/midi.elf'
 
   ui:debug:
     desc: Open the Debug tab on the C debugger fixture at debug_marker

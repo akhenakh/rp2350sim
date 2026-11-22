@@ -428,7 +428,8 @@ hearing at system volume. The saved WAV is the unmodified capture.
 
 ![Audio tab](images/audio.png)
 
-Reference board: `pico2-audio`; firmware `audio`. Task: `task audio:test`.
+Reference board: `pico2-audio`; firmware `audio`. Tasks: `task run:audio`
+(headless WAV), `task audio:test` (CI assertion), `task ui:audio`.
 
 ## MIDI
 
@@ -459,6 +460,8 @@ sends Note On on press and Note Off on release.
 ![MIDI tab](images/midi.png)
 
 Reference boards: `pico2-midi` (USB) and `pico2-midi-uart`; firmware `midi`.
+Tasks: `task run:midi`, `task run:midi:uart`, `task ui:midi`,
+`task ui:midi:uart`.
 
 ## Oscilloscope
 
@@ -531,8 +534,8 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` | `task ui:serial` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` | `task ui:bus` |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
-| `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task audio:test` |
-| `pico2-midi` | `-usb-midi -midi-monitor` | `task firmware:midi` |
-| `pico2-midi-uart` | `-midi-uart 1 -midi-monitor` | `task firmware:midi` |
+| `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task run:audio`, `task ui:audio` |
+| `pico2-midi` | `-usb-midi -midi-monitor` | `task run:midi`, `task ui:midi` |
+| `pico2-midi-uart` | `-midi-uart 1 -midi-monitor` | `task run:midi:uart`, `task ui:midi:uart` |
 
 See [ui.md](ui.md) for the UI controls and [boards.md](boards.md) for wiring.
