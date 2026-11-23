@@ -19,8 +19,8 @@ type pioBlock struct {
 	irq uint32
 
 	// Pin latch and direction mask maintained by OUT/SET/SIDESET/MOV PINS.
-	outVal uint32
-	outOE  uint32
+	outVal uint64
+	outOE  uint64
 
 	fdebug uint32
 
@@ -580,7 +580,7 @@ func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 	}
 	for i := range count {
 		pin := s.p.pinAt(base + i)
-		bit := uint32(1) << uint(pin)
+		bit := uint64(1) << uint(pin)
 		val := v&(1<<uint(i)) != 0
 		if dirs {
 			if val {
