@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeTarget struct {
@@ -201,6 +202,16 @@ func TestRSPPackets(t *testing.T) {
 	if got, _ := command(t, st, r, "Z2,2000,4"); got != "OK" || ft.watch[0x2000] != 4 {
 		t.Fatalf("Z2 = %q", got)
 	}
+	// Read/access watchpoints have no model behind them; do not claim them.
+	if got, _ := command(t, st, r, "Z3,2000,4"); got != "" {
+		t.Fatalf("Z3 = %q, want empty", got)
+	}
+	if got, _ := command(t, st, r, "Z4,2000,4"); got != "" {
+		t.Fatalf("Z4 = %q, want empty", got)
+	}
+	if len(ft.watch) != 1 {
+		t.Fatalf("read watchpoints changed the table: %v", ft.watch)
+	}
 
 	if got, _ := command(t, st, r, "qfThreadInfo"); got != "m1,2" {
 		t.Fatalf("qfThreadInfo = %q", got)
@@ -221,6 +232,25 @@ func TestRSPPackets(t *testing.T) {
 
 	if got, stop := command(t, st, r, "D"); got != "OK" || !stop {
 		t.Fatalf("D = %q stop=%v", got, stop)
+	}
+}
+
+// TestWaitStopExitsWithConnection checks that a stop waiter does not outlive
+// a connection whose target never stops.
+func TestWaitStopExitsWithConnection(t *testing.T) {
+	ft := newFakeTarget()
+	ft.stopped = false
+	st := &connState{t: ft, done: make(chan struct{}), logf: func(string, ...any) {}}
+	exited := make(chan struct{})
+	go func() {
+		st.waitStop(1)
+		close(exited)
+	}()
+	close(st.done)
+	select {
+	case <-exited:
+	case <-time.After(time.Second):
+		t.Fatal("waitStop did not exit after the connection closed")
 	}
 }
 

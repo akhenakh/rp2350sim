@@ -166,7 +166,8 @@ func (s *Server) handle(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	defer s.t.Continue() // never leave the machine frozen after a disconnect
 
-	st := &connState{conn: conn, t: s.t, logf: s.logf, reader: bufio.NewReader(conn)}
+	st := &connState{conn: conn, t: s.t, logf: s.logf, reader: bufio.NewReader(conn), done: make(chan struct{})}
+	defer close(st.done)
 	// GDB's "target remote" stops the target on attach.
 	core := 0
 	if c, _, _, _, ok := s.t.Stopped(); ok {
@@ -214,6 +215,9 @@ type connState struct {
 	// stop waiter updates it while the packet reader may be handling Ctrl-C,
 	// so it is atomic rather than plain int.
 	sel atomic.Int32
+	// done closes when the connection handler returns, so a stop waiter for
+	// a target that never stops cannot outlive the connection.
+	done chan struct{}
 }
 
 func (st *connState) send(payload string) {
@@ -249,6 +253,10 @@ func (st *connState) readPacket() (string, error) {
 			st.runMu.Unlock()
 			if running {
 				_ = st.t.Halt(int(st.sel.Load()))
+			} else {
+				// GDB expects a stop reply even when the target is already
+				// stopped; otherwise it waits for one that never comes.
+				st.send(st.stopReply())
 			}
 			continue
 		case '$':
@@ -504,7 +512,24 @@ func (st *connState) waitStop(gen uint64) {
 			st.send(st.stopReply())
 			return
 		}
+		if !st.waitTick() {
+			return
+		}
+	}
+}
+
+// waitTick sleeps for one poll interval, returning false when the connection
+// has gone away.
+func (st *connState) waitTick() bool {
+	if st.done == nil {
 		time.Sleep(2 * time.Millisecond)
+		return true
+	}
+	select {
+	case <-st.done:
+		return false
+	case <-time.After(2 * time.Millisecond):
+		return true
 	}
 }
 
@@ -538,12 +563,15 @@ func (st *connState) breakpoint(pkt string) {
 		} else {
 			err = st.t.RemoveBreakpoint(addr)
 		}
-	case 2, 3, 4: // write / read / access watchpoint
+	case 2: // write watchpoint
 		if add {
 			err = st.t.AddWatchpoint(addr, size)
 		} else {
 			err = st.t.RemoveWatchpoint(addr)
 		}
+	case 3, 4: // read / access watchpoints are not modelled
+		st.send("")
+		return
 	default:
 		st.send("")
 		return
