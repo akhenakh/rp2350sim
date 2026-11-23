@@ -539,7 +539,7 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2-psram` | `-psram 8 -psram-cs 8 -psram-latency 6` | `task ui:psram` |
 | `geek` | `-lcd -sd -sd-dir build/sdcard-host` | `task ui:lcd`, `task run:sdcard` |
 | `touch-lcd2` | `-touch-lcd2 -touch x,y` | `task ui:touchlcd` |
-| `pico2-dvi` | `-dvi-png PATH` | — (HSTX example) |
+| `pico2-dvi` | `-dvi-png PATH` | `task ui:dvi`, `task ui:dvi:png` |
 | `pico2b` | `-rp2350b` | — (48-GPIO package) |
 | `pico2-w5500` | `-eth` | `task ui:w5500` |
 | `poe-eth` | `-w6300` | `task ui:w6300` |

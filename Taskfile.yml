@@ -511,6 +511,20 @@ tasks:
     cmds:
       - go run . --board touch-lcd2 '../../{{.BUILD}}/touchlcd.elf'
 
+  ui:dvi:
+    desc: Run the UI on the HSTX DVI board with the pico-examples DVI demo
+    deps: [picoexamples:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-dvi --tab dvi '../../{{.BUILD}}/pico-examples/build/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf'
+
+  ui:dvi:png:
+    desc: Render the DVI tab headlessly to build/ui-dvi.png
+    deps: [picoexamples:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-dvi --tab dvi --run 0.5 --png '../../{{.BUILD}}/ui-dvi.png' '../../{{.BUILD}}/pico-examples/build/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf'
+
   ui:ws2812:
     desc: Run the UI with the WS2812B example (strip decoded from GP0)
     deps: [firmware:ws2812]

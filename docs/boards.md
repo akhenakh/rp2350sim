@@ -206,7 +206,8 @@ output or bit timing.
 - The `pico2-dvi` UI board enables the tab. The reference firmware is the
   stock `pico-examples` `hstx/dvi_out_hstx_encoder` (640x480 RGB332 on
   GP12-19); `task picoexamples:build` builds it and the smoke suite asserts a
-  640x480 frame.
+  640x480 frame. `task ui:dvi` opens the board and tab, and `task ui:dvi:png`
+  renders it headlessly.
 - Frame height is inferred from the active width (640→480, 320→240, 800→600,
   1280→720); HSTX itself carries no vertical timing.
 - The model consumes the single-word RAW_REPEAT blanking used by the example.
