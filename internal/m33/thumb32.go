@@ -649,25 +649,38 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 	// Literal forms: Rn == 15 for word loads. LDRB/LDRSB with Rt == 15 is
 	// PLD/PLI, a preload hint that must not write a register (writing R15
 	// would jump into low memory).
-	if rn == 15 && (op == 5 || op == 1) {
+	if rn == 15 && (op == 5 || op == 1 || op == 3) {
 		imm := uint32(hw2 & 0xFFF)
 		var addr uint32
 		if u {
 			addr = (c.pcRead() &^ 3) + imm
 		} else {
+			// LDRH/LDRSH literal accepts U=0; the address is still
+			// Align(PC,4), not the T4/T2 register form.
 			addr = (c.pcRead() &^ 3) - imm
 		}
-		if op == 5 {
+		switch op {
+		case 5:
 			if rt == 15 {
 				c.branchTo(c.Bus.Read32(addr))
 			} else {
 				c.R[rt] = c.Bus.Read32(addr)
 			}
-		} else if rt != 15 {
-			if signed {
-				c.R[rt] = uint32(int32(int8(c.Bus.Read8(addr))))
-			} else {
-				c.R[rt] = uint32(c.Bus.Read8(addr))
+		case 1:
+			if rt != 15 {
+				if signed {
+					c.R[rt] = uint32(int32(int8(c.Bus.Read8(addr))))
+				} else {
+					c.R[rt] = uint32(c.Bus.Read8(addr))
+				}
+			}
+		case 3:
+			if rt != 15 {
+				if signed {
+					c.R[rt] = uint32(int32(int16(c.Bus.Read16(addr))))
+				} else {
+					c.R[rt] = uint32(c.Bus.Read16(addr))
+				}
 			}
 		}
 		return

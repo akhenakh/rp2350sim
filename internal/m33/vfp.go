@@ -255,9 +255,10 @@ func (c *CPU) vfpLoadStore(hw1, hw2 uint16) {
 		sd = dreg * 2
 	}
 
-	if hw1&0x0020 == 0 {
-		// VLDR/VSTR: imm8*4, U selects the sign. The literal form (Rn=15)
-		// addresses Align(PC,4), not PC itself.
+	if hw1&0x0F20 == 0x0D00 {
+		// VLDR/VSTR: P=1, W=0, imm8*4, U selects the sign. P=0 with the same
+		// low bits is non-writeback VLDMIA/VSTMIA and must stay in the block
+		// path below. The literal form (Rn=15) addresses Align(PC,4).
 		off := int32(imm8 * 4)
 		base := c.R[rn]
 		if rn == 15 {

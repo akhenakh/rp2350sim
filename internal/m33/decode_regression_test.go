@@ -41,6 +41,32 @@ func TestLDRWPCThumbBit(t *testing.T) {
 	}
 }
 
+// TestLDRHalfLiteralNegative guards the U=0 literal form of LDRH/LDRSH. The
+// encoding is a PC-relative halfword load, not the T4/T2 register form.
+func TestLDRHalfLiteralNegative(t *testing.T) {
+	cases := []struct {
+		name string
+		hw1  uint16
+		hw2  uint16
+		want uint32
+	}{
+		{"ldrh", 0xF83F, 0x0008, 0x8001},
+		{"ldrsh", 0xF93F, 0x0008, 0xFFFF8001},
+	}
+	for _, tc := range cases {
+		bus := newExecBus()
+		cpu := New(bus)
+		bus.Write16(0x20000010, tc.hw1)
+		bus.Write16(0x20000012, tc.hw2)
+		bus.Write16(0x2000000C, 0x8001) // Align(PC,4)-8
+		cpu.R[15] = 0x20000010
+		cpu.Step()
+		if got := cpu.R[0]; got != tc.want {
+			t.Errorf("%s = %#x, want %#x", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestExclusiveByte round-trips LDAEXB/STREXB, used by the SDK's lock_core
 // byte spinlocks.
 func TestExclusiveByte(t *testing.T) {

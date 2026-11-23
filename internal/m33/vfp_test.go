@@ -58,6 +58,41 @@ func TestVCVTIntBits(t *testing.T) {
 	}
 }
 
+// TestVFPMultiLoadStore covers non-writeback VLDMIA/VSTMIA. Their W=0,
+// L=1/0 encoding overlaps the single-register VLDR/VSTR pattern; P=0 is what
+// distinguishes the block forms.
+func TestVFPMultiLoadStore(t *testing.T) {
+	cpu := New(newExecBus())
+	cpu.R[0] = 0x20000400
+	for i := range 4 {
+		cpu.Bus.Write32(cpu.R[0]+uint32(i*4), math.Float32bits(float32(i+1)))
+	}
+	cpu.exec32Coproc(0xEC90, 0x0A04) // vldmia r0, {s0-s3}
+	if cpu.Halted {
+		t.Fatalf("vldmia halted: %s", cpu.HaltReason)
+	}
+	for i := range 4 {
+		if got := math.Float32frombits(cpu.S[i]); got != float32(i+1) {
+			t.Fatalf("s%d = %v, want %v", i, got, float32(i+1))
+		}
+	}
+	if cpu.R[0] != 0x20000400 {
+		t.Fatalf("non-writeback vldmia changed r0 to %#x", cpu.R[0])
+	}
+
+	cpu.R[0] = 0x20000500
+	for i := range 4 {
+		cpu.S[i] = math.Float32bits(float32(i + 10))
+	}
+	cpu.exec32Coproc(0xEC80, 0x0A04) // vstmia r0, {s0-s3}
+	for i := range 4 {
+		got := math.Float32frombits(cpu.Bus.Read32(cpu.R[0] + uint32(i*4)))
+		if got != float32(i+10) {
+			t.Fatalf("stored s%d = %v, want %v", i, got, float32(i+10))
+		}
+	}
+}
+
 // TestVFPDoubleRegisterBounds checks that an undefined D16-D31 encoding halts
 // the guest instead of panicking the host on S[32].
 func TestVFPDoubleRegisterBounds(t *testing.T) {
