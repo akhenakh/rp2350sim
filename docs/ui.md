@@ -205,8 +205,10 @@ inputs:
   - { kind: bootsel, id: bootsel, label: BOOTSEL }
 ```
 
-`active_low: false` inverts a button, switch or encoder line. The board diagram's
-BOOTSEL button is always clickable and pulls the QSPI chip select low; firmware
+`active_low: false` inverts a button, switch or encoder line. Every board gets a
+BOOTSEL control automatically (an explicit `bootsel` entry changes its label);
+the board diagram's BOOTSEL button is always clickable too. It pulls the QSPI
+chip select low; firmware
 can read it through `SIO_GPIO_HI_IN` bit 27 (QSPI_CSN), as the TinyUSB BSP and
 the bootrom do. The synthetic bootrom does not enter USB mass-storage boot mode,
 so a held BOOTSEL is visible to firmware but does not start picoboot.

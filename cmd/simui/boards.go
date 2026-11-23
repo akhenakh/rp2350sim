@@ -657,6 +657,14 @@ func LoadBoards() ([]BoardDef, error) {
 				}
 			}
 		}
+		if bootselCount == 0 {
+			// Every Pico-style board has a BOOTSEL button on QSPI_SS; make it
+			// available without repeating it in every board entry.
+			if inputIDs["bootsel"] {
+				return nil, fmt.Errorf("boards: %s: input id \"bootsel\" is reserved", b.ID)
+			}
+			b.Inputs = append(b.Inputs, InputDef{Kind: "bootsel", ID: "bootsel", Label: "BOOTSEL"})
+		}
 	}
 	return file.Boards, nil
 }

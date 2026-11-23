@@ -29,8 +29,6 @@ boards:
     scope: [0, 1]
     logic:
       uart: { tx: 0, rx: 1, baud: 115200 }
-    inputs:
-      - { kind: bootsel, id: bootsel, label: BOOTSEL }
 
   - id: pico2-inputs
     name: RP2350 + user controls
