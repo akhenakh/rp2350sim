@@ -79,6 +79,14 @@ func TestVFPMultiLoadStore(t *testing.T) {
 	if cpu.R[0] != 0x20000400 {
 		t.Fatalf("non-writeback vldmia changed r0 to %#x", cpu.R[0])
 	}
+	cpu.R[0] = 0x20000600
+	for i := range 4 {
+		cpu.Bus.Write32(cpu.R[0]+uint32(i*4), math.Float32bits(float32(i+20)))
+	}
+	cpu.exec32Coproc(0xECB0, 0x0A04) // vldmia r0!, {s0-s3}
+	if cpu.R[0] != 0x20000610 {
+		t.Fatalf("writeback vldmia left r0 at %#x, want 0x20000610", cpu.R[0])
+	}
 
 	cpu.R[0] = 0x20000500
 	for i := range 4 {
