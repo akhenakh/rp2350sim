@@ -116,9 +116,10 @@ arm-none-eabi-gdb build/blinky.elf
 
 - Threads are the two cores: `Thread 1 "core0"` and `Thread 2 "core1"`.
   `thread 2` selects core 1 for registers and stepping.
-- `Z0`/`Z1` are execution breakpoints, `Z2`/`Z3`/`Z4` are write/read/access
-  watchpoints (the model checks writes only). They use the same debugger as
-  the Debug tab, so `-break` symbols and GDB breakpoints can coexist.
+- `Z0`/`Z1` are execution breakpoints and `Z2` is a write watchpoint. `Z3`/`Z4`
+  (read/access watchpoints) are rejected as unsupported rather than pretending
+  to work. They use the same debugger as the Debug tab, so `-break` symbols and
+  GDB breakpoints can coexist.
 - `s`/`stepi` and `vCont` step one instruction on the selected core; a step
   wakes a core sleeping in WFE/WFI.
 - `continue` resumes all cores. A client interrupt (Ctrl-C) halts the target.
@@ -135,6 +136,20 @@ arm-none-eabi-gdb build/blinky.elf
   at launch, and the toolbar **GDB** button starts or stops it on the configured
   address (default `127.0.0.1:3333`). The second toolbar row shows the listening
   address while it is active.
+
+A non-interactive attach looks like this (the Python-data-directory warnings
+are trimmed):
+
+```text
+$ arm-none-eabi-gdb -q -batch --data-directory=/usr/share/gdb \
+    -ex 'file build/debugvars.elf' -ex 'target remote 127.0.0.1:3333' \
+    -ex 'break main.marker' -ex continue -ex 'info registers pc sp' -ex detach
+Breakpoint 1 at 0x10002024: file firmware/debugvars/main.go, line 21.
+Thread 1 "core0" hit Breakpoint 1, main.marker (arg=305419896) at ...
+pc             0x10002024          0x10002024 <main.marker+16>
+sp             0x20003850          0x20003850
+[Inferior 1 (Remote target) detached]
+```
 
 ## Fixtures and tests
 

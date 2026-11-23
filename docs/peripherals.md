@@ -17,7 +17,14 @@ commands and UI steps; the register-level wiring lives in
 | SPI0/1 | `-logic-spi` | Logic | `protocols` |
 | I2C0/1 | `-i2c-tcp`, `-logic-i2c` | `i2c_tcp`, Bus, Logic | `busmaster` |
 | PIO | `-logic-pins`, `-continue-after-halt` | Logic, Scope | `piotest`, `ws2812` |
-| USB CDC | `-input`, `-stdin`, `-expect` | Console | `echo` |
+| USB CDC (TinyGo, TinyUSB) | `-input`, `-stdin`, `-expect` | Console | `echo`, `firmware/c/usbhello` |
+| USB-MIDI / UART MIDI | `-usb-midi`, `-midi-uart`, `-midi-udp` | `midi`, MIDI | `midi` |
+| Audio (I2S/PDM/PWM) | `-audio-*`, `-audio-out` | `audio`, Audio | `audio` |
+| HSTX / DVI | `-dvi-png` | `hstx`, DVI | pico-examples DVI |
+| RP2350B QFN-80 | `-rp2350b` | `package: qfn80` | `pico-examples` |
+| TRNG / SHA-256 | no user flag | no tab | pico-examples `rand`, `sha256` |
+| POWMAN AON timer | no user flag | no tab | `firmware/c/aontimer` |
+| GDB remote | `-gdb ADDR` | Debug, toolbar GDB | any ELF |
 | DMA, timers, watchdog | no user flag | no tab | `pico-examples` |
 | ST7789 LCD | `-lcd`, `-touch-lcd2`, `-lcd-png` | `lcd`, LCD | `lcd`, `touchlcd` |
 | CST816D touch | `-touch-lcd2`, `-touch` | `touch`, LCD, Sensors | `touchlcd` |
@@ -31,7 +38,7 @@ commands and UI steps; the register-level wiring lives in
 | WS2812B strip | `-ws2812 GPIO` | `ws2812`, LEDs | `ws2812` |
 | QSPI PSRAM | `-psram 8 -psram-latency 6` | `psram`, Board status | `firmware/c/psram` |
 | OTP fuses | `-otp`, `-otp-dump` | OTP | `firmware/c/otp` |
-| Flash / OTA | `-flash`, `-flash-out` | `--flash`, Board banner | `firmware/c/ota` |
+| Flash / OTA, A/B slots | `-flash`, `-flash-out` | `--flash`, Board banner | `firmware/c/ota` |
 | Logic analyzer | `-logic-*` | Logic | `protocols` |
 | Oscilloscope | power trace + `pincheck` | Scope | `pico2-analog` |
 | Bus Pirate target | `-i2c-tcp`, `-spi-tcp` | `i2c_tcp` / `spi_tcp`, Bus | `busmaster`, `busdevice` |
@@ -42,7 +49,7 @@ Build the demo firmware once with:
 task firmware:blinky firmware:lcd firmware:touchlcd firmware:piotest \
   firmware:ws2812 firmware:w5500 firmware:w6300 firmware:ch9120 firmware:wifi \
   firmware:protocols firmware:serialbridge firmware:busmaster firmware:busdevice \
-  firmware:cores firmware:sdcard
+  firmware:cores firmware:sdcard firmware:audio firmware:midi
 ```
 
 ## GPIO, PWM and ADC
@@ -148,9 +155,19 @@ by the **Logic** tab from pin traces. Reference firmware: `piotest`, `ws2812`.
 printf 'hello\r' | rp2350sim -fw build/echo.elf -seconds 1 -stdin
 ```
 
+Both the TinyGo CDC console and stock Pico SDK TinyUSB CDC stdio work. The
+emulated host follows the configuration descriptor, the DPRAM buffer addresses
+in `EP_CONTROL`, the control status stage and host OUT data PIDs.
+
 **UI.** The **Console** tab shows USB CDC + UART output. Click it to focus,
 then type; Enter, Backspace, Tab and the arrow keys reach the firmware. UART
 bridges and Bus Pirate status lines are listed in the same tab.
+
+![Console tab with TinyUSB CDC output](images/console.png)
+
+Reference firmware: `echo` (TinyGo), `firmware/c/usbhello` and
+`firmware/c/usbecho` (TinyUSB). Tasks: `task ui`, `task c:usbhello`,
+`task c:usbecho`.
 
 ## ST7789 LCD
 
@@ -197,6 +214,28 @@ inject touches by clicking or dragging the **LCD** panel.
 ![Sensors tab on the RP2350-Touch-LCD-2](images/sensors.png)
 
 Reference board: `touch-lcd2`. Task: `task ui:touchlcd`.
+
+## HSTX and DVI
+
+**Headless.** The HSTX command expander and TMDS encoder are decoded into a
+framebuffer. `-dvi-png PATH` writes the last complete frame:
+
+```sh
+rp2350sim -fw build/pico-examples/build/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf \
+  -seconds 0.5 -dvi-png dvi.png
+```
+
+The reference firmware is the stock pico-examples `hstx/dvi_out_hstx_encoder`
+(640×480 RGB332 on GP12–19); `task picoexamples:build` builds it. Frames are
+captured at the active width; the height is inferred from the common DVI modes
+(640×480, 320×240, 800×600, 1280×720). Serial TMDS timing is not modelled, and
+multi-word RAW / TMDS_REPEAT recirculation are fidelity gaps.
+
+**UI.** The `pico2-dvi` board enables the **DVI** tab, which shows the last
+frame and offers **Save PNG**. `task ui:dvi` opens it; `task ui:dvi:png`
+renders it headlessly.
+
+![DVI tab with the stock HSTX example](images/dvi.png)
 
 ## microSD and FAT16
 
@@ -327,6 +366,21 @@ the C demo.
 Reference firmware: `firmware/c/psram`. Tasks: `task c:psram`,
 `task ui:psram`.
 
+## RP2350B (QFN-80)
+
+**Headless.** `-rp2350b` models the QFN-80 package: SYSINFO reports package
+select 0 and the pin model exposes GP0–GP47. PIO `GPIOBASE` 0/16 gives its
+32-pin window access to GP32–47.
+
+**UI.** Set `package: qfn80` in `boards.yaml`; the `pico2b` board does this.
+The Board tab and GPIO table list all 48 pins, and the scope offers GP0–GP47.
+Pass `--board pico2b` (or select it in the picker).
+
+![RP2350B board with 48 GPIOs](images/rp2350b.png)
+
+The RP2350A default remains 30 GPIOs; `rp2350sim -rp2350b` is the headless
+equivalent. See [boards.md](boards.md#rp2350b-qfn-80) for the package limits.
+
 ## OTP fuses
 
 **Headless.** The OTP array is 4096 rows of 24 bits with fuse semantics and
@@ -351,6 +405,34 @@ run the C OTP example to populate it.
 
 Reference firmware: `firmware/c/otp`. Task: `task c:otp`.
 
+## TRNG, SHA-256 and the AON timer
+
+The RP2350 crypto and always-on blocks are functional; they have no UI tab, so
+the runner console is the interface:
+
+```sh
+# SHA-256 vector + 1 MB NIST test, with and without DMA
+rp2350sim -fw build/pico-examples/build/sha256/hello_sha256.elf \
+  -seconds 3 -expect Success -stop-on-expect
+
+# pico_rand distribution test through the TRNG
+rp2350sim -fw build/pico-examples/build/rand/rand.elf \
+  -seconds 3 -expect 'All done' -stop-on-expect
+
+# POWMAN 1 kHz timer, alarm and IRQ 45 through pico_aon_timer
+rp2350sim -fw firmware/c/build/aontimer.elf -seconds 2 \
+  -expect 'aon alarm 1001' -stop-on-expect
+```
+
+The TRNG produces deterministic EHR words from a seeded stream; reading the
+last EHR word starts a new 192-bit sample. SHA-256 supports word, halfword and
+byte WDATA writes (including DMA_SIZE_8), BSWAP and SUM0–7. POWMAN models the
+millisecond counter, set/read time, alarm and timer interrupt; deep-sleep power
+sequencing is not modelled.
+
+Reference firmware: pico-examples `sha/sha256` and `system/rand`,
+`firmware/c/aontimer`. Tasks: `task c:aontimer`, `task picoexamples:build`.
+
 ## Flash and OTA
 
 **Headless.** `-flash PATH` loads a raw 16 MiB image and writes it back after a
@@ -369,6 +451,13 @@ rp2350sim -flash build/ota.bin -seconds 0.2 -quiet
 tab shows a banner naming the flash image, its boot number and entry point;
 the status line changes the ELF name to `(flash)`. `task ui:ota` and
 `task ui:ota-png` run/render the demo.
+
+![Board banner after an OTA self-update](images/ota.png)
+
+Raw flash images can also carry the PT25 A/B table: the bootrom-style loader
+picks the highest-version executable slot, or the active/preferred one, maps
+its storage into the `0x10000000` window, and `rom_reboot(FLASH_UPDATE)`
+prefers the slot just written for exactly one boot. See [cli.md](cli.md#flash-and-self-update).
 
 Reference firmware: `firmware/c/ota`. Task: `task c:ota`.
 
@@ -455,10 +544,11 @@ rp2350sim -fw build/midi.elf -seconds 5 -usb-midi -midi-monitor \
 A datagram of raw MIDI bytes is parsed (running status included) and delivered
 to the firmware on endpoint 3 or the UART receive FIFO. Firmware messages are
 logged and sent back to the last UDP sender. The UART tap watches TX only, so
-an echo firmware cannot feed itself. The emulated host accepts the composite
-CDC+MIDI descriptor (`descriptor.CDCMIDI`) and enumerates endpoint 3 alongside
-the CDC console. System Exclusive (`F0`..`F7`) is not reassembled or forwarded;
-the monitor reports the parsed channel and system messages only.
+an echo firmware cannot feed itself. When both `-usb-midi` and `-midi-uart` are
+set, host messages are delivered to both transports. The emulated host accepts
+the composite CDC+MIDI descriptor (`descriptor.CDCMIDI`) and enumerates endpoint
+3 alongside the CDC console. System Exclusive (`F0`..`F7`) is not reassembled
+or forwarded; the monitor reports the parsed channel and system messages only.
 
 **UI.** The **MIDI** tab lists messages newest first with raw bytes and cycle
 time, and provides a two-octave piano keyboard across the full panel width
@@ -481,8 +571,9 @@ The UI **Scope** has up to eight channels, each with its own colour, 1 MHz
 sampling and a ~16 ms window. Any GPIO 0–47 can be added (RP2350A packages
 only bond 0–29). The legend shows the latest voltage and live
 frequency/duty/period readouts via the same edge measurement as `pincheck`.
-**Trigger** supports Off/Rise/Fall/High/Low on a chosen GPIO; a match freezes
-the window with a quarter of post-trigger data and marks the trigger instant.
+**Trigger** supports Off/Rise/Fall/High/Low on a chosen GPIO; the trigger pin
+is added to the channels if it is not already selected. A match freezes the
+window with a quarter of post-trigger data and marks the trigger instant.
 **Time Zoom** changes the window from 1× to 64×, **Range** selects 0.5, 1, 1.65,
 2, 3.3 or 5 V full scale, and **Reset** restores 1×/3.3 V. `analog:` board
 entries drive generated sine, square or triangle sources.

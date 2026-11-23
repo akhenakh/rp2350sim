@@ -11,6 +11,11 @@ and reference firmware. In short:
 |---|---|
 | `pico2` | none |
 | `pico2-lcd` | `-lcd` |
+| `pico2-dvi` | `-dvi-png PATH` |
+| `pico2b` | `-rp2350b` |
+| `pico2-audio` | `-audio-pwm 0 -audio-out PATH` |
+| `pico2-midi` | `-usb-midi -midi-monitor` |
+| `pico2-midi-uart` | `-midi-uart 1 -midi-monitor` |
 | `pico2-ws2812` | `-ws2812 0` |
 | `geek` | `-lcd -sd` (or `-sd-dir`) |
 | `touch-lcd2` | `-touch-lcd2` (plus `-touch`, `-sensors`, `-lcd-png`) |
@@ -194,6 +199,8 @@ project.
   `pico2b` and the `-rp2350b` flag expose the extra pins in the scope and GPIO
   table.
 
+![RP2350B board with 48 GPIOs](images/rp2350b.png)
+
 ## HSTX and DVI
 
 The RP2350 HSTX block is modelled at `0x400C0000` (control) and `0x50600000`
@@ -213,6 +220,8 @@ output or bit timing.
 - The model consumes the single-word RAW_REPEAT blanking used by the example.
   RAW with a count above one and TMDS_REPEAT's shift-register recirculation are
   not expanded; they are noted as fidelity gaps, not used by the DVI demo.
+
+![DVI tab with the stock HSTX example](images/dvi.png)
 
 ## TRNG, SHA-256 and the AON timer
 
@@ -238,6 +247,10 @@ pins the firmware drives.
   31250-baud UART, `-midi-monitor` and `-midi-udp ADDR` for the bridge. UI
   boards `pico2-midi` (USB-MIDI) and `pico2-midi-uart` (UART1 GP4/GP5).
   Reference firmware: `firmware/midi` (USB note traffic plus UART echo).
+
+![Audio tab](images/audio.png)
+
+![MIDI tab](images/midi.png)
 
 ## UART over TCP
 

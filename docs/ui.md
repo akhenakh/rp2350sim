@@ -182,6 +182,17 @@ A board with `psram` shows its size and per-access stall in the status line.
 
 ![Board tab](images/board.png)
 
+The `pico2b` board selects the QFN-80 package: the header diagram, GPIO table
+and scope expose GP0–GP47 instead of the RP2350A's GP0–GP29.
+
+![RP2350B board with 48 GPIOs](images/rp2350b.png)
+
+When the machine boots from a flash image (`--flash`), the status line names
+the image and boot count. After an OTA self-update the board shows the new
+entry point and write count, as in the banner below.
+
+![Board banner after an OTA self-update](images/ota.png)
+
 ### LCD
 
 The ST7789 framebuffer, only for boards with `lcd`. On a touch board, clicking
@@ -382,7 +393,9 @@ rp2350sim-ui --board pico2-bus --tab bus --bus-connect \
 ```
 
 `task ui:ota` opens the same setup live; `task ui:ota-png` writes
-`build/ui-ota.png`. The screenshots in this guide are produced the same way.
+`build/ui-ota.png`. The guide screenshots for DVI, MIDI, audio, scope, logic,
+RP2350B, USB and OTA are regenerated with `task docs:images` (rendered at 2x and
+downscaled to 1280×820).
 
 ## Keyboard
 

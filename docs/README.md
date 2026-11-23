@@ -78,9 +78,11 @@ See [ci.md](ci.md) for the full recipe.
 
 ## Supported targets at a glance
 
-- **Raspberry Pi Pico 2** (RP2350A), TinyGo and **Pico SDK C**: GPIO, UART,
-  SPI, I2C, PWM, ADC, PIO, USB CDC console (TinyGo), DMA, timers, multicore,
-  OTP and optional QSPI PSRAM on QMI CS1.
+- **Raspberry Pi Pico 2** (RP2350A) and **RP2350B** (QFN-80, 48 GPIOs), TinyGo
+  and **Pico SDK C**: GPIO, UART, SPI, I2C, PWM, ADC, PIO, USB CDC (TinyGo and
+  TinyUSB), USB-MIDI, audio capture, DMA, timers, multicore, OTP, TRNG/SHA-256,
+  the always-on timer, HSTX/DVI output, a GDB server and optional QSPI PSRAM on
+  QMI CS1. Raw flash images may use the emulator's A/B partition table.
   See [c.md](c.md) for the C path and its current limits.
 - **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
   CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).
@@ -93,6 +95,15 @@ See [ci.md](ci.md) for the full recipe.
 - **Waveshare RP2350-ETH** (non-PoE): CH9120 UART-to-Ethernet on UART1.
 - Breadboard variants: W5500 on SPI0, ST7789, WS2812B, UART over TCP and
   remote I2C/SPI devices over Bus Pirate tokens.
+
+## UI highlights
+
+| DVI output | USB-MIDI |
+|---|---|
+| ![DVI tab decoding the stock HSTX example](images/dvi.png) | ![MIDI tab with the piano and monitor](images/midi.png) |
+
+The [UI guide](ui.md) covers the board picker, every tab, the scope and logic
+analyzer, audio, MIDI, DVI and headless snapshots.
 
 ## Design notes
 
