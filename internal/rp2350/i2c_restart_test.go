@@ -74,6 +74,26 @@ func TestI2CRestartBeginsTransaction(t *testing.T) {
 	}
 }
 
+// TestI2CSecondTransactionWithoutTAR checks that a command after STOP starts
+// a fresh transaction at the latched TAR, even when software does not rewrite
+// IC_TAR or set RESTART.
+func TestI2CSecondTransactionWithoutTAR(t *testing.T) {
+	c := New()
+	const base = 0x40090000
+	dev := &wireRecorder{acks: []bool{true, true, true}}
+	c.AttachI2C(0, 0x50, dev)
+	c.Write32(base+i2cENABLE, 1)
+	c.Write32(base+i2cTAR, 0x50)
+	c.Write32(base+i2cDATA, 1<<9) // first transaction, STOP
+	if dev.begins != 1 {
+		t.Fatalf("first transaction began %d times", dev.begins)
+	}
+	c.Write32(base+i2cDATA, 0x42) // new transaction, TAR unchanged
+	if dev.begins != 2 {
+		t.Fatalf("second transaction began %d times, want 2", dev.begins)
+	}
+}
+
 func TestI2CRXFullUsesRXFullBit(t *testing.T) {
 	c := New()
 	const base = 0x40090000

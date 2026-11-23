@@ -13,6 +13,7 @@ type i2cBlock struct {
 	enable    bool
 	addr      uint8
 	addrPhase bool // the next wire byte is the address, not data
+	idle      bool // STOP seen; the next command starts a new transaction
 	rx        []byte
 	write     []byte // bytes written in the current transaction
 	devices   map[uint8]I2CDevice
@@ -90,6 +91,7 @@ func (i *i2cBlock) reset() {
 	i.enable = false
 	i.addr = 0
 	i.addrPhase = false
+	i.idle = false
 	i.rx = i.rx[:0]
 	i.write = i.write[:0]
 }
@@ -149,10 +151,12 @@ func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 			if !i.enable {
 				i.rx = i.rx[:0]
 				i.write = i.write[:0]
+				i.idle = false
 			}
 		case i2cTAR:
 			i.addr = uint8(v & 0x7F)
 			i.addrPhase = true
+			i.idle = false
 			i.write = i.write[:0]
 			if dev, ok := i.devices[i.addr]; ok {
 				if a, ok := dev.(I2CAddressable); ok {
@@ -220,7 +224,20 @@ func (i *i2cBlock) abortReason() uint32 {
 func (i *i2cBlock) dataCmd(v uint32) {
 	read := v&(1<<8) != 0
 	stop := v&(1<<9) != 0
-	if v&i2cRestart != 0 {
+	if i.idle {
+		// A command queued after a STOP starts a new transaction at the
+		// latched TAR, even if software did not rewrite IC_TAR.
+		i.idle = false
+		i.addrPhase = true
+		if dev, ok := i.devices[i.addr]; ok {
+			if t, ok := dev.(I2CTransaction); ok {
+				t.BeginTransaction()
+			}
+		}
+		if i.chip.OnI2C != nil {
+			i.chip.OnI2C(i.id, i.chip.Cycles, "addr", i.addr, 0, true)
+		}
+	} else if v&i2cRestart != 0 {
 		// A repeated start begins a new address phase at the already-latched
 		// TAR. The bridge uses BeginTransaction to emit "[0xA1" instead of a
 		// bare read token.
@@ -301,6 +318,7 @@ func (i *i2cBlock) dataCmd(v uint32) {
 		if i.chip.OnI2C != nil {
 			i.chip.OnI2C(i.id, i.chip.Cycles, "stop", i.addr, 0, true)
 		}
+		i.idle = true
 	}
 	i.addrPhase = false
 }
