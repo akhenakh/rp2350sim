@@ -94,6 +94,12 @@ type Chip struct {
 	partSize           uint32
 	preferredPartition int
 
+	// bootselHeld models the BOOTSEL button pulling the QSPI chip select low.
+	// The synthetic bootrom does not enter USB boot mode, but firmware can read
+	// the line through SIO GPIO_HI_IN bit 27 (QSPI_CSN), as the TinyUSB BSP and
+	// the real bootrom do.
+	bootselHeld bool
+
 	io     ioBank
 	sio    sioBlock
 	tmr    [2]timerBlock
@@ -536,6 +542,14 @@ func (c *Chip) clearCorePendingIRQ(core, irq int) {
 	}
 	c.ppb[core].ClearPending(irq)
 }
+
+// SetBootsel drives the QSPI chip-select line low when held, matching the
+// BOOTSEL button. It is visible to firmware as SIO_GPIO_HI_IN.QSPI_CSN. Chip
+// reset does not clear it: the real bootrom samples the line during reset.
+func (c *Chip) SetBootsel(held bool) { c.bootselHeld = held }
+
+// BootselHeld reports whether the BOOTSEL button is currently pressed.
+func (c *Chip) BootselHeld() bool { return c.bootselHeld }
 
 // Reset performs a chip reset and starts both cores from flash.
 // Package identifies the bonded RP2350 variant: QFN-60 is the RP2350A with

@@ -254,8 +254,13 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 		return uint32(c.core)
 	case 0x04: // GPIO_IN
 		return uint32(c.Pins.inputWord(0))
-	case 0x08: // GPIO_HI_IN
-		return uint32(c.Pins.inputWord(32))
+	case 0x08: // GPIO_HI_IN: GPIO32-47 plus QSPI/USB status
+		v := uint32(c.Pins.inputWord(32))
+		// QSPI_CSN is pulled low by the BOOTSEL button; idle is high.
+		if !c.bootselHeld {
+			v |= 1 << 27
+		}
+		return v
 	case 0x10:
 		return uint32(c.Pins.Out)
 	case 0x14:
