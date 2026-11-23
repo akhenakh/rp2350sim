@@ -81,6 +81,12 @@ tasks:
       - 'go build -o {{.BUILD}}/busfake ./tools/busfake'
       - 'bash tools/smoke.sh {{.BUILD}}'
 
+  zephyr:smoke:
+    desc: Build and run Zephyr samples on the RP2350 (needs a west workspace and /opt/zephyr-sdk)
+    deps: [build]
+    cmds:
+      - bash tools/zephyr-smoke.sh {{.BUILD}}
+
   test:qemu:
     desc: Differential instruction tests against QEMU (qemu-system-arm + arm-none-eabi-gdb)
     cmds:

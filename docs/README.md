@@ -23,6 +23,7 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |
 | [tinygo.md](tinygo.md) | installing, building with TinyGo, drop-in Taskfile/Makefile targets, dev loop |
 | [c.md](c.md) | C firmware with the Pico SDK: build, examples, console, current gaps |
+| [zephyr.md](zephyr.md) | Zephyr: SDK install, `rpi_pico2/rp2350a/m33` builds, validated samples and tests |
 | [release.md](release.md) | release archives, GoReleaser, supported platforms |
 
 ## Install
