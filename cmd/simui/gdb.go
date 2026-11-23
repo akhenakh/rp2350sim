@@ -94,6 +94,9 @@ func (t *uiGDBTarget) ReadMemory(addr uint32, size int) ([]byte, error) {
 	if t.emu.chip == nil {
 		return nil, errors.New("no machine")
 	}
+	if size <= 0 {
+		return []byte{}, nil
+	}
 	if data, ok := t.emu.chip.PeekBytes(addr, size); ok {
 		return data, nil
 	}
@@ -122,7 +125,7 @@ func (t *uiGDBTarget) WriteMemory(addr uint32, data []byte) error {
 	for i, b := range data {
 		a := addr + uint32(i)
 		if a >= rp2350.FlashBase && a < rp2350.FlashBase+rp2350.FlashSize {
-			t.emu.chip.Flash[a-rp2350.FlashBase] = b
+			t.emu.chip.PokeFlash(a, b)
 			continue
 		}
 		t.emu.chip.Write8(a, b)

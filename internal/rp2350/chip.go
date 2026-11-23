@@ -629,26 +629,27 @@ func (c *Chip) flashIndex(addr uint32, size int) (uint32, bool) {
 	if addr < FlashBase || addr >= FlashBase+FlashSize {
 		return 0, false
 	}
-	off := addr - FlashBase
-	if c.partSize > 0 && off < c.partSize {
-		off += c.partOffset
+	off := uint64(addr - FlashBase)
+	if c.partSize > 0 && off < uint64(c.partSize) {
+		off += uint64(c.partOffset)
 	}
-	if off > FlashSize-uint32(size) {
+	if off+uint64(size) > uint64(FlashSize) {
 		return 0, false
 	}
-	return off, true
+	return uint32(off), true
 }
 
 // flashStorage maps a storage offset into the booted partition window for the
 // XIP alias views.
 func (c *Chip) flashStorage(off uint32, size int) (uint32, bool) {
-	if c.partSize > 0 && off < c.partSize {
-		off += c.partOffset
+	o := uint64(off)
+	if c.partSize > 0 && o < uint64(c.partSize) {
+		o += uint64(c.partOffset)
 	}
-	if off > FlashSize-uint32(size) {
+	if o+uint64(size) > uint64(FlashSize) {
 		return 0, false
 	}
-	return off, true
+	return uint32(o), true
 }
 
 // BootCount is the number of times the chip has booted, including self-updates.

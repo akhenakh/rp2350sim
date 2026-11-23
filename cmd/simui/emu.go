@@ -1318,10 +1318,10 @@ func (e *Emu) LoadFlash(path string) error {
 	if len(data) > rp2350.FlashSize {
 		return fmt.Errorf("flash image is %d bytes, limit is %d", len(data), rp2350.FlashSize)
 	}
-	if len(data) < 8 {
-		return fmt.Errorf("flash image is too small to hold a vector table")
+	head, err := rp2350.BootVector(data)
+	if err != nil {
+		return err
 	}
-	head := append([]byte(nil), data[:8]...)
 	check := &firmware.Image{Format: "flash", Segments: []firmware.Segment{{Addr: rp2350.FlashBase, Data: head}}}
 	if err := check.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
 		return err

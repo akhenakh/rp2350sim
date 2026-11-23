@@ -29,6 +29,9 @@ func (t *gdbTarget) cpu(core int) (*m33.CPU, error) {
 func (t *gdbTarget) ReadMemory(addr uint32, size int) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if size <= 0 {
+		return []byte{}, nil
+	}
 	if data, ok := t.chip.PeekBytes(addr, size); ok {
 		return data, nil
 	}
@@ -57,9 +60,11 @@ func (t *gdbTarget) WriteMemory(addr uint32, data []byte) error {
 	for i, b := range data {
 		a := addr + uint32(i)
 		// GDB may load code with M/X; writing the flash backing array is
-		// debug-only but much more useful than silently ignoring it.
+		// debug-only but much more useful than silently ignoring it. The
+		// partition window decides which storage bytes a runtime address
+		// names.
 		if a >= rp2350.FlashBase && a < rp2350.FlashBase+rp2350.FlashSize {
-			t.chip.Flash[a-rp2350.FlashBase] = b
+			t.chip.PokeFlash(a, b)
 			continue
 		}
 		t.chip.Write8(a, b)

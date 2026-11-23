@@ -408,16 +408,12 @@ func main() {
 		}
 	} else {
 		// Booting straight from a flash image: validate the vector table the
-		// same way a host-loaded firmware is validated.
-		head := append([]byte(nil), c.Flash[:8]...)
-		if table := rp2350.ParsePartitionTable(c.Flash); table != nil {
-			idx := table.BootPartition(-1)
-			if idx < 0 {
-				log.Error("flash partition table has no bootable slot", slog.String("path", *flashIn))
-				exit(1)
-			}
-			off := table.Entries[idx].Offset
-			head = append([]byte(nil), c.Flash[off:off+8]...)
+		// same way a host-loaded firmware is validated, following a partition
+		// table to the slot the bootrom would run.
+		head, err := rp2350.BootVector(c.Flash)
+		if err != nil {
+			log.Error("unsupported flash image", slog.String("path", *flashIn), slog.Any("err", err))
+			exit(1)
 		}
 		bootImg := &firmware.Image{Format: "flash", Segments: []firmware.Segment{{Addr: rp2350.FlashBase, Data: head}}}
 		if err := bootImg.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {

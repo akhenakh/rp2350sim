@@ -46,9 +46,40 @@ func TestPartitionBootHighestVersion(t *testing.T) {
 	if c.BootSP() != 0x20002000 || c.BootEntry() != 0x10003400 {
 		t.Fatalf("vector = sp %#x pc %#x", c.BootSP(), c.BootEntry())
 	}
-	// Runtime flash reads translate into the booted slot.
+	// Runtime flash reads translate into the booted slot, including the
+	// debugger's side-effect-free Peek path.
 	if got := c.Read32(FlashBase + 4); got != 0x10003401 {
 		t.Fatalf("slot vector = %#x", got)
+	}
+	for i := range 4 {
+		b, ok := c.Peek8(FlashBase + uint32(i))
+		if !ok || b != c.Flash[0x300000+uint32(i)] {
+			t.Fatalf("peek %d = %#x ok=%v, want %#x", i, b, ok, c.Flash[0x300000+uint32(i)])
+		}
+	}
+}
+
+// TestPartitionRejectsOutOfRange checks that a malformed table is ignored
+// instead of selecting a slot outside the flash array.
+func TestPartitionRejectsOutOfRange(t *testing.T) {
+	c := New()
+	put := func(off uint32, v uint32) { binary.LittleEndian.PutUint32(c.Flash[off:], v) }
+	put(0, partitionMagic)
+	put(4, 1)
+	put(8, 1)
+	put(12, 0)
+	put(partitionHeader, FlashSize-0x1000)
+	put(partitionHeader+4, 0x100000) // ends past the 16 MiB array
+	put(partitionHeader+8, partitionExe)
+	if table := ParsePartitionTable(c.Flash); table != nil {
+		t.Fatalf("accepted out-of-range table: %+v", table)
+	}
+	if _, err := BootVector(c.Flash); err == nil {
+		t.Fatal("BootVector accepted an out-of-range slot")
+	}
+	c.Boot()
+	if c.partOffset != 0 || c.partSize != 0 {
+		t.Fatalf("booted partition %#x/%#x", c.partOffset, c.partSize)
 	}
 }
 

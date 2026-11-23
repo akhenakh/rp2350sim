@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -172,8 +173,7 @@ func (s *Server) handle(conn net.Conn) {
 		core = c
 	}
 	_ = s.t.Halt(core)
-	st.selected = core
-	st.current = core
+	st.sel.Store(int32(core))
 
 	for {
 		pkt, err := st.readPacket()
@@ -210,8 +210,10 @@ type connState struct {
 	running bool
 	gen     uint64
 
-	selected int // thread selected for step/registers (Hc/Hg), 0-based
-	current  int
+	// sel is the selected thread for step/registers (Hc/Hg), 0-based. The
+	// stop waiter updates it while the packet reader may be handling Ctrl-C,
+	// so it is atomic rather than plain int.
+	sel atomic.Int32
 }
 
 func (st *connState) send(payload string) {
@@ -246,7 +248,7 @@ func (st *connState) readPacket() (string, error) {
 			running := st.running
 			st.runMu.Unlock()
 			if running {
-				_ = st.t.Halt(st.selected)
+				_ = st.t.Halt(int(st.sel.Load()))
 			}
 			continue
 		case '$':
@@ -297,7 +299,7 @@ func (st *connState) command(pkt string) (stop bool, err error) {
 	case strings.HasPrefix(pkt, "qOffsets"):
 		st.send("Text=0;Data=0;Bss=0")
 	case pkt == "qC":
-		st.send(fmt.Sprintf("QC%d", st.current+1))
+		st.send(fmt.Sprintf("QC%d", st.sel.Load()+1))
 	case pkt == "qfThreadInfo":
 		st.send(st.threadList())
 	case pkt == "qsThreadInfo":
@@ -325,13 +327,13 @@ func (st *connState) command(pkt string) (stop bool, err error) {
 	case strings.HasPrefix(pkt, "vCont;"):
 		st.vCont(pkt)
 	case pkt == "vCtrlC":
-		_ = st.t.Halt(st.selected)
+		_ = st.t.Halt(int(st.sel.Load()))
 		st.setRunning(false)
 		st.send(st.stopReply())
 	case pkt == "c" || strings.HasPrefix(pkt, "C"):
 		st.startRun()
 	case pkt == "s" || strings.HasPrefix(pkt, "S"):
-		if err := st.t.Step(st.selected); err != nil {
+		if err := st.t.Step(int(st.sel.Load())); err != nil {
 			st.send("E" + err.Error())
 			break
 		}
@@ -418,8 +420,7 @@ func (st *connState) handleThreadSelect(pkt string) {
 	// Hc-1 / Hg0 select all; Hc1/Hg1 select core 0.
 	arg := pkt[2:]
 	if arg == "-1" || arg == "0" {
-		st.selected = 0
-		st.current = 0
+		st.sel.Store(0)
 		st.send("OK")
 		return
 	}
@@ -428,8 +429,7 @@ func (st *connState) handleThreadSelect(pkt string) {
 		st.send("E22")
 		return
 	}
-	st.selected = int(id) - 1
-	st.current = st.selected
+	st.sel.Store(int32(id) - 1)
 	st.send("OK")
 }
 
@@ -439,7 +439,7 @@ func (st *connState) vCont(pkt string) {
 			continue
 		}
 		kind := op[0]
-		core := st.selected
+		core := int(st.sel.Load())
 		if _, thread, ok := strings.Cut(op, ":"); ok {
 			id, err := strconv.ParseInt(thread, 16, 32)
 			if err == nil && id >= 1 && int(id) <= st.t.NumCores() {
@@ -499,8 +499,7 @@ func (st *connState) waitStop(gen uint64) {
 			}
 			st.running = false
 			st.runMu.Unlock()
-			st.selected = core
-			st.current = core
+			st.sel.Store(int32(core))
 			st.logf("gdb stopped", "core", core)
 			st.send(st.stopReply())
 			return
@@ -642,7 +641,7 @@ func unescapeBinary(s string) ([]byte, error) {
 }
 
 func (st *connState) readRegisters() {
-	regs, err := st.t.ReadRegisters(st.selected)
+	regs, err := st.t.ReadRegisters(int(st.sel.Load()))
 	if err != nil {
 		st.send("E14")
 		return
@@ -662,7 +661,7 @@ func (st *connState) writeRegisters(pkt string) {
 	}
 	for i := range RegisterCount {
 		v := uint32(data[i*4]) | uint32(data[i*4+1])<<8 | uint32(data[i*4+2])<<16 | uint32(data[i*4+3])<<24
-		if err := st.t.WriteRegister(st.selected, i, v); err != nil {
+		if err := st.t.WriteRegister(int(st.sel.Load()), i, v); err != nil {
 			st.send("E" + err.Error())
 			return
 		}
@@ -681,7 +680,7 @@ func (st *connState) readRegister(pkt string) {
 		st.send("E22")
 		return
 	}
-	regs, err := st.t.ReadRegisters(st.selected)
+	regs, err := st.t.ReadRegisters(int(st.sel.Load()))
 	if err != nil || idx >= len(regs) {
 		st.send("E14")
 		return
@@ -712,7 +711,7 @@ func (st *connState) writeRegister(pkt string) {
 		return
 	}
 	v := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
-	if err := st.t.WriteRegister(st.selected, idx, v); err != nil {
+	if err := st.t.WriteRegister(int(st.sel.Load()), idx, v); err != nil {
 		st.send("E" + err.Error())
 		return
 	}
@@ -750,7 +749,7 @@ func (st *connState) remoteCommand(pkt string) {
 		}
 		st.send("OK")
 	case "halt":
-		if err := st.t.Halt(st.selected); err != nil {
+		if err := st.t.Halt(int(st.sel.Load())); err != nil {
 			st.send("E" + err.Error())
 			return
 		}

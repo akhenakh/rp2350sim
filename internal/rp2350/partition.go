@@ -1,6 +1,10 @@
 package rp2350
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+)
 
 // The emulator recognises a simple, documented flash partition table at the
 // base of flash. The picobin/picotool table is a boot block with hash/signature
@@ -59,14 +63,53 @@ func ParsePartitionTable(flash []byte) *PartitionTable {
 	for i := range n {
 		off := partitionHeader + i*partitionEntryLen
 		e := flash[off : off+partitionEntryLen]
-		t.Entries[i] = Partition{
+		p := Partition{
 			Offset:  binary.LittleEndian.Uint32(e),
 			Size:    binary.LittleEndian.Uint32(e[4:]),
 			Flags:   binary.LittleEndian.Uint32(e[8:]),
 			Version: binary.LittleEndian.Uint32(e[12:]),
 		}
+		// A slot must lie inside the image. Reject the whole table otherwise:
+		// selecting an out-of-range slot must never index past the flash array.
+		// A zero-size entry is an unused slot; a bootable one needs at least
+		// the eight vector bytes.
+		if p.Size != 0 {
+			end := uint64(p.Offset) + uint64(p.Size)
+			if end > uint64(len(flash)) || uint64(p.Offset) >= uint64(len(flash)) {
+				return nil
+			}
+		}
+		if p.Bootable() && p.Size < 8 {
+			return nil
+		}
+		t.Entries[i] = p
 	}
 	return t
+}
+
+// BootVector returns the eight vector bytes the bootrom would execute from a
+// raw flash image, following a partition table when one is present. It is the
+// single validation path for both the runner and the UI.
+func BootVector(flash []byte) ([]byte, error) {
+	if len(flash) < 8 {
+		return nil, errors.New("flash image is too small to hold a vector table")
+	}
+	off := uint64(0)
+	if binary.LittleEndian.Uint32(flash) == partitionMagic {
+		t := ParsePartitionTable(flash)
+		if t == nil {
+			return nil, errors.New("malformed flash partition table")
+		}
+		idx := t.BootPartition(-1)
+		if idx < 0 {
+			return nil, errors.New("flash partition table has no bootable slot")
+		}
+		off = uint64(t.Entries[idx].Offset)
+	}
+	if off+8 > uint64(len(flash)) {
+		return nil, fmt.Errorf("flash vector at %#x is outside the image", off)
+	}
+	return append([]byte(nil), flash[off:off+8]...), nil
 }
 
 // BootPartition picks the slot the bootrom would run: an explicit active or
