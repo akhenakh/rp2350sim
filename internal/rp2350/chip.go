@@ -1064,7 +1064,11 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 		case addr >= b.base+0x1000 && addr < b.base+0x2000: // XOR
 			b.write(c, off, b.read(c, off)^v)
 		case addr >= b.base+0x2000 && addr < b.base+0x3000: // SET
-			b.write(c, off, b.read(c, off)|v)
+			if b.setFn != nil {
+				b.setFn(c, off, v)
+			} else {
+				b.write(c, off, b.read(c, off)|v)
+			}
 		default: // CLR
 			if b.clearFn != nil {
 				b.clearFn(c, off, v)

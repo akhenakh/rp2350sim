@@ -88,6 +88,35 @@ func TestPOWMANClearAlias(t *testing.T) {
 	}
 }
 
+// TestPOWMANSetAliasKeepsAlarm checks that the SDK's hw_set_bits path on
+// TIMER does not feed the FIRED status bit back through the W1C path.
+func TestPOWMANSetAliasKeepsAlarm(t *testing.T) {
+	c := New()
+	writeAONValue(c, powmanBase+powmanSetTime0, 1000)
+	c.Write32(powmanBase+powmanTimer, powmanTimerRun|powmanTimerAlarmEnab)
+	writeAONValue(c, powmanBase+powmanAlarm0, 1001)
+	c.Write32(powmanBase+powmanINTE, powmanIntTimer)
+	c.Cycles += 2 * 150_000
+	c.powman.tick(c)
+	if c.Read32(powmanBase+powmanINTR)&powmanIntTimer == 0 {
+		t.Fatal("alarm did not fire")
+	}
+
+	// Setting an unrelated bit must leave the alarm latch alone.
+	c.Write32(powmanBase+0x2000+powmanTimer, powmanTimerUseXOSC)
+	if c.Read32(powmanBase+powmanINTR)&powmanIntTimer == 0 {
+		t.Fatal("SET alias cleared the alarm latch")
+	}
+	if c.Read32(powmanBase+powmanTimer)&powmanTimerFired == 0 {
+		t.Fatal("SET alias cleared TIMER.FIRED")
+	}
+	// SET still applies writable fields.
+	c.Write32(powmanBase+0x2000+powmanTimer, powmanTimerPwrUp)
+	if c.Read32(powmanBase+powmanTimer)&powmanTimerPwrUp == 0 {
+		t.Fatal("SET alias did not set PWRUP_ON_ALARM")
+	}
+}
+
 // TestPOWMANForce checks that INTF is the write-forced mask, not the raw
 // status register at 0xE0.
 func TestPOWMANForce(t *testing.T) {

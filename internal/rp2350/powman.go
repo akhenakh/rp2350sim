@@ -54,6 +54,7 @@ func newPOWMAN() *powmanBlock {
 	p := &powmanBlock{block: newRegBlock(powmanBase, 0x1000)}
 	p.block.readFn = p.read
 	p.block.writeFn = p.write
+	p.block.setFn = p.set
 	p.block.clearFn = p.clear
 	p.block.resetFn = func(c *Chip) { p.reset() }
 	return p
@@ -172,6 +173,22 @@ func (p *powmanBlock) syncIRQ(c *Chip) {
 	} else {
 		c.NVIC.ClearPending(powmanIRQ)
 	}
+}
+
+// set handles the +0x2000 SET alias. The default alias read-modify-write
+// would feed TIMER's status bits (FIRED, USING_*) back into write(), whose
+// write-one-to-clear handling would clear the alarm; start from the stored
+// writable value instead.
+func (p *powmanBlock) set(c *Chip, off, v uint32) {
+	next := p.block.regs[off/4]
+	if off == powmanTimer {
+		// Never replay self-clearing controls or status latches; the SET mask
+		// itself may still request them.
+		next &^= powmanTimerClear | powmanTimerFired | 1<<10
+	}
+	next |= v
+	p.block.regs[off/4] = next
+	p.write(c, off, next)
 }
 
 // clear handles the +0x3000 CLR alias. INTR and INTF carry state outside the

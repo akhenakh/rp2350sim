@@ -14,6 +14,9 @@ type regBlock struct {
 	// consumes the access. Used by write-only registers whose byte order
 	// depends on the transfer size (SHA-256 WDATA).
 	writeSizeFn func(c *Chip, addr uint32, v uint32, size int) bool
+	// setFn, when set, handles a write through the +0x2000 SET alias. Status
+	// and write-one-to-clear bits must not be fed back from the read value.
+	setFn func(c *Chip, off uint32, v uint32)
 	// clearFn, when set, handles a write through the +0x3000 CLR alias. A
 	// W1C register needs the written mask rather than the resulting value, so
 	// such blocks bypass the default read-modify-write.
