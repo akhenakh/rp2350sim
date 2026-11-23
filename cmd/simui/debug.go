@@ -122,7 +122,7 @@ func (e *Emu) RunCycles(n uint64) {
 	e.debugger.Resume()
 	e.chip.Run(n)
 	if !e.debugger.Stopped {
-		e.debugger.Pause(e.chip.CPU0.R[15], e.chip.Cycles)
+		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
 	}
 }
 
@@ -137,7 +137,7 @@ func (e *Emu) RunToCycle(target uint64) {
 	e.debugger.Resume()
 	e.chip.Run(target - e.chip.Cycles)
 	if !e.debugger.Stopped {
-		e.debugger.Pause(e.chip.CPU0.R[15], e.chip.Cycles)
+		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
 	}
 }
 

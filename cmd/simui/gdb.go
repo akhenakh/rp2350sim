@@ -222,8 +222,7 @@ func (t *uiGDBTarget) Halt(core int) error {
 	if t.emu.chip.Debug == nil {
 		t.emu.chip.Debug = rp2350.NewDebugger()
 	}
-	t.emu.chip.Debug.Pause(cpu.R[15], t.emu.chip.Cycles)
-	t.emu.chip.Debug.StopCore = core
+	t.emu.chip.Debug.Pause(core, cpu.R[15], t.emu.chip.Cycles)
 	t.emu.chip.Debug.StopReason = "interrupt"
 	t.emu.running = false
 	return nil
@@ -271,8 +270,7 @@ func (t *uiGDBTarget) Reset() error {
 	t.emu.rebootLocked()
 	t.emu.running = false
 	if t.emu.chip != nil && t.emu.chip.Debug != nil {
-		t.emu.chip.Debug.Pause(t.emu.chip.CPU0.R[15], t.emu.chip.Cycles)
-		t.emu.chip.Debug.StopCore = 0
+		t.emu.chip.Debug.Pause(0, t.emu.chip.CPU0.R[15], t.emu.chip.Cycles)
 		t.emu.chip.Debug.StopReason = "reset"
 	}
 	return nil

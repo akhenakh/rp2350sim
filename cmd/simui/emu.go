@@ -1401,7 +1401,7 @@ func (e *Emu) SetRunning(run bool) {
 	if run {
 		e.debugger.Resume()
 	} else if e.chip != nil {
-		e.debugger.Pause(e.chip.CPU0.R[15], e.chip.Cycles)
+		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
 	}
 	e.mu.Unlock()
 }

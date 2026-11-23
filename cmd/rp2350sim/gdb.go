@@ -159,8 +159,7 @@ func (t *gdbTarget) Halt(core int) error {
 	if err != nil {
 		return err
 	}
-	t.chip.Debug.Pause(cpu.R[15], t.chip.Cycles)
-	t.chip.Debug.StopCore = core
+	t.chip.Debug.Pause(core, cpu.R[15], t.chip.Cycles)
 	t.chip.Debug.StopReason = "interrupt"
 	return nil
 }
@@ -204,8 +203,7 @@ func (t *gdbTarget) Reset() error {
 	defer t.mu.Unlock()
 	t.chip.Boot()
 	t.ensureDebugger()
-	t.chip.Debug.Pause(t.chip.CPU0.R[15], t.chip.Cycles)
-	t.chip.Debug.StopCore = 0
+	t.chip.Debug.Pause(0, t.chip.CPU0.R[15], t.chip.Cycles)
 	t.chip.Debug.StopReason = "reset"
 	return nil
 }

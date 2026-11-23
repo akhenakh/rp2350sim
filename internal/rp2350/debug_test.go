@@ -17,6 +17,23 @@ func TestWatchpointOverlap(t *testing.T) {
 	}
 }
 
+// TestBreakpointSkipIsPerCore checks that stepping over a breakpoint on one
+// core does not hide the same shared-code breakpoint on the other core.
+func TestBreakpointSkipIsPerCore(t *testing.T) {
+	c := New()
+	c.Debug = NewDebugger()
+	c.Debug.AddBreakpoint(0x20000010)
+	c.Debug.Pause(0, 0x20000010, 0)
+	c.Debug.Resume() // skip the breakpoint once on core 0
+	if c.Debug.checkPC(1, 0x20000010, 0) != true {
+		t.Fatal("core 1 breakpoint was skipped by core 0's step-over")
+	}
+	c.Debug.Stopped = false
+	if c.Debug.checkPC(0, 0x20000010, 0) != false {
+		t.Fatal("core 0 breakpoint was not skipped")
+	}
+}
+
 // TestStepDebugKeepsWatchpoint checks that a watchpoint hit during a single
 // step is reported as a watchpoint, not overwritten by the step stop.
 func TestStepDebugKeepsWatchpoint(t *testing.T) {

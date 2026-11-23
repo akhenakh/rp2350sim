@@ -18,6 +18,7 @@ type Debugger struct {
 	StopAddr uint32
 
 	skipPC    uint32
+	skipCore  int
 	skipValid bool
 }
 
@@ -75,6 +76,7 @@ func (d *Debugger) WatchList() []uint32 {
 func (d *Debugger) Resume() {
 	if d.Stopped {
 		d.skipPC = d.StopPC
+		d.skipCore = d.StopCore
 		d.skipValid = true
 	}
 	d.Stopped = false
@@ -82,10 +84,11 @@ func (d *Debugger) Resume() {
 	d.StopAddr = 0
 }
 
-// Pause records a user-requested stop.
-func (d *Debugger) Pause(pc uint32, cycle uint64) {
+// Pause records a user-requested stop on a core.
+func (d *Debugger) Pause(core int, pc uint32, cycle uint64) {
 	d.Stopped = true
 	d.StopReason = "paused"
+	d.StopCore = core
 	d.StopPC = pc
 	d.StopCycle = cycle
 	d.StopAddr = 0
@@ -105,7 +108,7 @@ func (d *Debugger) checkPC(core int, pc uint32, cycle uint64) bool {
 	if d.Stopped || !d.Breakpoints[pc] {
 		return false
 	}
-	if d.skipValid && pc == d.skipPC {
+	if d.skipValid && pc == d.skipPC && core == d.skipCore {
 		d.skipValid = false
 		return false
 	}
