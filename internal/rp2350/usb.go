@@ -165,8 +165,14 @@ func (u *usbBlock) epDataAddr(ep int, in bool) uint32 {
 		reg += 4
 	}
 	ctrl := u.word(reg)
+	// A single-buffered endpoint needs 64 bytes, a double-buffered one 128;
+	// the top 64 bytes of DPRAM are valid only in the single-buffer case.
+	need := uint32(64)
+	if u.epDouble(ep) {
+		need = 128
+	}
 	if ctrl&usbEpCtrlEnable != 0 {
-		if addr := ctrl & usbEpCtrlAddr; addr >= usbEpDataBase && addr+128 <= usbDPSRAMSize {
+		if addr := ctrl & usbEpCtrlAddr; addr >= usbEpDataBase && addr+need <= usbDPSRAMSize {
 			return addr
 		}
 	}
@@ -314,6 +320,9 @@ func (u *usbBlock) setWord(off, v uint32) { u.dpram.regs[off/4] = v }
 func (u *usbBlock) writeBytes(off uint32, b []byte) {
 	for i, v := range b {
 		a := off + uint32(i)
+		if a >= usbDPSRAMSize {
+			return
+		}
 		w := a / 4
 		sh := (a & 3) * 8
 		u.dpram.regs[w] = u.dpram.regs[w]&^(0xFF<<sh) | uint32(v)<<sh
@@ -324,6 +333,9 @@ func (u *usbBlock) readBytes(off uint32, n int) []byte {
 	b := make([]byte, n)
 	for i := range n {
 		a := off + uint32(i)
+		if a >= usbDPSRAMSize {
+			break
+		}
 		b[i] = byte(u.dpram.regs[a/4] >> ((a & 3) * 8))
 	}
 	return b

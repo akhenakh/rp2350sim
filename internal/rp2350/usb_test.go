@@ -187,6 +187,27 @@ func TestUSBEndpointControlAddress(t *testing.T) {
 	if got := u.epDataAddr(2, true); got != 0x240 {
 		t.Fatalf("out-of-range address = %#x, want fallback 0x240", got)
 	}
+	// The top 64 bytes fit a single-buffered endpoint.
+	u.setWord(0x008+8, usbEpCtrlEnable|0xFC0)
+	if got := u.epDataAddr(2, true); got != 0xFC0 {
+		t.Fatalf("top-of-DPRAM address = %#x, want 0xFC0", got)
+	}
+	// A double-buffered endpoint needs 128 bytes and must fall back.
+	u.setWord(0x008+8, usbEpCtrlEnable|usbEpCtrlDouble|0xFC0)
+	if got := u.epDataAddr(2, true); got != 0x240 {
+		t.Fatalf("double-buffered top address = %#x, want fallback 0x240", got)
+	}
+}
+
+// TestUSBBufferBounds checks that an oversized length near the end of DPRAM
+// is clamped instead of indexing past the register file.
+func TestUSBBufferBounds(t *testing.T) {
+	c := New()
+	u := c.usb
+	u.writeBytes(0xFFE, []byte{1, 2, 3, 4, 5})
+	if got := u.readBytes(0xFFE, 8); len(got) != 8 || got[0] != 1 || got[1] != 2 || got[2] != 0 {
+		t.Fatalf("clamped read = % x", got)
+	}
 }
 
 // TestUSBTakeINDoubleBuffer checks that two TinyUSB bulk-IN packets queued in
