@@ -56,7 +56,9 @@ func dmaIntReg(off uint32) (irq, kind int, ok bool) {
 // dmaAlias maps the AL1/AL2/AL3 per-channel aliases to the main register
 // offset (0x00 READ_ADDR, 0x04 WRITE_ADDR, 0x08 TRANS_COUNT, 0x0C CTRL) and
 // reports whether the write triggers the channel. The three alias groups use
-// different register orders.
+// different register orders. RP2350 datasheet Table 1253 and
+// hardware/regs/dma.h put AL2 at CTRL/COUNT/READ/WRITE_TRIG and AL3 at
+// CTRL/WRITE/COUNT/READ_TRIG; this is not the RP2040 alias map.
 func dmaAlias(off uint32) (ch int, reg uint32, trig bool, ok bool) {
 	if off >= 0x400 {
 		return 0, 0, false, false // channel window only
