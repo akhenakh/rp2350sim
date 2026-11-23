@@ -218,7 +218,7 @@ func TestUSBTakeINDoubleBuffer(t *testing.T) {
 	u.setWord(0x008+16, usbEpCtrlEnable|usbEpCtrlDouble|0x700) // EP3 IN
 	u.writeBytes(0x700, []byte{1, 2, 3, 4})
 	u.writeBytes(0x740, []byte{5, 6, 7, 8})
-	u.setWord(usbBufCtrlOff(3), 4|usbBufFull|((4|usbBufFull)<<usbBuf1Shift))
+	u.setWord(usbBufCtrlOff(3), 4|usbBufFull|usbBufAvail|((4|usbBufFull|usbBufAvail)<<usbBuf1Shift))
 	got := u.takeIN(3)
 	if string(got) != string([]byte{1, 2, 3, 4, 5, 6, 7, 8}) {
 		t.Fatalf("double-buffered payload = % x", got)
@@ -229,6 +229,30 @@ func TestUSBTakeINDoubleBuffer(t *testing.T) {
 	}
 	if u.buffStatus&(1<<6) == 0 {
 		t.Fatal("EP3 IN completion did not raise BUFF_STATUS")
+	}
+}
+
+// TestUSBTakeINBufferOne checks that a double-buffered IN endpoint can be
+// drained when only buffer 1 is fully armed, and that a half-armed buffer 1
+// is not taken.
+func TestUSBTakeINBufferOne(t *testing.T) {
+	c := New()
+	u := c.usb
+	u.setWord(0x008+16, usbEpCtrlEnable|usbEpCtrlDouble|0x700) // EP3 IN
+	u.writeBytes(0x740, []byte{9, 8, 7})
+	u.setWord(usbBufCtrlOff(3), (3|usbBufFull)<<usbBuf1Shift) // FULL without AVAIL
+	if u.epInReady(3) {
+		t.Fatal("half-armed buffer 1 reported ready")
+	}
+	u.setWord(usbBufCtrlOff(3), (3|usbBufFull|usbBufAvail)<<usbBuf1Shift)
+	if !u.epInReady(3) {
+		t.Fatal("buffer 1 alone did not report ready")
+	}
+	if got := u.takeIN(3); string(got) != string([]byte{9, 8, 7}) {
+		t.Fatalf("buffer 1 payload = % x", got)
+	}
+	if ctrl := u.word(usbBufCtrlOff(3)); ctrl != 3<<usbBuf1Shift {
+		t.Fatalf("completion control = %#x", ctrl)
 	}
 }
 

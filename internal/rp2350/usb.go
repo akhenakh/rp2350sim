@@ -192,7 +192,16 @@ func (u *usbBlock) epDouble(ep int) bool {
 // AVAIL after a settle delay); ACKing the intermediate write would send the
 // same packet twice. TinyGo sets both bits in one write.
 func (u *usbBlock) epInReady(ep int) bool {
-	ctrl := u.word(usbBufCtrlOff(ep)) & 0xFFFF
+	ctrl := u.word(usbBufCtrlOff(ep))
+	if usbBufferReady(ctrl & 0xFFFF) {
+		return true
+	}
+	// A double-buffered endpoint may have only buffer 1 armed; do not wait
+	// for buffer 0 to be re-armed first.
+	return u.epDouble(ep) && usbBufferReady(ctrl>>usbBuf1Shift)
+}
+
+func usbBufferReady(ctrl uint32) bool {
 	return ctrl&usbBufFull != 0 && ctrl&usbBufAvail != 0
 }
 
@@ -451,17 +460,23 @@ func (u *usbBlock) beginStep() {
 func (u *usbBlock) takeIN(ep int) []byte {
 	ctrl := u.word(usbBufCtrlOff(ep))
 	low := ctrl & 0xFFFF
-	n := int(low & usbBufLen)
 	addr := u.epDataAddr(ep, true)
-	data := u.readBytes(addr, n)
-	keep := uint32(n)
+	keep := low
+	var data []byte
+	if usbBufferReady(low) {
+		n := int(low & usbBufLen)
+		data = u.readBytes(addr, n)
+		keep = low &^ (usbBufFull | usbBufAvail)
+	}
 	if u.epDouble(ep) {
 		high := ctrl >> usbBuf1Shift
-		if high&(usbBufFull|usbBufAvail) != 0 {
+		keepHigh := high
+		if usbBufferReady(high) {
 			n1 := int(high & usbBufLen)
 			data = append(data, u.readBytes(addr+64, n1)...)
-			keep |= uint32(n1) << usbBuf1Shift
+			keepHigh = high &^ (usbBufFull | usbBufAvail)
 		}
+		keep |= keepHigh << usbBuf1Shift
 	}
 	u.chip.Logger.Debug("usb in packet", slog.Int("ep", ep), slog.Int("bytes", len(data)))
 	u.setWord(usbBufCtrlOff(ep), keep)

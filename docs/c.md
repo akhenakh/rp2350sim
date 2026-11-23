@@ -64,8 +64,8 @@ rp2350sim -fw build/hello.elf -seconds 1 -expect "hello c done"
 USB CDC stdio (`pico_enable_stdio_usb`) works with stock TinyUSB: the emulated
 host reads the configuration descriptor to find the CDC interfaces and
 endpoints, follows the DPRAM buffer addresses the stack programs in
-`EP_CONTROL`, and implements the control status stage and DATA0/DATA1
-toggling. `task c:usbhello` asserts the output and `task c:usbecho` feeds
+`EP_CONTROL`, and implements the control status stage plus DATA0/DATA1
+toggling on host OUT packets (IN packet PIDs are not validated). `task c:usbhello` asserts the output and `task c:usbecho` feeds
 console input back through the CDC OUT endpoint.
 
 `pico_time` works: `sleep_ms`/`sleep_us`, `time_us_32/64`, alarms and the
