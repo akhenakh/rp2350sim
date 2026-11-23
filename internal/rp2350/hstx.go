@@ -42,6 +42,7 @@ type hstxBlock struct {
 	frameW    int
 	frameH    int
 	height    int
+	activeW   int
 	serial    uint64
 }
 
@@ -83,7 +84,7 @@ func (h *hstxBlock) reset() {
 	h.lines = h.lines[:0]
 	h.frame = h.frame[:0]
 	h.frameW, h.frameH = 0, 0
-	h.height = 0
+	h.height, h.activeW = 0, 0
 }
 
 // pixelBits is the sum of the three TMDS lane widths. The register fields
@@ -111,8 +112,12 @@ func (h *hstxBlock) push(v uint32) {
 	case 0x0, 0x1: // RAW, RAW_REPEAT
 		h.mode = hstxModeRawWait
 	case 0x2, 0x3: // TMDS, TMDS_REPEAT
-		if h.height == 0 {
+		if h.activeW != count {
+			// The active width changed (a mode switch): relearn the frame
+			// height and start the current frame again.
+			h.activeW = count
 			h.height = dviHeightForWidth(count)
+			h.lines = h.lines[:0]
 		}
 		h.line = h.line[:0]
 		h.remaining = count

@@ -2,6 +2,21 @@ package rp2350
 
 import "testing"
 
+// TestHSTXHeightFollowsWidth checks that a mode switch relearns the derived
+// frame height instead of keeping the first width's height forever.
+func TestHSTXHeightFollowsWidth(t *testing.T) {
+	h := newHSTX()
+	h.push(2<<12 | 640)
+	if h.height != 480 || h.activeW != 640 {
+		t.Fatalf("640 mode = %dx%d", h.activeW, h.height)
+	}
+	h.mode = hstxModeIdle // next command follows the active line
+	h.push(2<<12 | 320)
+	if h.height != 240 || h.activeW != 320 {
+		t.Fatalf("320 mode = %dx%d", h.activeW, h.height)
+	}
+}
+
 func TestHSTXFrame(t *testing.T) {
 	c := New()
 	// RGB332: lane widths 2/3/3 bits (register value = bits-1).
