@@ -132,18 +132,21 @@ func (b *midiBridge) tick() {
 	b.pending = nil
 	b.mu.Unlock()
 	for _, m := range pending {
+		sent := false
 		if b.usb {
 			pkt := midi.USBMessage(m)
 			if b.chip.SendUSBMIDI(pkt[:]) {
-				continue
+				sent = true
 			}
-			// Requeue if the firmware has not armed the endpoint yet.
-			b.queue(m)
-			continue
 		}
 		if b.uart == 0 || b.uart == 1 {
 			b.chip.SendUART(b.uart, m.Bytes())
 			b.log.Debug("midi to uart", slog.Int("uart", b.uart), slog.String("message", m.String()))
+			sent = true
+		}
+		if !sent {
+			// Requeue if no configured transport has armed its endpoint yet.
+			b.queue(m)
 		}
 	}
 }
