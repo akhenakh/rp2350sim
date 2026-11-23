@@ -84,6 +84,22 @@ func ParsePartitionTable(flash []byte) *PartitionTable {
 		}
 		t.Entries[i] = p
 	}
+	for i := range t.Entries {
+		a := t.Entries[i]
+		if a.Size == 0 {
+			continue
+		}
+		for j := i + 1; j < len(t.Entries); j++ {
+			b := t.Entries[j]
+			if b.Size == 0 {
+				continue
+			}
+			if uint64(a.Offset) < uint64(b.Offset)+uint64(b.Size) &&
+				uint64(b.Offset) < uint64(a.Offset)+uint64(a.Size) {
+				return nil
+			}
+		}
+	}
 	return t
 }
 

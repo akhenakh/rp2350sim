@@ -593,12 +593,14 @@ func (c *Chip) Boot() {
 // chosen slot's storage offset into the 0x10000000 runtime window. A flat
 // image (no magic) keeps offset 0.
 func (c *Chip) selectPartition() {
+	preferred := c.preferredPartition
+	c.preferredPartition = -1 // a flash-update preference is one-shot
 	c.partTable = ParsePartitionTable(c.Flash)
 	c.partOffset, c.partSize = 0, 0
 	if c.partTable == nil {
 		return
 	}
-	idx := c.partTable.BootPartition(c.preferredPartition)
+	idx := c.partTable.BootPartition(preferred)
 	if idx < 0 {
 		return
 	}
@@ -650,6 +652,23 @@ func (c *Chip) flashStorage(off uint32, size int) (uint32, bool) {
 		return 0, false
 	}
 	return uint32(o), true
+}
+
+// flashAliasIndex maps a read in one of the XIP alias windows. The
+// no-translate window exposes raw storage addresses; the other views follow
+// the booted partition like the main XIP window.
+func (c *Chip) flashAliasIndex(addr uint32, size int) (uint32, bool) {
+	off, ok := flashAlias(addr)
+	if !ok {
+		return 0, false
+	}
+	if addr >= XIPNoTranslateBase && addr < XIPNoTranslateBase+XIPDeviceWindow {
+		if uint64(off)+uint64(size) > uint64(FlashSize) {
+			return 0, false
+		}
+		return off, true
+	}
+	return c.flashStorage(off, size)
 }
 
 // BootCount is the number of times the chip has booted, including self-updates.
@@ -712,10 +731,10 @@ func (c *Chip) Read8(addr uint32) uint8 {
 	if off, ok := c.flashIndex(addr, 1); ok {
 		return c.Flash[off]
 	}
-	if off, ok := flashAlias(addr); ok {
-		if o, ok := c.flashStorage(off, 1); ok {
-			return c.Flash[o]
-		}
+	if o, ok := c.flashAliasIndex(addr, 1); ok {
+		return c.Flash[o]
+	}
+	if _, ok := flashAlias(addr); ok {
 		return c.unhandledRead8(addr)
 	}
 	if off, ok := psramAlias(addr); ok {
@@ -748,10 +767,10 @@ func (c *Chip) Read16(addr uint32) uint16 {
 	if o, ok := c.flashIndex(addr, 2); ok {
 		return binary.LittleEndian.Uint16(c.Flash[o:])
 	}
-	if off, ok := flashAlias(addr); ok {
-		if o, ok := c.flashStorage(off, 2); ok {
-			return binary.LittleEndian.Uint16(c.Flash[o:])
-		}
+	if o, ok := c.flashAliasIndex(addr, 2); ok {
+		return binary.LittleEndian.Uint16(c.Flash[o:])
+	}
+	if _, ok := flashAlias(addr); ok {
 		return c.unhandledRead16(addr)
 	}
 	if off, ok := psramAlias(addr); ok {
@@ -785,10 +804,10 @@ func (c *Chip) Read32(addr uint32) uint32 {
 	if o, ok := c.flashIndex(addr, 4); ok {
 		return binary.LittleEndian.Uint32(c.Flash[o:])
 	}
-	if off, ok := flashAlias(addr); ok {
-		if o, ok := c.flashStorage(off, 4); ok {
-			return binary.LittleEndian.Uint32(c.Flash[o:])
-		}
+	if o, ok := c.flashAliasIndex(addr, 4); ok {
+		return binary.LittleEndian.Uint32(c.Flash[o:])
+	}
+	if _, ok := flashAlias(addr); ok {
 		return c.unhandledRead32(addr)
 	}
 	if off, ok := psramAlias(addr); ok {

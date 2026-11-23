@@ -57,6 +57,14 @@ func TestPartitionBootHighestVersion(t *testing.T) {
 			t.Fatalf("peek %d = %#x ok=%v, want %#x", i, b, ok, c.Flash[0x300000+uint32(i)])
 		}
 	}
+	// The nocache view follows the partition; the no-translate view is raw
+	// storage, where offset 4 is the table version, not the slot vector.
+	if got := c.Read32(XIPNoCacheBase + 4); got != 0x10003401 {
+		t.Fatalf("nocache slot vector = %#x", got)
+	}
+	if got := c.Read32(XIPNoTranslateBase + 4); got != 1 {
+		t.Fatalf("no-translate word = %#x, want raw table version 1", got)
+	}
 }
 
 // TestPartitionRejectsOutOfRange checks that a malformed table is ignored
@@ -93,6 +101,31 @@ func TestPartitionPreferredAndActive(t *testing.T) {
 	c.Boot()
 	if _, idx := c.Partition(); idx != 1 {
 		t.Fatalf("preferred slot = %d, want 1", idx)
+	}
+	// The flash-update preference applies to one boot only; the next reset
+	// returns to the table's active slot.
+	c.Boot()
+	if _, idx := c.Partition(); idx != 0 {
+		t.Fatalf("slot after consuming the preference = %d, want active 0", idx)
+	}
+}
+
+// TestPartitionRejectsOverlap checks that slots cannot claim the same flash.
+func TestPartitionRejectsOverlap(t *testing.T) {
+	c := New()
+	put := func(off uint32, v uint32) { binary.LittleEndian.PutUint32(c.Flash[off:], v) }
+	put(0, partitionMagic)
+	put(4, 1)
+	put(8, 2)
+	put(12, 0)
+	put(partitionHeader, 0x200000)
+	put(partitionHeader+4, 0x100000)
+	put(partitionHeader+8, partitionExe)
+	put(partitionHeader+16, 0x280000)
+	put(partitionHeader+20, 0x100000)
+	put(partitionHeader+24, partitionExe)
+	if table := ParsePartitionTable(c.Flash); table != nil {
+		t.Fatalf("accepted overlapping table: %+v", table)
 	}
 }
 
