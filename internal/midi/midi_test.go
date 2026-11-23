@@ -55,6 +55,15 @@ func TestUSBRoundTrip(t *testing.T) {
 	if pkt[0] != 0xB {
 		t.Fatalf("cc CIN = %#x", pkt[0])
 	}
+	// Tune Request is a single-byte System Common message, CIN 0x5.
+	tune := Message{Status: 0xF6, Len: 1}
+	pkt = USBMessage(tune)
+	if pkt[0] != 0x5 {
+		t.Fatalf("tune request CIN = %#x, want 0x5", pkt[0])
+	}
+	if got := DecodeUSB(pkt[:]); len(got) != 1 || got[0] != tune {
+		t.Fatalf("decoded tune request = %v", got)
+	}
 }
 
 func TestNoteName(t *testing.T) {

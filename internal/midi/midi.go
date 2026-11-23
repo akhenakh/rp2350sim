@@ -146,7 +146,10 @@ func cin(status byte) byte {
 		return 0x2
 	case 0xF2:
 		return 0x3
-	case 0xF6, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF:
+	case 0xF6:
+		// Single-byte System Common (also 0xF1/0xF3, handled above).
+		return 0x5
+	case 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF:
 		return 0xF
 	}
 	return 0x4 // SysEx start/continue
@@ -178,6 +181,8 @@ func DecodeUSB(data []byte) []Message {
 			out = append(out, Message{Status: status, Data: [2]byte{data[2]}, Len: 2})
 		case 0x3:
 			out = append(out, Message{Status: status, Data: [2]byte{data[2], data[3]}, Len: 3})
+		case 0x5:
+			out = append(out, Message{Status: status, Len: 1})
 		}
 		data = data[4:]
 	}
