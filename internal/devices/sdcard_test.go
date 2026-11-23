@@ -204,3 +204,26 @@ func TestSDCardMultiBlockWrite(t *testing.T) {
 		}
 	}
 }
+
+// TestSDCardMultiReadStop checks that CMD12 is recognised while the card is
+// still in a multiple-block read, without dropping CS.
+func TestSDCardMultiReadStop(t *testing.T) {
+	card := sdFixture(t)
+	if r := sdCommand(t, card, 18, 0); r != 0 {
+		t.Fatalf("CMD18 = %#x", r)
+	}
+	sdReadData(t, card)
+	if r := sdCommand(t, card, 12, 0); r != 0 {
+		t.Fatalf("CMD12 = %#x, want 0", r)
+	}
+	if card.multiRead {
+		t.Fatal("CMD12 did not stop the multiple-block read")
+	}
+	for len(card.out) > 0 { // drain the trailing stuff byte
+		card.Transfer(0xFF)
+	}
+	if r := sdCommand(t, card, 18, 1); r != 0 {
+		t.Fatalf("CMD18 after stop = %#x", r)
+	}
+	sdReadData(t, card)
+}

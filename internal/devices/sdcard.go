@@ -124,7 +124,11 @@ func (s *SDCard) Transfer(tx byte) byte {
 		s.deselect()
 		return 0xFF
 	}
-	if len(s.out) == 0 && s.multiRead {
+	// A multiple-block read keeps the data line busy, but the host may still
+	// clock in CMD12 (STOP_TRANSMISSION) while CS is low. Do not prefetch the
+	// next block when the byte starts a command frame, or the command would be
+	// swallowed as data clocks.
+	if len(s.out) == 0 && s.multiRead && s.cmdLen == 0 && (tx < 0x40 || tx > 0x7F) {
 		s.queueBlock(s.multiAddr)
 		s.multiAddr++
 	}
