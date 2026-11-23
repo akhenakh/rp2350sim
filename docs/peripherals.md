@@ -416,8 +416,10 @@ rp2350sim -fw fw.elf -seconds 2 -audio-pdm 6,7,64 -audio-out mic.wav
 
 `-audio-pwm` averages the pin's high time over one output sample period, which
 works for both hardware PWM (the duty becomes the sample) and a plain GPIO
-square wave (TinyGo's `time.Sleep` toggle). I2S decodes Philips framing with
-16/24/32-bit slots; PDM averages one bit density over the decimation window.
+square wave (TinyGo's `time.Sleep` toggle). A disabled PWM slice parks at the
+low rail, so its raw capture is DC; UI playback removes that offset. I2S
+decodes Philips framing with 16/24/32-bit slots; PDM averages one bit density
+over the decimation window.
 `-audio-rate` sets the output rate (48 kHz default). `tools/wavcheck` asserts
 the rate, channels, RMS and fundamental frequency in CI:
 
@@ -455,7 +457,8 @@ to the firmware on endpoint 3 or the UART receive FIFO. Firmware messages are
 logged and sent back to the last UDP sender. The UART tap watches TX only, so
 an echo firmware cannot feed itself. The emulated host accepts the composite
 CDC+MIDI descriptor (`descriptor.CDCMIDI`) and enumerates endpoint 3 alongside
-the CDC console.
+the CDC console. System Exclusive (`F0`..`F7`) is not reassembled or forwarded;
+the monitor reports the parsed channel and system messages only.
 
 **UI.** The **MIDI** tab lists messages newest first with raw bytes and cycle
 time, and provides a two-octave piano keyboard across the full panel width
@@ -536,6 +539,8 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2-psram` | `-psram 8 -psram-cs 8 -psram-latency 6` | `task ui:psram` |
 | `geek` | `-lcd -sd -sd-dir build/sdcard-host` | `task ui:lcd`, `task run:sdcard` |
 | `touch-lcd2` | `-touch-lcd2 -touch x,y` | `task ui:touchlcd` |
+| `pico2-dvi` | `-dvi-png PATH` | — (HSTX example) |
+| `pico2b` | `-rp2350b` | — (48-GPIO package) |
 | `pico2-w5500` | `-eth` | `task ui:w5500` |
 | `poe-eth` | `-w6300` | `task ui:w6300` |
 | `rp2350-eth` | `-ch9120` | `task ui:ch9120` |

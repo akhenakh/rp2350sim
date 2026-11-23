@@ -88,6 +88,10 @@ load the matching ELF if one is available.
 
 ## GDB remote protocol
 
+The server grants full memory read/write to anyone who can connect. Keep the
+default loopback bind unless the network is trusted; `-gdb 0.0.0.0:3333` is
+deliberately not the default.
+
 The runner and the UI can expose the same breakpoints, watchpoints, registers
 and memory over the GDB Remote Serial Protocol.
 

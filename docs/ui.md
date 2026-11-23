@@ -238,7 +238,9 @@ using the same first-to-last-rising-edge method as `tools/pincheck` (with
 "static high/low" when there are no edges).
 
 The **Trigger** row selects Off/Rise/Fall/High/Low on a GPIO and **Rearm**
-watches for the next event. On a match the scope keeps a quarter-window of
+watches for the next event. The trigger GPIO is added to the scope channels if
+it is not already selected. High/Low fire on the first sample at that level;
+Rise/Fall wait for an edge. On a match the scope keeps a quarter-window of
 post-trigger samples, freezes the trace and marks the trigger instant with an
 orange dashed line; measurements then reflect the frozen window.
 
