@@ -301,16 +301,16 @@ func TestExtendedFrameLayout(t *testing.T) {
 	if c.MSP != 0x7000-104 {
 		t.Fatalf("frame SP = %#x, want %#x", c.MSP, 0x7000-104)
 	}
-	if got := bus.Read32(c.MSP); got != 0x3F800000 {
-		t.Fatalf("S0 at frame base = %#x", got)
+	if got := bus.Read32(c.MSP + 32); got != 0x3F800000 {
+		t.Fatalf("S0 after the basic frame = %#x", got)
 	}
-	if got := bus.Read32(c.MSP + 64); got != 0x10 {
+	if got := bus.Read32(c.MSP + 32 + 64); got != 0x10 {
 		t.Fatalf("FPSCR = %#x", got)
 	}
-	if got := bus.Read32(c.MSP + 72); got != 0xCAFE {
+	if got := bus.Read32(c.MSP); got != 0xCAFE {
 		t.Fatalf("stacked R0 = %#x", got)
 	}
-	if got := bus.Read32(c.MSP + 72 + 28); got&0x1FF != 0 {
+	if got := bus.Read32(c.MSP + 28); got&0x1FF != 0 {
 		t.Fatalf("stacked xPSR = %#x", got)
 	}
 	if c.R[14] != 0xFFFFFFE9 {
@@ -346,13 +346,13 @@ func TestLazyFPStacking(t *testing.T) {
 	c.FPCCR = fpcASPN | fpcLSPEN
 
 	c.Exception(15)
-	if c.R[14] != 0xFFFFFFF9 {
-		t.Fatalf("EXC_RETURN = %#x, want basic frame", c.R[14])
+	if c.R[14] != 0xFFFFFFE9 {
+		t.Fatalf("EXC_RETURN = %#x, want extended frame", c.R[14])
 	}
 	if !c.lazyActive || c.FPCCR&fpcLSPACT == 0 {
 		t.Fatal("lazy frame not pending")
 	}
-	if got := bus.Read32(c.MSP + 4); got != 0 {
+	if got := bus.Read32(c.MSP + 32 + 4); got != 0 {
 		t.Fatalf("FP frame written before first FP instruction: %#x", got)
 	}
 	frame := c.MSP
@@ -363,7 +363,7 @@ func TestLazyFPStacking(t *testing.T) {
 	if c.lazyActive || c.FPCCR&fpcLSPACT != 0 {
 		t.Fatal("lazy frame not flushed by the FP instruction")
 	}
-	if got := bus.Read32(frame + 4); got != 0x40490FDB {
+	if got := bus.Read32(frame + 32 + 4); got != 0x40490FDB {
 		t.Fatalf("flushed S1 = %#x", got)
 	}
 	if c.R[14] != 0xFFFFFFE9 {
@@ -424,12 +424,12 @@ func TestSyntheticExtendedReturn(t *testing.T) {
 	c.IPSR = 11 // inside a handler returning to a task
 	frame := uint32(0x6000)
 	c.PSP = frame
-	c.Bus.Write32(frame+0, 0xA5)           // S0
-	c.Bus.Write32(frame+64, 0)             // FPSCR
-	c.Bus.Write32(frame+72+0, 0x11)        // R0
-	c.Bus.Write32(frame+72+20, 0)          // LR
-	c.Bus.Write32(frame+72+24, 0x20000101) // PC
-	c.Bus.Write32(frame+72+28, 0x01000000) // xPSR
+	c.Bus.Write32(frame+0, 0x11)        // R0
+	c.Bus.Write32(frame+20, 0)          // LR
+	c.Bus.Write32(frame+24, 0x20000101) // PC
+	c.Bus.Write32(frame+28, 0x01000000) // xPSR
+	c.Bus.Write32(frame+32+0, 0xA5)     // S0
+	c.Bus.Write32(frame+32+64, 0)       // FPSCR
 
 	c.exceptionReturn(0xFFFFFFED) // thread, PSP, extended
 	if c.IPSR != 0 || c.CONTROL&2 == 0 {
@@ -458,7 +458,7 @@ func TestLazyFrameNotUsedReclaimsSpace(t *testing.T) {
 	c.FPCCR = fpcASPN | fpcLSPEN
 
 	c.Exception(15)
-	c.exceptionReturn(0xFFFFFFF9)
+	c.exceptionReturn(0xFFFFFFE9)
 	if c.MSP != 0x7000 {
 		t.Fatalf("MSP = %#x, want 0x7000", c.MSP)
 	}
