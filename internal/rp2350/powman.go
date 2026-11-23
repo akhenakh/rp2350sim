@@ -14,6 +14,7 @@ const (
 	powmanTimer     = 0x88
 	powmanXOSCInt   = 0x58
 	powmanXOSCFrac  = 0x5C
+	powmanINTR      = 0xE0
 	powmanINTE      = 0xE4
 	powmanINTF      = 0xE8
 	powmanINTS      = 0xEC
@@ -44,14 +45,16 @@ type powmanBlock struct {
 	pwrUp    bool
 	fired    bool
 
-	inte uint32
-	intf uint32
+	intr  uint32 // raw status; the timer bit follows TIMER.ALARM
+	inte  uint32
+	force uint32 // INTF: software-forced interrupt bits
 }
 
 func newPOWMAN() *powmanBlock {
 	p := &powmanBlock{block: newRegBlock(powmanBase, 0x1000)}
 	p.block.readFn = p.read
 	p.block.writeFn = p.write
+	p.block.clearFn = p.clear
 	p.block.resetFn = func(c *Chip) { p.reset() }
 	return p
 }
@@ -59,7 +62,7 @@ func newPOWMAN() *powmanBlock {
 func (p *powmanBlock) reset() {
 	p.setTime, p.alarm, p.timeBase, p.baseCyc = 0, 0, 0, 0
 	p.running, p.useXOSC, p.alarmOn, p.pwrUp, p.fired = false, false, false, false, false
-	p.inte, p.intf = 0, 0
+	p.intr, p.inte, p.force = 0, 0, 0
 }
 
 // nowMS returns the timer's millisecond count. The AON timer ticks from the
@@ -97,12 +100,14 @@ func (p *powmanBlock) read(c *Chip, off uint32) (uint32, bool) {
 			v |= 1 << 17 // USING_LPOSC
 		}
 		return v, true
+	case powmanINTR:
+		return p.intr, true
 	case powmanINTE:
 		return p.inte, true
 	case powmanINTF:
-		return p.intf, true
+		return p.force, true
 	case powmanINTS:
-		return p.intf & p.inte, true
+		return (p.intr | p.force) & p.inte, true
 	case powmanXOSCInt:
 		return 0, true
 	case powmanXOSCFrac:
@@ -142,17 +147,62 @@ func (p *powmanBlock) write(c *Chip, off, v uint32) {
 		}
 		if v&powmanTimerFired != 0 { // write 1 to clear the fired alarm
 			p.fired = false
-			p.intf &^= powmanIntTimer
+			p.intr &^= powmanIntTimer
+			p.force &^= powmanIntTimer
 		}
+	case powmanINTR:
+		// The timer and state raw bits are read-only; they clear when their
+		// source clears (the timer's ALARM bit). VREG_OUTPUT_LOW is the only
+		// W1C bit and that block is not modelled.
 	case powmanINTE:
 		p.inte = v
 	case powmanINTF:
-		p.intf &^= v
+		p.force = v
 	case powmanINTS:
-		p.intf &^= v
+		// Read-only: status after masking and forcing.
 	default:
 		// Other POWMAN registers are accepted and read back as zero.
 	}
+	p.syncIRQ(c)
+}
+
+func (p *powmanBlock) syncIRQ(c *Chip) {
+	if (p.intr|p.force)&p.inte&powmanIntTimer != 0 {
+		c.NVIC.Pend(powmanIRQ)
+	} else {
+		c.NVIC.ClearPending(powmanIRQ)
+	}
+}
+
+// clear handles the +0x3000 CLR alias. INTR and INTF carry state outside the
+// register file, so the written mask must be applied to that state rather than
+// to the read-back value.
+func (p *powmanBlock) clear(c *Chip, off, v uint32) {
+	switch off {
+	case powmanINTR, powmanINTS:
+		// Read-only timer/state bits.
+		p.syncIRQ(c)
+		return
+	case powmanTimer:
+		if v&powmanTimerFired != 0 {
+			// The SDK clears the alarm through this alias. ALARM is WC, so
+			// apply the clear here rather than relying on the zero it leaves
+			// in the register.
+			p.fired = false
+			p.intr &^= powmanIntTimer
+			p.force &^= powmanIntTimer
+		}
+	}
+	next := p.block.regs[off/4] &^ v
+	if off == powmanTimer {
+		// Do not replay write-one/self-clearing controls from the stored
+		// value: only the fields the alias actually leaves set matter.
+		next &^= powmanTimerClear | powmanTimerFired | powmanTimerUseXOSC | 1<<10
+	}
+	p.block.regs[off/4] = next
+	// The alias bypasses regBlock.write, so replay the register's side
+	// effects (timer state, set/alarm time, masks) with the masked value.
+	p.write(c, off, next)
 }
 
 // tick runs once per emulated microsecond and raises the timer interrupt when
@@ -160,9 +210,7 @@ func (p *powmanBlock) write(c *Chip, off, v uint32) {
 func (p *powmanBlock) tick(c *Chip) {
 	if p.alarmOn && !p.fired && p.nowMS(c) >= p.alarm {
 		p.fired = true
-		p.intf |= powmanIntTimer
+		p.intr |= powmanIntTimer
 	}
-	if p.intf&p.inte&powmanIntTimer != 0 {
-		c.NVIC.Pend(powmanIRQ)
-	}
+	p.syncIRQ(c)
 }
