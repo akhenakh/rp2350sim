@@ -217,6 +217,11 @@ so a held BOOTSEL is visible to firmware but does not start picoboot.
 screenshots and scripted demos: `on`/`off` for buttons, switches and BOOTSEL, a
 voltage for ADC inputs, and a signed step count for encoders (`enc1=+3`).
 
+`task ui:inputs` opens the `pico2-inputs` board with `firmware/c/inputs`, which
+prints the control state on the Console tab and mirrors the button/switch on
+GP25. `task c:inputs` runs the same firmware headlessly to check the idle
+state.
+
 ![Pico 2 with a button, switch, encoder and ADC pot](images/inputs.png)
 
 The `pico2b` board selects the QFN-80 package: the header diagram, GPIO table

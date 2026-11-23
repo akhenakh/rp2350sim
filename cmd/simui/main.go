@@ -629,8 +629,10 @@ func inputsPanel(snap MachineState) {
 		for _, in := range selectedBoard.Inputs {
 			control := &in
 			switch control.Kind {
-			case "button", "bootsel":
+			case "button":
 				inputMomentary(*control, snap)
+			case "bootsel":
+				inputBootsel(*control, snap)
 			case "switch":
 				inputSwitch(*control, snap)
 			case "encoder":
@@ -644,10 +646,7 @@ func inputsPanel(snap MachineState) {
 
 func inputMomentary(in InputDef, snap MachineState) {
 	st := snapInput(snap, in.ID)
-	pin := "QSPI CS"
-	if in.Kind == "button" {
-		pin = fmt.Sprintf("GP%d", in.Pin)
-	}
+	pin := fmt.Sprintf("GP%d", in.Pin)
 	Container(Attrs(Row, CrossMid, Gap(8), FixHeight(32), Pad2(3, 8), Corners(4),
 		Background(220, 10, 20, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
 		state := ProcessButtonEvents(false)
@@ -680,6 +679,53 @@ func inputMomentary(in InputDef, snap MachineState) {
 			Label(pin, FontSize(10), Fonts(Monospace...), TextColor(220, 6, 62, 1))
 		})
 	})
+}
+
+// inputBootsel is a latching control: the real button is momentary, but a
+// single mouse cannot hold it across a click on Reset. Latching it lets the
+// boot sample see the button held; the board diagram remains momentary.
+func inputBootsel(in InputDef, snap MachineState) {
+	held := snap.BootselHeld
+	Container(Attrs(Gap(1)), func() {
+		Container(Attrs(Row, CrossMid, Gap(8), FixHeight(32), Pad2(3, 8), Corners(4),
+			Background(220, 10, 20, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+			st := ProcessToggleEvents(&held, false)
+			if st.Clicked {
+				emu.SetBootsel(held)
+				RequestNextFrame()
+			}
+			if st.Hovered {
+				ModAttrs(Background(220, 12, 26, 1))
+			}
+			if held {
+				ModAttrs(Background(140, 45, 34, 1))
+			}
+			Container(Attrs(FixSize(34, 16), Corners(3), Background(boolHSLA(held))), func() {
+				Label(bootselLabel(held), FontSize(9), FontWeight(700),
+					TextColor(220, 6, 86, 1))
+			})
+			Container(Attrs(Gap(0), Grow(1)), func() {
+				Label(in.Label, FontSize(12), FontWeight(600))
+				Label("QSPI CS", FontSize(10), Fonts(Monospace...),
+					TextColor(220, 6, 62, 1))
+			})
+			Label("latch", FontSize(9), TextColor(220, 6, 58, 1))
+		})
+		if snap.BootselAtBoot {
+			Label("held at reset · USB boot not modelled", FontSize(9),
+				TextColor(140, 40, 68, 1))
+		} else {
+			Label("latch to hold through Reset", FontSize(9),
+				TextColor(220, 6, 58, 1))
+		}
+	})
+}
+
+func bootselLabel(held bool) string {
+	if held {
+		return "HELD"
+	}
+	return "OFF"
 }
 
 func pressLabel(active bool) string {

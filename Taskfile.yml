@@ -495,6 +495,13 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/touchlcd.elf -seconds 1 -touch-lcd2 -lcd-png {{.BUILD}}/touchlcd.png'
 
+  ui:inputs:
+    desc: Run the UI on the board-controls board (click the controls, read the Console tab)
+    deps: [c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-inputs '../../firmware/c/build/inputs.elf'
+
   ui:blinky:
     desc: Run the desktop UI with the blinky firmware loaded
     aliases: [ui]
@@ -688,6 +695,7 @@ tasks:
       - 'build/usbecho.elf'
       - 'build/aontimer.elf'
       - 'build/rtosctx.elf'
+      - 'build/inputs.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
@@ -704,6 +712,12 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/rtosctx.elf -seconds 2 -quiet -expect "rtosctx ok a=5 b=5 nested=1 crit=1" -stop-on-expect'
+
+  c:inputs:
+    desc: Run the board-controls firmware with the default (released) inputs
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/inputs.elf -seconds 1 -quiet -expect "inputs: btn=0 sw=0 enc=0 boot=0" -stop-on-expect'
 
   c:usbhello:
     desc: Run the Pico SDK USB CDC stdio hello world (TinyUSB)

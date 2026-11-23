@@ -74,8 +74,9 @@ type MachineState struct {
 
 	// Inputs is a copy of the interactive board-control state, keyed by
 	// InputDef.ID.
-	Inputs      map[string]InputValue
-	BootselHeld bool
+	Inputs        map[string]InputValue
+	BootselHeld   bool
+	BootselAtBoot bool
 }
 
 // InputValue is the host-side state of one interactive board input.
@@ -1401,6 +1402,9 @@ func (e *Emu) loadLocked() {
 	for _, seg := range e.img.Segments {
 		e.chip.LoadSegment(seg.Addr, seg.Data)
 	}
+	// Apply before Boot so a held BOOTSEL is sampled by the boot path, then
+	// again because Boot resets the pin model.
+	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
 	e.lastBoots = e.chip.BootCount()
@@ -1422,6 +1426,7 @@ func (e *Emu) rebootLocked() {
 	if flash != nil {
 		copy(e.chip.Flash, flash)
 	}
+	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
 	e.lastBoots = e.chip.BootCount()
@@ -1509,6 +1514,7 @@ func (e *Emu) LoadFlash(path string) error {
 	e.errText = ""
 	e.resetChip()
 	e.chip.LoadFlashImage(data)
+	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
 	e.lastBoots = e.chip.BootCount()
@@ -1802,6 +1808,9 @@ func (e *Emu) Snapshot() MachineState {
 		maps.Copy(s.Inputs, e.inputs)
 	}
 	s.BootselHeld = e.bootselHeld
+	if e.chip != nil {
+		s.BootselAtBoot = e.chip.BootselAtBoot()
+	}
 	return s
 }
 

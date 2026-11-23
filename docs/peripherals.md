@@ -74,8 +74,12 @@ GP0–GP15 and GP26–GP29, 1 MHz sampling, up to eight channels. The
 `pico2-analog` board drives a 1 kHz sine on GP26 so the scope and the ADC have
 a known signal.
 
-Reference boards: `pico2`, `pico2-analog`. Tasks: `task run:blinky`,
-`task ui:scope`.
+The **Board** tab can also host virtual controls declared in `boards.yaml`:
+pushbuttons, slide switches, rotary encoders, ADC pots/sliders and BOOTSEL.
+`task ui:inputs` opens the `pico2-inputs` demo; see [ui.md](ui.md#board-inputs).
+
+Reference boards: `pico2`, `pico2-analog`, `pico2-inputs`. Tasks:
+`task run:blinky`, `task ui:scope`, `task ui:inputs`.
 
 ## UART
 

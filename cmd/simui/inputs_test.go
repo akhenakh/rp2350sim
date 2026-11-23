@@ -169,3 +169,21 @@ func TestParseOnOff(t *testing.T) {
 		t.Fatal("parseOnOff accepted garbage")
 	}
 }
+
+// TestBootselHeldAtReset checks that a latched BOOTSEL is applied before Boot,
+// so the reset sample and firmware both see it.
+func TestBootselHeldAtReset(t *testing.T) {
+	e := NewEmu()
+	e.SetBoard(testInputsBoard())
+	e.SetBootsel(true)
+	e.Reset()
+	s := e.Snapshot()
+	if !s.BootselHeld || !s.BootselAtBoot {
+		t.Fatalf("bootsel held=%v atBoot=%v, want both true", s.BootselHeld, s.BootselAtBoot)
+	}
+	e.SetBootsel(false)
+	e.Reset()
+	if s := e.Snapshot(); s.BootselAtBoot {
+		t.Fatal("BOOTSEL reported at a reset without it held")
+	}
+}
