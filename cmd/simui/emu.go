@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -387,6 +388,17 @@ type frozenScope struct {
 func (e *Emu) SetScopeTrigger(cfg ScopeTriggerConfig) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.scope != nil && cfg.Pin >= 0 && cfg.Pin <= 47 {
+		pins := e.scope.Pins()
+		found := slices.Contains(pins, cfg.Pin)
+		if !found && len(pins) < devices.MaxTraceChannels {
+			pins = append(pins, cfg.Pin)
+			e.scopePins = pins
+			e.scope.SetPins(pins)
+		} else if len(e.scopePins) == 0 {
+			e.scopePins = append([]int(nil), pins...)
+		}
+	}
 	e.scopeTrig = cfg
 	e.frozenScope = frozenScope{}
 	e.armScopeScanLocked()

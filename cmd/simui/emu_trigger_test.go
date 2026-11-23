@@ -9,6 +9,71 @@ import (
 
 // TestScopeTriggerRise drives GP5 low/high in 100 us periods and checks that
 // the rising-edge trigger freezes a window with the trigger inside it.
+// TestScopeTriggerAddsPin checks that arming a trigger on a pin outside the
+// channel list adds the channel instead of silently arming a dead trigger.
+func TestScopeTriggerAddsPin(t *testing.T) {
+	c := rp2350.New()
+	tr := devices.NewTrace(c, []int{5}, devices.ScopeInterval, devices.ScopeDepth)
+	e := &Emu{scope: tr, scopePins: []int{5}}
+	e.SetScopeTrigger(ScopeTriggerConfig{Mode: "rise", Pin: 7})
+	pins := tr.Pins()
+	if len(pins) != 2 || pins[0] != 5 || pins[1] != 7 {
+		t.Fatalf("scope pins = %v, want [5 7]", pins)
+	}
+}
+
+// TestScopeLevelTriggers covers fall/high/low, which share the scanner with
+// the rise case but freeze on a different sample.
+func TestScopeLevelTriggers(t *testing.T) {
+	cases := []struct {
+		mode  string
+		start bool
+		want  bool
+	}{
+		{"fall", true, false},
+		{"high", true, true},
+		{"low", false, false},
+	}
+	const pin = 5
+	bit := uint64(1) << pin
+	for _, tc := range cases {
+		c := rp2350.New()
+		tr := devices.NewTrace(c, []int{pin}, devices.ScopeInterval, devices.ScopeDepth)
+		e := &Emu{scope: tr, scopePins: []int{pin}}
+		e.SetScopeTrigger(ScopeTriggerConfig{Mode: tc.mode, Pin: pin})
+		c.Pins.ExtValid |= bit
+		for i := range 9000 {
+			high := tc.start
+			if tc.mode == "fall" && i >= 50 {
+				high = false
+			}
+			if high {
+				c.Pins.ExtLevel |= bit
+			} else {
+				c.Pins.ExtLevel &^= bit
+			}
+			c.Cycles += devices.ScopeInterval
+			tr.Tick()
+			if i%16 == 0 {
+				e.mu.Lock()
+				e.checkScopeTriggerLocked()
+				e.mu.Unlock()
+			}
+		}
+		if on, _ := e.ScopeTriggered(); !on {
+			t.Fatalf("%s trigger did not fire", tc.mode)
+		}
+		_, samples, _ := e.ScopeData()
+		idx := e.ScopeTriggerIndex()
+		if idx < 0 || idx >= len(samples) {
+			t.Fatalf("%s index %d outside %d samples", tc.mode, idx, len(samples))
+		}
+		if got := samples[idx].Bit(0); got != tc.want {
+			t.Fatalf("%s trigger sample = %v, want %v", tc.mode, got, tc.want)
+		}
+	}
+}
+
 func TestScopeTriggerRise(t *testing.T) {
 	const pin = 5
 	c := rp2350.New()
