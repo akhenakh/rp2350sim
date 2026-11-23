@@ -78,6 +78,16 @@ func (t *Trace) SetPins(pins []int) {
 // Pins returns the channel-to-pin mapping.
 func (t *Trace) Pins() []int { return t.pins }
 
+// LatestT returns the timestamp of the newest sample, or zero when the ring
+// is empty. Trigger scanners use it to arm on future samples instead of
+// replaying the captured history.
+func (t *Trace) LatestT() uint64 {
+	if t.count == 0 {
+		return 0
+	}
+	return t.samples[(t.head-1+len(t.samples))%len(t.samples)].T
+}
+
 // Tick samples every Interval cycles.
 func (t *Trace) Tick() {
 	now := t.Chip.Cycles
@@ -100,6 +110,32 @@ func (t *Trace) Tick() {
 	if t.count < len(t.samples) {
 		t.count++
 	}
+}
+
+// ScanSince visits the samples newer than after in chronological order
+// without copying the ring, and stops early when fn returns false. Trigger
+// scanners use it so an armed capture costs no per-chunk allocation.
+func (t *Trace) ScanSince(after uint64, fn func(TraceSample) bool) {
+	if t.count == 0 {
+		return
+	}
+	// Find the tail of samples newer than after by walking back from the
+	// newest. This is O(new samples) and does not allocate, unlike a full
+	// ring copy per emulator chunk.
+	n := 0
+	for n < t.count && t.sampleAt(t.count-1-n).T > after {
+		n++
+	}
+	for i := t.count - n; i < t.count; i++ {
+		if !fn(t.sampleAt(i)) {
+			return
+		}
+	}
+}
+
+func (t *Trace) sampleAt(i int) TraceSample {
+	start := (t.head - t.count + len(t.samples)) % len(t.samples)
+	return t.samples[(start+i)%len(t.samples)]
 }
 
 // Snapshot returns the channels and the ring in chronological order.

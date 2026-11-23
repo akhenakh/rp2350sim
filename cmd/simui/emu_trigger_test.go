@@ -51,8 +51,29 @@ func TestScopeTriggerRise(t *testing.T) {
 	if !samples[idx].Bit(0) {
 		t.Fatal("trigger sample is not high")
 	}
+	// More samples must not overwrite the frozen window.
+	_, before, _ := e.ScopeData()
+	for range 500 {
+		c.Cycles += devices.ScopeInterval
+		tr.Tick()
+		e.mu.Lock()
+		e.checkScopeTriggerLocked()
+		e.mu.Unlock()
+	}
+	_, after, _ := e.ScopeData()
+	if len(before) != len(after) || before[0] != after[0] || before[len(before)-1] != after[len(after)-1] {
+		t.Fatal("scope trigger overwrote the frozen capture")
+	}
 	e.RearmScope()
 	if on, _ := e.ScopeTriggered(); on {
 		t.Fatal("rearm did not clear the frozen capture")
+	}
+	// Rearming must wait for a new edge, not replay the captured history.
+	e.mu.Lock()
+	e.checkScopeTriggerLocked()
+	found := e.frozenScope.found
+	e.mu.Unlock()
+	if found {
+		t.Fatal("rearm triggered on an old sample")
 	}
 }

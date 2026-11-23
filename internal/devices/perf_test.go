@@ -38,6 +38,26 @@ func BenchmarkTraceSnapshot(b *testing.B) {
 	}
 }
 
+// BenchmarkTraceScanSince measures the armed scope-trigger scan when no new
+// samples arrived. It must not copy the ring.
+func BenchmarkTraceScanSince(b *testing.B) {
+	c := rp2350.New()
+	tr := NewTrace(c, []int{0, 1, 2, 3, 4, 5}, ScopeInterval, ScopeDepth)
+	for range ScopeDepth {
+		c.Cycles += ScopeInterval
+		tr.Tick()
+	}
+	after := tr.LatestT()
+	visited := 0
+	b.ReportAllocs()
+	for b.Loop() {
+		tr.ScanSince(after, func(TraceSample) bool { visited++; return true })
+	}
+	if visited != 0 {
+		b.Fatalf("scanned %d old samples", visited)
+	}
+}
+
 // BenchmarkST7789Framebuffer measures the RGB565-to-RGBA conversion the UI
 // does whenever the panel content changes.
 func BenchmarkST7789Framebuffer(b *testing.B) {

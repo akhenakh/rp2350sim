@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -374,10 +373,14 @@ type frozenScope struct {
 	samples   []devices.TraceSample
 	index     int
 	seen      uint64
+	scanInit  bool
 	lastBit   bool
 	haveLast  bool
 	found     bool
 	trigT     uint64
+	// post counts the samples after trigT; the capture freezes once a
+	// quarter-window is available without copying the ring every chunk.
+	post int
 }
 
 // SetScopeTrigger arms the scope trigger and clears any frozen capture.
@@ -386,6 +389,7 @@ func (e *Emu) SetScopeTrigger(cfg ScopeTriggerConfig) {
 	defer e.mu.Unlock()
 	e.scopeTrig = cfg
 	e.frozenScope = frozenScope{}
+	e.armScopeScanLocked()
 }
 
 // RearmScope clears a frozen capture and waits for the next trigger.
@@ -393,6 +397,17 @@ func (e *Emu) RearmScope() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.frozenScope = frozenScope{}
+	e.armScopeScanLocked()
+}
+
+// armScopeScanLocked starts the trigger scan at the newest sample so arming
+// and rearming wait for a future edge instead of replaying the ring.
+func (e *Emu) armScopeScanLocked() {
+	if e.scope == nil {
+		return
+	}
+	e.frozenScope.seen = e.scope.LatestT()
+	e.frozenScope.scanInit = true
 }
 
 // ScopeTriggered reports whether the scope capture is frozen and why.
@@ -413,30 +428,11 @@ func (e *Emu) ScopeTriggerIndex() int {
 // or level, then keeps a quarter-window of post-trigger data before freezing.
 // The caller holds e.mu.
 func (e *Emu) checkScopeTriggerLocked() {
-	if e.scope == nil || e.scopeTrig.Mode == "" {
-		return
-	}
-	if e.frozenScope.found {
-		pins, samples := e.scope.Snapshot()
-		post := 0
-		for _, sample := range slices.Backward(samples) {
-			if sample.T <= e.frozenScope.trigT {
-				break
-			}
-			post++
-		}
-		if post >= devices.ScopeDepth/4 {
-			e.freezeScopeLocked(pins, samples)
-		}
-		return
-	}
-
-	pins, samples := e.scope.Snapshot()
-	if len(samples) == 0 {
+	if e.scope == nil || e.scopeTrig.Mode == "" || e.frozenScope.triggered {
 		return
 	}
 	ch := -1
-	for i, pin := range pins {
+	for i, pin := range e.scope.Pins() {
 		if pin == e.scopeTrig.Pin {
 			ch = i
 			break
@@ -445,39 +441,61 @@ func (e *Emu) checkScopeTriggerLocked() {
 	if ch < 0 {
 		return
 	}
-	if !e.frozenScope.haveLast {
-		e.frozenScope.lastBit = samples[0].Bit(ch)
-		e.frozenScope.haveLast = true
-		if (e.scopeTrig.Mode == "high" && e.frozenScope.lastBit) ||
-			(e.scopeTrig.Mode == "low" && !e.frozenScope.lastBit) {
-			e.frozenScope.trigT = samples[0].T
-			e.frozenScope.found = true
+	fs := &e.frozenScope
+	if !fs.scanInit {
+		// Arm on the next sample. Replaying the ring would trigger on history
+		// that may already be leaving the window.
+		fs.scanInit = true
+		fs.seen = e.scope.LatestT()
+		if fs.seen > 0 {
+			return
 		}
 	}
-	for _, s := range samples {
-		if s.T <= e.frozenScope.seen {
-			continue
+	// Walk only the samples added since the last call. While the trigger is
+	// merely armed this costs no allocation; the full ring is copied once,
+	// when the post-trigger window is complete.
+	e.scope.ScanSince(fs.seen, func(s devices.TraceSample) bool {
+		fs.seen = s.T
+		if fs.found {
+			if s.T > fs.trigT {
+				fs.post++
+			}
+			if fs.post >= devices.ScopeDepth/4 {
+				pins, samples := e.scope.Snapshot()
+				e.freezeScopeLocked(pins, samples)
+				return false
+			}
+			return true
 		}
 		bit := s.Bit(ch)
+		if !fs.haveLast {
+			fs.haveLast = true
+			fs.lastBit = bit
+			if (e.scopeTrig.Mode == "high" && bit) ||
+				(e.scopeTrig.Mode == "low" && !bit) {
+				fs.trigT = s.T
+				fs.found = true
+			}
+			return true
+		}
 		match := false
 		switch e.scopeTrig.Mode {
 		case "rise":
-			match = !e.frozenScope.lastBit && bit
+			match = !fs.lastBit && bit
 		case "fall":
-			match = e.frozenScope.lastBit && !bit
+			match = fs.lastBit && !bit
 		case "high":
 			match = bit
 		case "low":
 			match = !bit
 		}
-		e.frozenScope.lastBit = bit
-		e.frozenScope.seen = s.T
+		fs.lastBit = bit
 		if match {
-			e.frozenScope.trigT = s.T
-			e.frozenScope.found = true
-			break
+			fs.trigT = s.T
+			fs.found = true
 		}
-	}
+		return true
+	})
 }
 
 func (e *Emu) freezeScopeLocked(pins []int, samples []devices.TraceSample) {
