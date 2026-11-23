@@ -115,6 +115,10 @@ func newDMA(c *Chip) *dmaBlock {
 			d.block.regs[(uint32(ch)*0x40+reg)/4] = v
 			if trig {
 				d.start(ch)
+			} else if reg == 0x08 {
+				// Reloading TRANS_COUNT through AL2/AL3 wakes a channel
+				// whose chain trigger arrived before the count was written.
+				d.checkChain(ch)
 			}
 			return
 		}
@@ -214,6 +218,7 @@ func (d *dmaBlock) begin(ch int, v uint32) {
 	base := uint32(ch * 0x40)
 	ctrl := v &^ dmaCtrlBusy
 	chp := &d.ch[ch]
+	d.chainPending &^= 1 << uint(ch)
 	if v&dmaCtrlEN == 0 {
 		chp.active = false
 		d.active &^= 1 << uint(ch)
@@ -295,7 +300,10 @@ func (d *dmaBlock) complete(n int) {
 	ch.active = false
 	d.active &^= 1 << uint(n)
 	d.block.regs[base/4+2] = 0
-	d.block.regs[base/4+3] = ch.ctrl &^ (dmaCtrlEN | dmaCtrlBusy)
+	// Completion clears BUSY only. EN stays set, so the channel can be
+	// re-triggered through an alias or MULTI_CHAN_TRIGGER without rewriting
+	// CTRL; hardware ignores triggers only while EN is clear.
+	d.block.regs[base/4+3] = ch.ctrl &^ dmaCtrlBusy
 	if d.chip.OnDMA != nil {
 		d.chip.OnDMA(n, ch.read, ch.write, ch.count, ch.ctrl)
 	}
@@ -308,13 +316,11 @@ func (d *dmaBlock) complete(n int) {
 	// command lists and pixel buffers.
 	target := int((ch.ctrl >> 13) & 0xF)
 	if target != n && target < 16 {
-		// A chained trigger starts the target even though its EN bit was
-		// cleared when it completed; re-enable it for the new transfer. A
-		// zero count means software has not reloaded it yet; chaining now
-		// would immediately complete and recurse.
+		// A chained trigger respects the target's EN bit, like any other
+		// trigger. A zero count means software has not reloaded it yet;
+		// chaining now would immediately complete and recurse.
 		if d.block.regs[uint32(target*0x40)/4+2] != 0 {
-			v := d.block.regs[uint32(target*0x40)/4+3] | dmaCtrlEN
-			d.begin(target, v)
+			d.begin(target, d.block.regs[uint32(target*0x40)/4+3])
 		} else {
 			d.chainPending |= 1 << uint(target)
 		}

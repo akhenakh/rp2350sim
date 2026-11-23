@@ -42,8 +42,8 @@ func TestDMAPacedTransfer(t *testing.T) {
 			t.Fatalf("byte %d = %#x, want %#x", i, got, 0xA0+i)
 		}
 	}
-	if ctrl := dmaChanReg(c, 0, 3); ctrl&(dmaCtrlBusy|dmaCtrlEN) != 0 {
-		t.Fatalf("CTRL_TRIG still busy/enabled: %#x", ctrl)
+	if ctrl := dmaChanReg(c, 0, 3); ctrl&dmaCtrlBusy != 0 || ctrl&dmaCtrlEN == 0 {
+		t.Fatalf("CTRL_TRIG busy/enable = %#x, want BUSY clear and EN set", ctrl)
 	}
 	if dmaChanReg(c, 0, 2) != 0 {
 		t.Fatal("TRANS_COUNT not cleared")
@@ -81,5 +81,75 @@ func TestDMAIRQQuiet(t *testing.T) {
 	}
 	if c.dma.pending(1) != 0 {
 		t.Fatal("IRQ_QUIET still raised the completion interrupt")
+	}
+}
+
+// TestDMAReTrigger checks that a completed channel keeps EN set and can be
+// restarted through MULTI_CHAN_TRIGGER and an AL1 trigger alias.
+func TestDMAReTrigger(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.Write8(0x20000000, 0x5A)
+	c.Write32(dmaBase+0x00, 0x20000000)
+	c.Write32(dmaBase+0x04, 0x20000300)
+	c.Write32(dmaBase+0x08, 1)
+	c.Write32(dmaBase+0x0C, dmaCtrlEN) // no increment: addresses stay put
+	c.Step()
+	if got := c.Read8(0x20000300); got != 0x5A {
+		t.Fatalf("first copy = %#x", got)
+	}
+	if ctrl := dmaChanReg(c, 0, 3); ctrl&dmaCtrlBusy != 0 || ctrl&dmaCtrlEN == 0 {
+		t.Fatalf("CTRL after completion = %#x", ctrl)
+	}
+
+	// MULTI_CHAN_TRIGGER starts a channel without touching CTRL.
+	c.Write32(dmaBase+0x08, 1)
+	c.Write32(dmaBase+0x450, 1)
+	if dmaChanReg(c, 0, 3)&dmaCtrlBusy == 0 {
+		t.Fatal("MULTI_CHAN_TRIGGER did not start the channel")
+	}
+	c.Step()
+
+	// The AL1 count alias triggers too.
+	c.Write32(dmaBase+0x1C, 1) // AL1_TRANS_COUNT_TRIG
+	if dmaChanReg(c, 0, 3)&dmaCtrlBusy == 0 {
+		t.Fatal("AL1_TRANS_COUNT_TRIG did not start the channel")
+	}
+	c.Step()
+}
+
+// TestDMAChainPendingReload checks that reloading TRANS_COUNT through the AL2
+// alias wakes a channel whose chained trigger found a zero count.
+func TestDMAChainPendingReload(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.Write8(0x20000000, 0x77)
+	c.Write8(0x20000001, 0x88)
+
+	// Channel 1: idle, enabled, no count yet.
+	c.Write32(dmaBase+0x40, 0x20000001)
+	c.Write32(dmaBase+0x44, 0x20000301)
+	c.Write32(dmaBase+0x48, 0)
+	c.Write32(dmaBase+0x4C, dmaCtrlEN)
+	// Channel 0: one byte, chain to channel 1.
+	c.Write32(dmaBase+0x00, 0x20000000)
+	c.Write32(dmaBase+0x04, 0x20000300)
+	c.Write32(dmaBase+0x08, 1)
+	c.Write32(dmaBase+0x0C, dmaCtrlEN|1<<13)
+	c.Step()
+	if c.dma.chainPending&(1<<1) == 0 {
+		t.Fatal("chain trigger was not latched")
+	}
+
+	// AL2_TRANS_COUNT is the reload path the DVI example uses.
+	c.Write32(dmaBase+0x64, 1)
+	if dmaChanReg(c, 1, 3)&dmaCtrlBusy == 0 {
+		t.Fatal("AL2_TRANS_COUNT did not start the chained channel")
+	}
+	c.Step()
+	if got := c.Read8(0x20000301); got != 0x88 {
+		t.Fatalf("chained copy = %#x", got)
 	}
 }
