@@ -209,6 +209,9 @@ output or bit timing.
   640x480 frame.
 - Frame height is inferred from the active width (640→480, 320→240, 800→600,
   1280→720); HSTX itself carries no vertical timing.
+- The model consumes the single-word RAW_REPEAT blanking used by the example.
+  RAW with a count above one and TMDS_REPEAT's shift-register recirculation are
+  not expanded; they are noted as fidelity gaps, not used by the DVI demo.
 
 ## TRNG, SHA-256 and the AON timer
 
@@ -270,10 +273,11 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   no DREQ pacing.
 - **Timers:** the 64-bit read pair is latched, but writes to TIMEHW/TIMELW are
   ignored; firmware cannot set the timer.
-- **Package/pins:** SYSINFO reports the RP2350A QFN-60 package while the model
-  exposes 48 GPIOs and the coprocessor can touch GP32-47. Treat the pin model
-  as a superset; the QMI CS1 constraint (GP0/GP8/GP19) is documented, not
-  enforced.
+- **Package/pins:** SYSINFO reports the selected package: RP2350A QFN-60 by
+  default, RP2350B QFN-80 with `-rp2350b` or `package: qfn80`. The GPIO model
+  always covers 48 pins and the coprocessor can touch GP32-47; the board and
+  scope expose 30 pins for the A and 48 for the B. Treat the pin model as a
+  superset; the QMI CS1 constraint (GP0/GP8/GP19) is documented, not enforced.
 - **High-speed peripheral buses:** UART/SPI/I2C traffic is tapped at the
   controller-model level for the logic analyzer; the emulated GPIO pins do not
   toggle at bus bit rates. PIO/bit-banged traffic is decoded from pins.

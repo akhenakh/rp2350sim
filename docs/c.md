@@ -114,9 +114,11 @@ coprocessor operation with its operands and result.
 
 - The DCP arithmetic path used by `+ - * /` and `sqrt` is covered by
   `firmware/c/dcp`; `%f` varargs remain unsupported (see above).
-- Bootrom coverage is a functional subset. Firmware that calls `rom_reboot`,
-  `reset_usb_boot`, partition/OTP services or the ROM SF table halts with a
-  clear "unsupported service" message rather than executing ROM zeros.
+- Bootrom coverage is a functional subset. `rom_reboot` (including the
+  FLASH_UPDATE partition preference), flash erase/program, OTP access and the
+  random-number service are modelled; `reset_usb_boot` logs a warning and
+  resets. Partition and secure-boot services halt with a clear "unsupported
+  service" message rather than executing ROM zeros.
 - USB device stdio is validated end to end for TinyUSB (`hello_world/usb`,
   `firmware/c/usbhello`, `firmware/c/usbecho`) and TinyGo (`firmware/echo`).
   The host supports the CDC data/notification endpoints and USB-MIDI; other

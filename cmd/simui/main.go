@@ -2498,7 +2498,7 @@ func main() {
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, eth/wifi, ws, sensors, scope, logic, otp, bus, debug, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, console")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")
 	debugTab := flag.String("debug-tab", "registers", "debug inspector tab: registers, memory, variables")

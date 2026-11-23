@@ -354,8 +354,10 @@ Reference firmware: `firmware/c/otp`. Task: `task c:otp`.
 ## Flash and OTA
 
 **Headless.** `-flash PATH` loads a raw 16 MiB image and writes it back after a
-reset and at exit; `-flash-out PATH` only writes the final image. A single flat
-slot is modelled (no A/B rollback).
+reset and at exit; `-flash-out PATH` only writes the final image. A flat image
+is the default; a raw image may carry the emulator's PT25 A/B partition table
+(see [cli.md](cli.md)). Signed picobin tables and rollback policy are not
+parsed.
 
 ```sh
 rp2350sim -fw firmware/c/build/ota.elf -flash build/ota.bin -seconds 2 \

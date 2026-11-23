@@ -2,9 +2,9 @@
 
 `rp2350sim-ui` is a Shirei desktop application that wraps the same emulator as
 the headless runner. It starts with a board picker, attaches that board's
-devices, and exposes the live machine through tabs: GPIO, LCD, sensors,
-Ethernet, LEDs, scope, logic analyzer, OTP, Bus Pirate terminals and the
-firmware console.
+devices, and exposes the live machine through tabs: GPIO, LCD, DVI, sensors,
+Ethernet, LEDs, scope, logic analyzer, audio, MIDI, OTP, Bus Pirate terminals,
+the debugger and the firmware console.
 
 The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
 the emulator build. Download `rp2350sim-ui` from
@@ -39,7 +39,7 @@ Startup flags:
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
-| `--tab NAME` | initial tab: `board`, `lcd`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `otp`, `bus`, `debug`, `console` |
+| `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `audio`, `midi`, `otp`, `bus`, `debug`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--paused` | load the firmware but do not execute until Run |
