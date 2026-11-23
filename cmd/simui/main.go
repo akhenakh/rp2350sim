@@ -115,6 +115,7 @@ func quitRequested() bool {
 
 func RootView() {
 	if quitRequested() {
+		stopAudio()
 		app.Quit()
 	}
 
@@ -264,6 +265,9 @@ func boardBadges(b *BoardDef) []string {
 }
 
 func selectBoard(b *BoardDef) {
+	// Release held piano notes on the old board before its endpoint goes
+	// away, so they cannot be sent to the new board on release.
+	panicMIDI()
 	for _, term := range busTerms {
 		term.Close()
 	}
@@ -675,7 +679,8 @@ func pinCard(p int, in PinInfo) {
 }
 
 // lcdAspect returns the displayed frame size: the last frame when there is
-// one, otherwise the board's panel with its logical rotation applied.
+// one, otherwise the board's logical panel size. YAML width/height are already
+// post-rotation, so no swap is applied here.
 func lcdAspect(snap MachineState) (int, int) {
 	if snap.LCD != nil {
 		b := snap.LCD.Bounds()
@@ -683,11 +688,8 @@ func lcdAspect(snap MachineState) (int, int) {
 			return b.Dx(), b.Dy()
 		}
 	}
-	if d := selectedBoard.LCD; d != nil {
-		if d.Rotation == 90 || d.Rotation == 270 {
-			return d.Height, d.Width
-		}
-		return d.Width, d.Height
+	if selectedBoard != nil && selectedBoard.LCD != nil {
+		return selectedBoard.LCD.Width, selectedBoard.LCD.Height
 	}
 	return 240, 135
 }
@@ -2630,6 +2632,7 @@ func main() {
 
 	app.SetupWindow("rp2350sim", *winW, *winH)
 	app.Run(RootView)
+	stopAudio()
 	emu.SyncSD()
 	emu.SaveFlash()
 }

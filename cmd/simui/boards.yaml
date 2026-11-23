@@ -122,8 +122,8 @@ boards:
       cs: 17
       dc: 16
       rst: 20
-      width: 240
-      height: 320
+      width: 320
+      height: 240
       rotation: 90
       backlight: 15
     touch:
