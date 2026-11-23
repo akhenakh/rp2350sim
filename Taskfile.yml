@@ -783,6 +783,12 @@ tasks:
       - mkdir -p site/themes/hugo-geekdoc
       - test -f site/themes/hugo-geekdoc/theme.toml || (curl -fsSL https://github.com/thegeeklab/hugo-geekdoc/releases/download/v5.0.0/hugo-geekdoc.tar.gz | tar -xz -C site/themes/hugo-geekdoc --strip-components=1)
 
+  docs:images:
+    desc: Regenerate the guide screenshots for DVI, MIDI, audio, scope, logic, RP2350B, USB and OTA
+    deps: [firmware:audio, firmware:midi, firmware:protocols, c:build, picoexamples:build]
+    cmds:
+      - bash tools/render_docs_images.sh {{.BUILD}}
+
   docs:site:
     desc: Generate the Hugo content tree from docs/
     cmds:
