@@ -1451,10 +1451,7 @@ func (e *Emu) loop() {
 				e.running = false
 			}
 		}
-		e.mu.Unlock()
-		if running {
-			shirei.RequestNextFrame()
-		}
+		saveFlash := false
 		if boots != e.lastBoots {
 			if boots > e.lastBoots {
 				e.bootCount += boots - e.lastBoots
@@ -1462,6 +1459,13 @@ func (e *Emu) loop() {
 				e.bootCount++
 			}
 			e.lastBoots = boots
+			saveFlash = true
+		}
+		e.mu.Unlock()
+		if running {
+			shirei.RequestNextFrame()
+		}
+		if saveFlash {
 			e.SaveFlash()
 		}
 	}
