@@ -71,6 +71,14 @@ func TestTRNG(t *testing.T) {
 			t.Fatalf("EHR%d not deterministic: %08x vs %08x", i, got, first[i])
 		}
 	}
+	// Reading the last word starts a new 192-bit sample.
+	var second [trngEHRWords]uint32
+	for i := range second {
+		second[i] = c.Read32(trngBase + trngEHR0 + uint32(i*4))
+	}
+	if second == first {
+		t.Fatal("EHR did not advance to a new sample")
+	}
 	// Clearing the interrupt does not invalidate the data.
 	c.Write32(trngBase+trngICR, 1)
 	if c.Read32(trngBase+trngISR)&1 != 0 {

@@ -111,7 +111,14 @@ func (t *trngBlock) read(c *Chip, off uint32) (uint32, bool) {
 		return 0, true
 	}
 	if off >= trngEHR0 && off < trngEHR0+trngEHRWords*4 {
-		return t.ehr[(off-trngEHR0)/4], true
+		idx := (off - trngEHR0) / 4
+		v := t.ehr[idx]
+		if t.enabled && int(idx) == trngEHRWords-1 {
+			// Reading the last EHR word consumes the 192-bit sample; the
+			// hardware starts another one.
+			t.refill()
+		}
+		return v, true
 	}
 	return 0, false
 }
