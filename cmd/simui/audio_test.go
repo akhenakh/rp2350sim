@@ -5,17 +5,17 @@ import (
 	"testing"
 )
 
-func pcmWAV(samples ...int16) []byte {
+func pcmWAVChannels(channels int, samples ...int16) []byte {
 	out := make([]byte, 44+len(samples)*2)
 	copy(out[0:], "RIFF")
 	binary.LittleEndian.PutUint32(out[4:], uint32(36+len(samples)*2))
 	copy(out[8:], "WAVEfmt ")
 	binary.LittleEndian.PutUint32(out[16:], 16)
 	binary.LittleEndian.PutUint16(out[20:], 1)
-	binary.LittleEndian.PutUint16(out[22:], 1)
+	binary.LittleEndian.PutUint16(out[22:], uint16(channels))
 	binary.LittleEndian.PutUint32(out[24:], 48000)
-	binary.LittleEndian.PutUint32(out[28:], 96000)
-	binary.LittleEndian.PutUint16(out[32:], 2)
+	binary.LittleEndian.PutUint32(out[28:], uint32(48000*channels*2))
+	binary.LittleEndian.PutUint16(out[32:], uint16(channels*2))
 	binary.LittleEndian.PutUint16(out[34:], 16)
 	copy(out[36:], "data")
 	binary.LittleEndian.PutUint32(out[40:], uint32(len(samples)*2))
@@ -24,6 +24,8 @@ func pcmWAV(samples ...int16) []byte {
 	}
 	return out
 }
+
+func pcmWAV(samples ...int16) []byte { return pcmWAVChannels(1, samples...) }
 
 func TestSafePlaybackWAVRemovesDCAndAttenuates(t *testing.T) {
 	in := pcmWAV(1000, 3000)
@@ -51,6 +53,19 @@ func TestSafePlaybackWAVHeadroom(t *testing.T) {
 		}
 		if v > 32767/2 || v < -32768/2 {
 			t.Fatalf("sample %d = %d is above the playback headroom", i, v)
+		}
+	}
+}
+
+func TestSafePlaybackWAVStereoPerChannelDC(t *testing.T) {
+	// Left offset 3000, right offset 9000: a single global mean would leave
+	// a large residual on both channels.
+	in := pcmWAVChannels(2, 1000, 9000, 3000, 9000, 5000, 9000)
+	out := safePlaybackWAV(in)
+	want := []int16{-400, 0, 0, 0, 400, 0}
+	for i, w := range want {
+		if got := int16(binary.LittleEndian.Uint16(out[44+i*2:])); got != w {
+			t.Fatalf("sample %d = %d, want %d", i, got, w)
 		}
 	}
 }

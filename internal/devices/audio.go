@@ -48,6 +48,7 @@ type AudioDecoder struct {
 
 	lastBCLK bool
 	lastWS   bool
+	started  bool
 	skip     int
 	shift    uint32
 	bits     int
@@ -71,7 +72,7 @@ func NewAudio(chip *rp2350.Chip, cfg AudioConfig) *AudioDecoder {
 	if cfg.Rate <= 0 {
 		cfg.Rate = 48000
 	}
-	if cfg.Bits <= 0 {
+	if cfg.Bits <= 0 || cfg.Bits > 32 {
 		cfg.Bits = 16
 	}
 	if cfg.Decimation <= 0 {
@@ -120,7 +121,15 @@ func (d *AudioDecoder) tickI2S() {
 		return
 	}
 	ws := d.chip.Pins.Level(d.cfg.LRCLK)
-	if ws != d.lastWS {
+	if !d.started {
+		// The first observed frame is a frame boundary even when LRCLK is
+		// already low, so apply the Philips delay for it too.
+		d.started = true
+		d.lastWS = ws
+		d.skip = d.cfg.Delay
+		d.bits = 0
+		d.shift = 0
+	} else if ws != d.lastWS {
 		d.lastWS = ws
 		d.skip = d.cfg.Delay
 		d.bits = 0

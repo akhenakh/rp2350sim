@@ -39,13 +39,28 @@ func safePlaybackWAV(wav []byte) []byte {
 	if n == 0 {
 		return out
 	}
-	var sum float64
-	for i := range n {
-		sum += float64(int16(binary.LittleEndian.Uint16(raw[i*2:])))
+	channels := int(binary.LittleEndian.Uint16(out[22:]))
+	if channels < 1 || channels > 8 {
+		channels = 1
 	}
-	mean := sum / float64(n)
+	// Remove the DC offset per channel: a stereo I2S capture can have a
+	// different bias on each slot.
+	sums := make([]float64, channels)
+	counts := make([]float64, channels)
 	for i := range n {
-		v := (float64(int16(binary.LittleEndian.Uint16(raw[i*2:]))) - mean) * playbackGain
+		ch := i % channels
+		sums[ch] += float64(int16(binary.LittleEndian.Uint16(raw[i*2:])))
+		counts[ch]++
+	}
+	means := make([]float64, channels)
+	for ch := range channels {
+		if counts[ch] > 0 {
+			means[ch] = sums[ch] / counts[ch]
+		}
+	}
+	for i := range n {
+		ch := i % channels
+		v := (float64(int16(binary.LittleEndian.Uint16(raw[i*2:]))) - means[ch]) * playbackGain
 		if v > 32767 {
 			v = 32767
 		} else if v < -32768 {

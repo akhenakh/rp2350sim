@@ -453,6 +453,9 @@ func LoadBoards() ([]BoardDef, error) {
 			if d.Bits <= 0 {
 				d.Bits = 16
 			}
+			if d.Bits > 32 {
+				return nil, fmt.Errorf("boards: %s: audio bits must be 1..32", b.ID)
+			}
 			if d.Decimation <= 0 {
 				d.Decimation = 64
 			}

@@ -51,9 +51,7 @@ func TestSampleFromBits(t *testing.T) {
 func TestAudioI2S(t *testing.T) {
 	c := rp2350.New()
 	d := NewAudio(c, AudioConfig{Kind: AudioI2S, BCLK: 0, LRCLK: 1, Data: 2, Bits: 16, Delay: 1, Rate: 48000})
-	// Make the first WS=0 transition look like a channel change.
-	d.lastWS = true
-
+	// The first frame starts with LRCLK low; it must still get the delay bit.
 	send := func(ws bool, sample uint16) {
 		setExt(c, 1, ws)
 		setExt(c, 0, false)

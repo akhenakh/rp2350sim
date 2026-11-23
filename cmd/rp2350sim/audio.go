@@ -42,6 +42,9 @@ func newAudioDecoder(c *rp2350.Chip, i2s, pdm string, pwmPin, rate int) (*device
 		cfg.BCLK, cfg.LRCLK, cfg.Data = nums[0], nums[1], nums[2]
 		if len(nums) == 4 {
 			cfg.Bits = nums[3]
+			if cfg.Bits < 1 || cfg.Bits > 32 {
+				return nil, fmt.Errorf("-audio-i2s bits must be 1..32")
+			}
 		}
 		cfg.Delay = 1
 		cfg.Channels = 2
