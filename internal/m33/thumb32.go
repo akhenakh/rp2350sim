@@ -860,12 +860,18 @@ func (c *CPU) readSpecialReg(sysm uint32) uint32 {
 		return c.MSP
 	case 0x09: // PSP
 		return c.PSP
+	case 0x0A: // MSPLIM
+		return c.MSPLIM
+	case 0x0B: // PSPLIM
+		return c.PSPLIM
 	case 0x10: // PRIMASK
 		return c.PRIMASK & 1
-	case 0x11: // FAULTMASK
-		return c.FAULTMASK & 1
-	case 0x12, 0x13: // BASEPRI (and BASEPRI_MAX reads the same field)
+	case 0x11: // BASEPRI
 		return c.BASEPRI
+	case 0x12: // BASEPRI_MAX reads the same field
+		return c.BASEPRI
+	case 0x13: // FAULTMASK
+		return c.FAULTMASK & 1
 	case 0x14: // CONTROL
 		return c.CONTROL
 	}
@@ -886,17 +892,21 @@ func (c *CPU) writeSpecialReg(sysm, v uint32) {
 		if c.IPSR == 0 && c.CONTROL&2 != 0 {
 			c.R[13] = c.PSP
 		}
+	case 0x0A: // MSPLIM
+		c.MSPLIM = v &^ 7
+	case 0x0B: // PSPLIM
+		c.PSPLIM = v &^ 7
 	case 0x10: // PRIMASK
 		c.PRIMASK = v & 1
-	case 0x11: // FAULTMASK
-		c.FAULTMASK = v & 1
-	case 0x12: // BASEPRI
-		c.BASEPRI = v & 0xFF
-	case 0x13: // BASEPRI_MAX: only raise the mask (numerically lower priority)
-		b := v & 0xFF
+	case 0x11: // BASEPRI: four implemented priority bits on the RP2350
+		c.BASEPRI = v & 0xF0
+	case 0x12: // BASEPRI_MAX: only raise the mask (numerically lower priority)
+		b := v & 0xF0
 		if b != 0 && (c.BASEPRI == 0 || b < c.BASEPRI) {
 			c.BASEPRI = b
 		}
+	case 0x13: // FAULTMASK
+		c.FAULTMASK = v & 1
 	case 0x14: // CONTROL
 		c.setControl(v)
 	}

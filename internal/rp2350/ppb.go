@@ -2,17 +2,33 @@ package rp2350
 
 import "github.com/akhenakh/rp2350sim/internal/m33"
 
-// NVIC models the Armv8-M Nested Vectored Interrupt Controller and the
-// System Control Block registers TinyGo and the Pico SDK touch.
+// Exception numbers of the Armv8-M system exceptions modelled here.
+const (
+	excNMI       = 2
+	excHardFault = 3
+	excSVCall    = 11
+	excPendSV    = 14
+	excSysTick   = 15
+
+	// mpuRegions is the Cortex-M33 MPU region count reported through MPU_TYPE
+	// (the RP2350 exposes eight regions).
+	mpuRegions = 8
+)
+
+// NVIC models one core's private System Control Space: the NVIC, the System
+// Control Block and the SysTick timer. On the RP2350 the whole 0xE000E000 page
+// is banked per core, so VTOR, enable/pending state, priorities, SysTick and
+// the active-exception bookkeeping are independent.
 type NVIC struct {
 	chip *Chip
+	core int
 
 	enabled [2]uint32
 	pending [2]uint32
-	// active is pending & enabled, maintained on every change so the
-	// per-cycle check does not compute it twice.
-	active [2]uint32
-	prio   [64]byte
+	// activeIRQ is the IABR view: external exceptions that entered and have
+	// not returned yet.
+	activeIRQ [2]uint32
+	prio      [64]byte
 
 	actlr uint32
 	aircr uint32
@@ -25,15 +41,37 @@ type NVIC struct {
 	mmfar uint32
 	bfar  uint32
 
-	systickCtrl uint32
-	systickLoad uint32
-	systickVal  uint32
+	cpacr  uint32
+	fpcar  uint32
+	fpdscr uint32
+
+	mpuCtrl uint32
+	mpuRnr  uint32
+	mpuRbar [mpuRegions]uint32
+	mpuRasr [mpuRegions]uint32
+
+	sauCtrl uint32
+	sauRnr  uint32
+	sauRbar [mpuRegions]uint32
+	sauRlar [mpuRegions]uint32
+
+	// System exceptions are pended through ICSR or the SysTick timer.
+	pendSV  bool
+	pendST  bool
+	pendNMI bool
+
+	// activeSys has a bit per active system exception 0..15, and activeCount
+	// tracks the nesting depth for ICSR.RETTOBASE.
+	activeSys   uint16
+	activeCount int
+
+	tick sysTickBlock
 }
 
 func (n *NVIC) reset() {
 	n.enabled = [2]uint32{}
 	n.pending = [2]uint32{}
-	n.active = [2]uint32{}
+	n.activeIRQ = [2]uint32{}
 	n.prio = [64]byte{}
 	n.actlr = 0
 	n.aircr = 0
@@ -43,33 +81,90 @@ func (n *NVIC) reset() {
 	n.shcsr = 0
 	n.cfsr = 0
 	n.hfsr = 0
-	n.systickCtrl = 0
-	n.systickLoad = 0
-	n.systickVal = 0
+	n.mmfar = 0
+	n.bfar = 0
+	n.cpacr = 0
+	n.fpcar = 0
+	n.fpdscr = 0
+	n.mpuCtrl = 0
+	n.mpuRnr = 0
+	n.mpuRbar = [mpuRegions]uint32{}
+	n.mpuRasr = [mpuRegions]uint32{}
+	n.sauCtrl = 0
+	n.sauRnr = 0
+	n.sauRbar = [mpuRegions]uint32{}
+	n.sauRlar = [mpuRegions]uint32{}
+	n.pendSV = false
+	n.pendST = false
+	n.pendNMI = false
+	n.activeSys = 0
+	n.activeCount = 0
+	n.tick.reset()
 	n.syncActive()
 }
 
-// syncActive recomputes pending & enabled and mirrors it into the cores, so
-// the instruction loop can test a plain bool instead of calling into the
-// controller every cycle.
-func (n *NVIC) syncActive() {
-	n.active[0] = n.pending[0] & n.enabled[0]
-	n.active[1] = n.pending[1] & n.enabled[1]
-	any := n.active[0]|n.active[1] != 0
-	if n.chip.CPU0 != nil {
-		n.chip.CPU0.IRQPending = any
+// cpu returns the core this PPB belongs to, or nil during construction.
+func (n *NVIC) cpu() *m33.CPU {
+	if n.chip == nil {
+		return nil
 	}
-	if n.chip.CPU1 != nil {
-		n.chip.CPU1.IRQPending = any
+	if n.core == 0 {
+		return n.chip.CPU0
+	}
+	return n.chip.CPU1
+}
+
+// syncActive mirrors the pending-and-enabled state into the core so the
+// instruction loop can test a plain bool instead of calling the controller
+// every cycle.
+func (n *NVIC) syncActive() {
+	any := (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 ||
+		n.pendNMI || n.pendSV || n.pendST
+	if cpu := n.cpu(); cpu != nil {
+		cpu.IRQPending = any
 	}
 }
 
-// Pend marks an external IRQ pending.
+// wake takes this core out of WFI/WFE when an enabled exception is pending.
+func (n *NVIC) wake() {
+	cpu := n.cpu()
+	if cpu == nil {
+		return
+	}
+	if (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 ||
+		n.pendNMI || n.pendSV || n.pendST {
+		cpu.Sleeping = false
+		cpu.SleepOnEvent = false
+	}
+}
+
+// noteEvent implements SCR.SEVONPEND: a transition to pending signals an event
+// even when the exception is disabled or masked.
+func (n *NVIC) noteEvent() {
+	if n.scr&(1<<4) == 0 {
+		return
+	}
+	cpu := n.cpu()
+	if cpu == nil {
+		return
+	}
+	cpu.EventRegister = true
+	if cpu.SleepOnEvent {
+		cpu.Sleeping = false
+		cpu.SleepOnEvent = false
+	}
+}
+
+// Pend marks an external IRQ pending on this core.
 func (n *NVIC) Pend(irq int) {
 	if irq < 0 || irq >= 64 {
 		return
 	}
+	if n.pending[irq/32]&(1<<uint(irq%32)) != 0 {
+		return
+	}
 	n.pending[irq/32] |= 1 << uint(irq%32)
+	n.noteEvent()
 	n.syncActive()
 	n.wake()
 }
@@ -83,81 +178,228 @@ func (n *NVIC) ClearPending(irq int) {
 	n.syncActive()
 }
 
-func (n *NVIC) wake() {
-	// Any enabled pending interrupt takes the cores out of WFE/WFI.
-	if n.active[0]|n.active[1] != 0 {
-		n.chip.CPU0.Sleeping = false
-		n.chip.CPU0.SleepOnEvent = false
-		n.chip.CPU1.Sleeping = false
-		n.chip.CPU1.SleepOnEvent = false
+// pendSystem pends a system exception (NMI, PendSV or SysTick).
+func (n *NVIC) pendSystem(exc uint32) {
+	switch exc {
+	case excNMI:
+		if n.pendNMI {
+			return
+		}
+		n.pendNMI = true
+	case excPendSV:
+		if n.pendSV {
+			return
+		}
+		n.pendSV = true
+	case excSysTick:
+		if n.pendST {
+			return
+		}
+		n.pendST = true
+	default:
+		return
 	}
+	n.noteEvent()
+	n.syncActive()
+	n.wake()
 }
 
-// PeekPending reports the highest-priority enabled pending IRQ without
-// clearing it. It is used for diagnostics only.
+// PeekPending reports the highest-priority enabled pending exception without
+// taking it. It is used for diagnostics only.
 func (n *NVIC) PeekPending() int {
-	return n.bestPending(false)
+	return int(n.bestPending())
 }
 
-// NextPending implements m33.Interrupts. Taking an exception clears its pending
-// bit, as the core does in hardware.
-func (n *NVIC) NextPending() int {
-	return n.bestPending(true)
+// exceptionPriority is the raw (un-grouped) priority of an exception. Lower
+// numbers are more urgent.
+func (n *NVIC) exceptionPriority(exc uint32) int {
+	switch exc {
+	case excNMI:
+		return -2
+	case excHardFault:
+		return -1
+	}
+	if exc >= 4 && exc <= 15 {
+		return int(n.shpr[exc-4] & 0xF0)
+	}
+	if irq := int(exc) - 16; irq >= 0 && irq < 64 {
+		return int(n.prio[irq] & 0xF0)
+	}
+	return 0
 }
 
-func (n *NVIC) bestPending(clear bool) int {
-	// Fast path: no enabled pending interrupt. This is the common case and it
-	// runs on every cycle.
-	if n.active[0]|n.active[1] == 0 {
+// groupPriority applies AIRCR.PRIGROUP. Only the four top priority bits are
+// implemented on the RP2350.
+func (n *NVIC) groupPriority(p int) int {
+	if p < 0 {
+		return p
+	}
+	sub := uint((n.aircr>>8)&7) + 1
+	if sub >= 8 {
 		return 0
 	}
-	cpu := n.chip.currentCPU()
+	return p &^ ((1 << sub) - 1)
+}
+
+// executionPriority is the group priority against which a pending exception
+// must compare to preempt, derived from the executing exception and the
+// PRIMASK/FAULTMASK/BASEPRI masks.
+func (n *NVIC) executionPriority(cpu *m33.CPU) int {
+	p := 256 // thread mode
+	if cpu.IPSR != 0 {
+		p = n.groupPriority(n.exceptionPriority(cpu.IPSR))
+	}
+	if cpu.PRIMASK&1 != 0 {
+		p = min(p, 0)
+	}
+	if cpu.BASEPRI != 0 {
+		p = min(p, n.groupPriority(int(cpu.BASEPRI&0xF0)))
+	}
+	if cpu.FAULTMASK&1 != 0 {
+		p = min(p, -1)
+	}
+	return p
+}
+
+// bestPending returns the highest-urgency pending exception number, ignoring
+// the execution priority. Ties go to the lower exception number.
+func (n *NVIC) bestPending() uint32 {
+	var best uint32
+	bestPrio := 1 << 20
+	consider := func(exc uint32, prio int) {
+		if best == 0 || prio < bestPrio || (prio == bestPrio && exc < best) {
+			best, bestPrio = exc, prio
+		}
+	}
+	if n.pendNMI {
+		consider(excNMI, n.exceptionPriority(excNMI))
+	}
+	if n.pendSV {
+		consider(excPendSV, n.exceptionPriority(excPendSV))
+	}
+	if n.pendST {
+		consider(excSysTick, n.exceptionPriority(excSysTick))
+	}
+	for i := range 64 {
+		if n.pending[i/32]&n.enabled[i/32]&(1<<uint(i%32)) == 0 {
+			continue
+		}
+		consider(uint32(16+i), n.exceptionPriority(uint32(16+i)))
+	}
+	return best
+}
+
+func (n *NVIC) clearPendingExc(exc uint32) {
+	switch exc {
+	case excNMI:
+		n.pendNMI = false
+	case excPendSV:
+		n.pendSV = false
+	case excSysTick:
+		n.pendST = false
+	default:
+		if irq := int(exc) - 16; irq >= 0 && irq < 64 {
+			n.pending[irq/32] &^= 1 << uint(irq%32)
+		}
+	}
+	n.syncActive()
+}
+
+// NextPending implements m33.Interrupts: it returns the pending exception that
+// may preempt cpu and clears its pending bit.
+func (n *NVIC) NextPending(cpu *m33.CPU) int {
 	if cpu == nil {
 		return 0
 	}
-	if cpu.PRIMASK&1 != 0 || cpu.FAULTMASK&1 != 0 {
+	exec := n.executionPriority(cpu)
+	// PRIMASK/FAULTMASK (and a zero BASEPRI threshold) block everything at
+	// group priority 0 or below; only NMI can still preempt.
+	if !n.pendNMI && exec <= 0 {
 		return 0
 	}
-	best := -1
-	bestPrio := 256
-	for irq := range 64 {
-		if n.pending[irq/32]&(1<<uint(irq%32)) == 0 {
-			continue
-		}
-		if n.enabled[irq/32]&(1<<uint(irq%32)) == 0 {
-			continue
-		}
-		p := int(n.prio[irq])
-		if cpu.BASEPRI != 0 && p >= int(cpu.BASEPRI) {
-			continue
-		}
-		if best < 0 || p < bestPrio || (p == bestPrio && irq < best) {
-			best = irq
-			bestPrio = p
-		}
-	}
-	if best < 0 {
+	exc := n.bestPending()
+	if exc == 0 {
 		return 0
 	}
-	if clear {
-		n.pending[best/32] &^= 1 << uint(best%32)
-		n.syncActive()
-		n.chip.IRQCount++
+	if n.groupPriority(n.exceptionPriority(exc)) >= exec {
+		return 0
 	}
-	return 16 + best
+	n.clearPendingExc(exc)
+	n.chip.IRQCount++
+	return int(exc)
+}
+
+// ExceptionEntered records an exception as active.
+func (n *NVIC) ExceptionEntered(exc uint32) {
+	n.activeCount++
+	if exc < 16 {
+		n.activeSys |= 1 << exc
+		return
+	}
+	if irq := int(exc) - 16; irq >= 0 && irq < 64 {
+		n.activeIRQ[irq/32] |= 1 << uint(irq%32)
+	}
+}
+
+// ReturnException deactivates an exception left through EXC_RETURN.
+func (n *NVIC) ReturnException(exc uint32) {
+	if n.activeCount > 0 {
+		n.activeCount--
+	}
+	if exc < 16 {
+		n.activeSys &^= 1 << exc
+		return
+	}
+	if irq := int(exc) - 16; irq >= 0 && irq < 64 {
+		n.activeIRQ[irq/32] &^= 1 << uint(irq%32)
+	}
+}
+
+// CanTakeSync reports whether the synchronous exception exc may be taken at
+// cpu's effective priority.
+func (n *NVIC) CanTakeSync(cpu *m33.CPU, exc uint32) bool {
+	return n.groupPriority(n.exceptionPriority(exc)) < n.executionPriority(cpu)
+}
+
+func (n *NVIC) icsr(cpu *m33.CPU) uint32 {
+	v := cpu.IPSR & 0x1FF
+	if n.pendNMI {
+		v |= 1 << 31
+	}
+	if n.pendSV {
+		v |= 1 << 28
+	}
+	if n.pendST {
+		v |= 1 << 26
+	}
+	if best := n.bestPending(); best != 0 {
+		v |= (best & 0x1FF) << 12
+	}
+	if (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 {
+		v |= 1 << 22 // ISRPENDING
+	}
+	if cpu.IPSR != 0 && n.activeCount <= 1 {
+		v |= 1 << 11 // RETTOBASE
+	}
+	return v
 }
 
 func (n *NVIC) read(off uint32) uint32 {
+	cpu := n.cpu()
 	switch {
 	case off == 0x008:
 		return n.actlr
-	case off == 0x010:
-		return n.systickCtrl
-	case off == 0x014:
-		return n.systickLoad
-	case off == 0x018:
-		return n.systickVal
-	case off == 0x01C:
+	case off == 0x010: // SYST_CSR
+		n.tick.sync(n.chip.Cycles, n)
+		v := n.tick.ctrl
+		n.tick.ctrl &^= 1 << 16 // COUNTFLAG clear on read
+		return v
+	case off == 0x014: // SYST_RVR
+		return n.tick.load
+	case off == 0x018: // SYST_CVR
+		n.tick.sync(n.chip.Cycles, n)
+		return n.tick.value(n.chip.Cycles)
+	case off == 0x01C: // SYST_CALIB: no reference clock, no skew
 		return 0x40000000
 	case off >= 0x100 && off < 0x108:
 		return n.enabled[(off-0x100)/4]
@@ -168,7 +410,7 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off >= 0x280 && off < 0x288:
 		return n.pending[(off-0x280)/4]
 	case off >= 0x300 && off < 0x308:
-		return n.active[(off-0x300)/4]
+		return n.activeIRQ[(off-0x300)/4]
 	case off >= 0x400 && off < 0x400+64:
 		i := (off - 0x400) / 4
 		var v uint32
@@ -181,11 +423,17 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off == 0xD00:
 		return 0x410FD210 // Cortex-M33: ARM, variant 1, part 0xD21, revision 0
 	case off == 0xD04:
-		return uint32(n.chip.currentCPU().IPSR)
+		if cpu == nil {
+			return 0
+		}
+		return n.icsr(cpu)
 	case off == 0xD08:
-		return n.chip.currentCPU().VTOR
+		if cpu == nil {
+			return 0
+		}
+		return cpu.VTOR
 	case off == 0xD0C:
-		return n.aircr
+		return 0xFA050000 | n.aircr
 	case off == 0xD10:
 		return n.scr
 	case off == 0xD14:
@@ -198,7 +446,19 @@ func (n *NVIC) read(off uint32) uint32 {
 		}
 		return v
 	case off == 0xD24:
-		return n.shcsr
+		// SHCSR: report the active system exceptions alongside the stored
+		// enable/pending bits.
+		v := n.shcsr
+		if n.activeSys&(1<<excSVCall) != 0 {
+			v |= 1 << 7 // SVCALLACT
+		}
+		if n.activeSys&(1<<excPendSV) != 0 {
+			v |= 1 << 10 // PENDSVACT
+		}
+		if n.activeSys&(1<<excSysTick) != 0 {
+			v |= 1 << 11 // SYSTICKACT
+		}
+		return v
 	case off == 0xD28:
 		return n.cfsr
 	case off == 0xD2C:
@@ -207,20 +467,61 @@ func (n *NVIC) read(off uint32) uint32 {
 		return n.mmfar
 	case off == 0xD38:
 		return n.bfar
+	case off == 0xD88:
+		return n.cpacr
+	case off == 0xD90: // MPU_TYPE
+		return mpuRegions << 8
+	case off == 0xD94:
+		return n.mpuCtrl
+	case off == 0xD98:
+		return n.mpuRnr
+	case off == 0xD9C:
+		return n.mpuRbar[n.mpuRnr%mpuRegions]
+	case off == 0xDA0:
+		return n.mpuRasr[n.mpuRnr%mpuRegions]
+	case off >= 0xDA4 && off < 0xDB0: // MPU_RBAR_A1..A3, RASR_A1..A3
+		i := (off - 0xDA4) / 8
+		if (off-0xDA4)%8 == 0 {
+			return n.mpuRbar[(n.mpuRnr+i)%mpuRegions]
+		}
+		return n.mpuRasr[(n.mpuRnr+i)%mpuRegions]
+	case off == 0xDD0:
+		return n.sauCtrl
+	case off == 0xDD4: // SAU_TYPE: no regions, the whole map is attributed
+		return 0
+	case off == 0xDD8:
+		return n.sauRnr
+	case off == 0xDDC:
+		return n.sauRbar[n.sauRnr%mpuRegions]
+	case off == 0xDE0:
+		return n.sauRlar[n.sauRnr%mpuRegions]
+	case off == 0xF34: // FPCCR
+		if cpu == nil {
+			return 0
+		}
+		return cpu.FPCCR
+	case off == 0xF38: // FPCAR
+		return n.fpcar
+	case off == 0xF3C: // FPDSCR
+		return n.fpdscr
 	}
 	return 0
 }
 
 func (n *NVIC) write(off, v uint32) {
+	cpu := n.cpu()
+	now := n.chip.Cycles
 	switch {
 	case off == 0x008:
 		n.actlr = v
-	case off == 0x010:
-		n.systickCtrl = v & 0x7
-	case off == 0x014:
-		n.systickLoad = v & 0xFFFFFF
-	case off == 0x018:
-		n.systickVal = 0
+	case off == 0x010: // SYST_CSR
+		n.tick.writeCSR(v, now)
+		n.syncActive()
+		n.wake()
+	case off == 0x014: // SYST_RVR
+		n.tick.writeRVR(v)
+	case off == 0x018: // SYST_CVR
+		n.tick.writeCVR(now)
 	case off >= 0x100 && off < 0x108: // ISER
 		i := (off - 0x100) / 4
 		n.enabled[i] |= v
@@ -232,7 +533,11 @@ func (n *NVIC) write(off, v uint32) {
 		n.syncActive()
 	case off >= 0x200 && off < 0x208: // ISPR
 		i := (off - 0x200) / 4
+		newbits := v &^ n.pending[i]
 		n.pending[i] |= v
+		if newbits != 0 {
+			n.noteEvent()
+		}
 		n.syncActive()
 		n.wake()
 	case off >= 0x280 && off < 0x288: // ICPR
@@ -243,17 +548,37 @@ func (n *NVIC) write(off, v uint32) {
 		i := (off - 0x400) / 4
 		for k := range 4 {
 			if int(i)*4+k < len(n.prio) {
-				n.prio[int(i)*4+k] = byte(v >> (8 * uint(k)))
+				// Only the four top priority bits are implemented.
+				n.prio[int(i)*4+k] = byte(v>>(8*uint(k))) & 0xF0
 			}
 		}
 	case off == 0xD04: // ICSR
+		if v&(1<<31) != 0 { // NMIPENDSET
+			n.pendSystem(excNMI)
+		}
 		if v&(1<<28) != 0 { // PENDSVSET
-			n.chip.Logger.Debug("ppb: PENDSVSET ignored")
+			n.pendSystem(excPendSV)
+		}
+		if v&(1<<27) != 0 { // PENDSVCLR
+			n.pendSV = false
+			n.syncActive()
+		}
+		if v&(1<<26) != 0 { // PENDSTSET
+			n.pendSystem(excSysTick)
+		}
+		if v&(1<<25) != 0 { // PENDSTCLR
+			n.pendST = false
+			n.syncActive()
 		}
 	case off == 0xD08: // VTOR is banked per core
-		n.chip.currentCPU().VTOR = v &^ 0x7F
+		if cpu != nil {
+			cpu.VTOR = v &^ 0x7F
+		}
 	case off == 0xD0C: // AIRCR
-		n.aircr = v & 0xFFFF
+		if v>>16 != 0x05FA {
+			return
+		}
+		n.aircr = v & 0x0000_0700
 		if v&(1<<2) != 0 {
 			// SYSRESETREQ
 			n.chip.requestReset("software", 0)
@@ -262,10 +587,11 @@ func (n *NVIC) write(off, v uint32) {
 		n.scr = v
 	case off == 0xD14:
 		n.ccr = (v & 0x0000051A) | 0x201
-	case off >= 0xD18 && off < 0xD24:
+	case off >= 0xD18 && off < 0xD24: // SHPR
 		i := (off - 0xD18) / 4
 		for k := range 4 {
-			n.shpr[int(i)*4+k] = byte(v >> (8 * uint(k)))
+			// Only the four top priority bits are implemented.
+			n.shpr[int(i)*4+k] = byte(v>>(8*uint(k))) & 0xF0
 		}
 	case off == 0xD24:
 		n.shcsr = v
@@ -273,18 +599,44 @@ func (n *NVIC) write(off, v uint32) {
 		n.cfsr = v
 	case off == 0xD2C:
 		n.hfsr = v
-	case off == 0xF00: // STIR
-		irq := int(v & 0x1FF)
-		if irq >= 16 && irq < 16+64 {
-			n.Pend(irq - 16)
+	case off == 0xD34:
+		n.mmfar = v
+	case off == 0xD38:
+		n.bfar = v
+	case off == 0xD88: // CPACR
+		n.cpacr = v & 0x00F0_0000
+	case off == 0xD94:
+		n.mpuCtrl = v
+	case off == 0xD98:
+		n.mpuRnr = v & 0xFF
+	case off == 0xD9C:
+		n.mpuRbar[n.mpuRnr%mpuRegions] = v
+	case off == 0xDA0:
+		n.mpuRasr[n.mpuRnr%mpuRegions] = v
+	case off >= 0xDA4 && off < 0xDB0:
+		i := (off - 0xDA4) / 8
+		if (off-0xDA4)%8 == 0 {
+			n.mpuRbar[(n.mpuRnr+i)%mpuRegions] = v
+		} else {
+			n.mpuRasr[(n.mpuRnr+i)%mpuRegions] = v
 		}
+	case off == 0xDD0:
+		n.sauCtrl = v
+	case off == 0xDD8:
+		n.sauRnr = v & 0xFF
+	case off == 0xDDC:
+		n.sauRbar[n.sauRnr%mpuRegions] = v
+	case off == 0xDE0:
+		n.sauRlar[n.sauRnr%mpuRegions] = v
+	case off == 0xF00: // STIR: v is an interrupt number
+		n.Pend(int(v & 0x1FF))
+	case off == 0xF34: // FPCCR
+		if cpu != nil {
+			cpu.SetFPCCR(v)
+		}
+	case off == 0xF38: // FPCAR: location for lazy stacking
+		n.fpcar = v &^ 7
+	case off == 0xF3C: // FPDSCR
+		n.fpdscr = v & 0x0700_0000
 	}
-}
-
-// currentCPU returns the CPU currently executing.
-func (c *Chip) currentCPU() *m33.CPU {
-	if c.core == 0 {
-		return c.CPU0
-	}
-	return c.CPU1
 }

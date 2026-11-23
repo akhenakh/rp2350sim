@@ -348,9 +348,9 @@ func (d *dmaBlock) syncIRQ() {
 	for i := range 4 {
 		inte := d.block.regs[(dmaRegINTR+uint32(i)*dmaIRQstep+4)/4]
 		if d.intr&inte != 0 {
-			d.chip.NVIC.Pend(10 + i)
+			d.chip.PendIRQ(10 + i)
 		} else {
-			d.chip.NVIC.ClearPending(10 + i)
+			d.chip.ClearPendingIRQ(10 + i)
 		}
 	}
 }

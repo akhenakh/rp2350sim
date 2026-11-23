@@ -8,7 +8,9 @@
 // are out of scope.
 package m33
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Bus is the memory interface the CPU uses for instruction and data access.
 type Bus interface {
@@ -21,11 +23,30 @@ type Bus interface {
 }
 
 // Interrupts is implemented by the interrupt controller (NVIC) the CPU is
-// attached to. NextPending returns the exception number that should preempt the
-// current execution, or 0 when nothing is pending.
+// attached to. The controller owns the pending bits and the priority
+// arbitration; the CPU reports every entry and return so the controller can
+// track the active exception state (IABR, RETTOBASE).
 type Interrupts interface {
-	NextPending() int
+	// NextPending returns the highest-urgency pending exception allowed to
+	// preempt cpu, or 0. Taking it clears its pending bit; the CPU reports the
+	// entry through ExceptionEntered.
+	NextPending(cpu *CPU) int
+	// ExceptionEntered records exc as active.
+	ExceptionEntered(exc uint32)
+	// ReturnException deactivates exc when returning via EXC_RETURN.
+	ReturnException(exc uint32)
+	// CanTakeSync reports whether the synchronous exception exc may be taken
+	// at cpu's current effective priority.
+	CanTakeSync(cpu *CPU, exc uint32) bool
 }
+
+// FPCCR bits: automatic and lazy FP state preservation, and the status bit
+// that marks a reserved but not yet written lazy FP frame.
+const (
+	fpcLSPACT uint32 = 1 << 0
+	fpcLSPEN  uint32 = 1 << 30
+	fpcASPN   uint32 = 1 << 31
+)
 
 const (
 	flagN uint32 = 1 << 31
@@ -36,6 +57,14 @@ const (
 
 	excReturnBase uint32 = 0xFFFFFFF0
 )
+
+// excFrameState records the layout of one exception frame so the return path
+// can unstack it even when the handler saved and restored EXC_RETURN.
+type excFrameState struct {
+	sp           uint32
+	fp           bool // the frame reserves the FP area
+	materialized bool // the FP data has been written
+}
 
 // CPU is a single Cortex-M33 core.
 type CPU struct {
@@ -67,6 +96,15 @@ type CPU struct {
 	// MSP and PSP are the banked stack pointers.
 	MSP uint32
 	PSP uint32
+	// MSPLIM and PSPLIM are the Armv8-M stack limit registers. They are stored
+	// for the RTOS ports that save and restore them; violations are not
+	// modelled.
+	MSPLIM uint32
+	PSPLIM uint32
+
+	// FPCCR is the FP context control register: ASPEN/LSPEN select automatic
+	// and lazy FP stacking. LSPACT marks a reserved lazy frame.
+	FPCCR uint32
 
 	Bus        Bus
 	Interrupts Interrupts
@@ -93,8 +131,7 @@ type CPU struct {
 	// Exclusive-access monitor (one address per core).
 	monitor      uint32
 	monitorValid bool
-
-	itstate uint8
+	itstate      uint8
 
 	// Unimplemented is called for instructions the core does not decode.
 	// It may return false to ignore the instruction (advance past it).
@@ -107,6 +144,17 @@ type CPU struct {
 	// can skip the Interrupts call on the common path. The controller keeps
 	// it up to date.
 	IRQPending bool
+
+	// A lazy FP frame has its space reserved in the exception frame but its
+	// data is written when the handler first touches the FPU.
+	lazyActive bool
+	lazySP     uint32
+	// frames records the extended exception frames keyed by their stack
+	// pointer, so an exception return can restore the layout even when
+	// EXC_RETURN went through a handler's saved copy. Basic frames need no
+	// record: LR bit 4 describes them unambiguously, and task-switch frames
+	// built by an RTOS are never recorded.
+	frames map[uint32]excFrameState
 
 	// DCPLog, when set, reports each completed double-coprocessor operation.
 	DCPLog func(format DCPFormat, op DCPOp, x, y, result float64)
@@ -135,11 +183,20 @@ func (c *CPU) Reset() {
 	c.CONTROL = 0
 	c.MSP = 0
 	c.PSP = 0
+	c.MSPLIM = 0
+	c.PSPLIM = 0
 	for i := range c.S {
 		c.S[i] = 0
 	}
 	c.FPSCR = 0
+	c.FPCCR = fpcASPN // automatic FP stacking, eager by default
 	c.FPUActive = false
+	c.lazyActive = false
+	c.lazySP = 0
+	if c.frames == nil {
+		c.frames = map[uint32]excFrameState{}
+	}
+	clear(c.frames)
 	c.dcp = dcpState{}
 	c.itstate = 0
 	c.IRQPending = false
@@ -252,9 +309,10 @@ func (c *CPU) setReg(i, v uint32) {
 // branchTo sets PC from an interworking address, stripping the Thumb bit and
 // handling exception return when the special EXC_RETURN values are used.
 func (c *CPU) branchTo(addr uint32) {
-	if addr&0xF0000000 == 0xF0000000 {
-		// The stack pointer may have moved during this instruction (pop, for
-		// example), and the exception frame is read through the banked copy.
+	if addr >= 0xFF000000 {
+		// Armv8-M exception return: the stack pointer may have moved during
+		// this instruction (pop, for example), and the frame is read through
+		// the banked copy.
 		c.syncSP()
 		c.exceptionReturn(addr)
 		return
@@ -277,8 +335,11 @@ func (c *CPU) Step() int {
 	if c.Parked {
 		return 0
 	}
-	if c.itstate == 0 && c.IRQPending && c.IPSR == 0 && c.PRIMASK&1 == 0 && c.FAULTMASK&1 == 0 && c.Interrupts != nil {
-		if exc := c.Interrupts.NextPending(); exc != 0 {
+	if c.itstate == 0 && c.IRQPending && c.Interrupts != nil {
+		// The controller arbitrates against the masks and the current IPSR
+		// priority, so a higher-priority exception also preempts an active
+		// handler and NMI still gets through PRIMASK.
+		if exc := c.Interrupts.NextPending(c); exc != 0 {
 			c.Exception(uint32(exc))
 			return 12
 		}
@@ -386,30 +447,53 @@ func (c *CPU) condTrue(cond uint8) bool {
 
 // Exception enters handler mode for the given exception number.
 func (c *CPU) Exception(n uint32) {
-	usePSP := c.IPSR == 0 && c.CONTROL&2 != 0
+	if c.frames == nil {
+		c.frames = map[uint32]excFrameState{}
+	}
+	fromThread := c.IPSR == 0
+	usePSP := fromThread && c.CONTROL&2 != 0
 	sp := c.MSP
 	if usePSP {
 		sp = c.PSP
 	}
-	// ARMv8-M always aligns the exception frame to 8 bytes (CCR.STKALIGN is
-	// RES1). Bit 9 of the stacked xPSR records whether a padding word was
-	// inserted.
-	pad := sp&4 != 0
+	// A nested exception forces a pending lazy frame to complete: the live FP
+	// state belongs to the frame being abandoned, and the nested handler may
+	// use the FPU itself.
+	c.flushLazy()
+
+	asp := c.FPCCR&fpcASPN != 0
+	fp := asp && c.FPUActive
+	lazy := fp && fromThread && c.FPCCR&fpcLSPEN != 0
+
+	// Extended frame layout (Armv8-M): the FP area sits below the basic
+	// frame, and SP points at its lowest word. A padding word, recorded in
+	// xPSR bit 9, is inserted above the basic frame when the entry SP is not
+	// 8-byte aligned.
+	top := sp
+	pad := top&4 != 0
 	if pad {
-		sp -= 4
+		top -= 4
 	}
-	fp := c.FPUActive
+	basic := top - 32
+	fpBase := basic - 72
+	frameSP := basic
 	if fp {
-		sp -= 72 // S0-S15, FPSCR and the reserved word
+		frameSP = fpBase
 	}
-	sp -= 32
-	c.Bus.Write32(sp+0, c.R[0])
-	c.Bus.Write32(sp+4, c.R[1])
-	c.Bus.Write32(sp+8, c.R[2])
-	c.Bus.Write32(sp+12, c.R[3])
-	c.Bus.Write32(sp+16, c.R[12])
-	c.Bus.Write32(sp+20, c.R[14])
-	c.Bus.Write32(sp+24, c.R[15])
+	if fp {
+		c.frames[frameSP] = excFrameState{sp: frameSP, fp: true, materialized: !lazy}
+	} else {
+		// A reused stack slot must not inherit the layout of an abandoned
+		// extended frame.
+		delete(c.frames, frameSP)
+	}
+	c.Bus.Write32(basic+0, c.R[0])
+	c.Bus.Write32(basic+4, c.R[1])
+	c.Bus.Write32(basic+8, c.R[2])
+	c.Bus.Write32(basic+12, c.R[3])
+	c.Bus.Write32(basic+16, c.R[12])
+	c.Bus.Write32(basic+20, c.R[14])
+	c.Bus.Write32(basic+24, c.R[15])
 	xpsr := c.APSR | 1<<24 | c.IPSR&0x1FF
 	if c.itstate != 0 {
 		// IT[7:2] lives in xPSR[15:10], IT[1:0] in xPSR[26:25].
@@ -418,38 +502,97 @@ func (c *CPU) Exception(n uint32) {
 	if pad {
 		xpsr |= 1 << 9
 	}
-	c.Bus.Write32(sp+28, xpsr)
+	c.Bus.Write32(basic+28, xpsr)
 	if usePSP {
-		c.PSP = sp
+		c.PSP = frameSP
 	} else {
-		c.MSP = sp
+		c.MSP = frameSP
 	}
-	if fp {
-		base := sp + 32
+	if fp && !lazy {
 		for i := range 16 {
-			c.Bus.Write32(base+uint32(i*4), c.S[i])
+			c.Bus.Write32(fpBase+uint32(i*4), c.S[i])
 		}
-		c.Bus.Write32(base+64, c.FPSCR)
-		c.Bus.Write32(base+68, 0)
+		c.Bus.Write32(fpBase+64, c.FPSCR)
+		c.Bus.Write32(fpBase+68, 0)
+	}
+	if lazy {
+		// The space is reserved now; the data is written on the handler's
+		// first FP instruction, which also clears EXC_RETURN bit 4.
+		c.lazyActive = true
+		c.lazySP = fpBase
+		c.FPCCR |= fpcLSPACT
 	}
 	// Handler mode always uses MSP.
 	c.R[13] = c.MSP
 	// EXC_RETURN: thread/handler, MSP/PSP, and the stack frame type in bit 4
-	// (0 = standard frame with FP state, 1 = extended frame without it).
-	if usePSP {
-		c.R[14] = excReturnBase | 0xD
-	} else {
-		c.R[14] = excReturnBase | 0x9
+	// (0 = extended frame with FP state, 1 = basic frame without it).
+	excReturn := excReturnBase | 0x1
+	if fromThread {
+		if usePSP {
+			excReturn |= 0xD
+		} else {
+			excReturn |= 0x9
+		}
 	}
-	if fp {
-		c.R[14] &^= 0x10
+	if fp && !lazy {
+		excReturn &^= 0x10
 	}
+	c.R[14] = excReturn
 	c.IPSR = n
 	c.APSR &^= flagQ
 	c.itstate = 0
 	c.monitorValid = false
+	// The handler starts with FPCA=0 until it executes an FP instruction.
+	c.FPUActive = false
+	c.CONTROL &^= 4
+	if c.Interrupts != nil {
+		c.Interrupts.ExceptionEntered(n)
+	}
 	// PC is loaded from the vector table, with the Thumb bit stripped.
 	c.R[15] = c.Bus.Read32(c.VectorBase()+4*n) &^ 1
+}
+
+// flushLazy writes the pending lazy FP frame and updates the stacked
+// EXC_RETURN to describe an extended frame.
+func (c *CPU) flushLazy() {
+	if !c.lazyActive {
+		return
+	}
+	base := c.lazySP
+	for i := range 16 {
+		c.Bus.Write32(base+uint32(i*4), c.S[i])
+	}
+	c.Bus.Write32(base+64, c.FPSCR)
+	c.Bus.Write32(base+68, 0)
+	if f, ok := c.frames[base]; ok {
+		f.materialized = true
+		c.frames[base] = f
+	}
+	if c.R[14] >= 0xFF000000 {
+		// EXC_RETURN still lives in LR: point it at the extended frame.
+		c.R[14] &^= 0x10
+	}
+	c.lazyActive = false
+	c.FPCCR &^= fpcLSPACT
+}
+
+// popFrame removes and returns the extended-frame state for the frame at sp.
+func (c *CPU) popFrame(sp uint32) (excFrameState, bool) {
+	f, ok := c.frames[sp]
+	if ok {
+		delete(c.frames, sp)
+	}
+	return f, ok
+}
+
+// SetFPCCR updates the FP context control register. Software may clear
+// LSPACT after taking over the FP save itself (Zephyr's PendSV does), which
+// cancels the hardware lazy trigger while keeping the reserved stack space.
+func (c *CPU) SetFPCCR(v uint32) {
+	c.FPCCR = v & (fpcLSPACT | fpcASPN | fpcLSPEN | 1<<1)
+	if c.lazyActive && (c.FPCCR&fpcLSPACT == 0 || c.FPCCR&fpcLSPEN == 0) {
+		c.lazyActive = false
+	}
 }
 
 // VectorBase returns the active vector table base derived from VTOR.
@@ -460,32 +603,71 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 		c.Halt("exception return in thread mode")
 		return
 	}
+	if c.Interrupts != nil {
+		c.Interrupts.ReturnException(c.IPSR)
+	}
 	toThread := excReturn&0x8 != 0
 	usePSP := excReturn&0x4 != 0
 	sp := c.MSP
 	if usePSP {
 		sp = c.PSP
 	}
-	c.R[0] = c.Bus.Read32(sp + 0)
-	c.R[1] = c.Bus.Read32(sp + 4)
-	c.R[2] = c.Bus.Read32(sp + 8)
-	c.R[3] = c.Bus.Read32(sp + 12)
-	c.R[12] = c.Bus.Read32(sp + 16)
-	c.R[14] = c.Bus.Read32(sp + 20)
-	pc := c.Bus.Read32(sp + 24)
-	xpsr := c.Bus.Read32(sp + 28)
+	// The frame record is authoritative: a handler may have saved and
+	// restored a stale EXC_RETURN after lazy FP stacking materialised the
+	// frame. Without a record (a synthetic return such as an RTOS first-task
+	// launch) EXC_RETURN bit 4 selects the layout.
+	frame, haveFrame := c.popFrame(sp)
+	if !haveFrame && c.lazyActive && c.lazySP != sp {
+		// A synthetic return to a frame on another stack abandons the lazy
+		// reservation owned by the interrupted context.
+		c.lazyActive = false
+		c.FPCCR &^= fpcLSPACT
+	}
+	hasFP := excReturn&0x10 == 0
+	restoreFP := hasFP
+	liveFP := false
+	if haveFrame {
+		hasFP = frame.fp
+		restoreFP = frame.fp && frame.materialized
+		liveFP = frame.fp && !frame.materialized
+	} else if c.lazyActive && c.lazySP == sp {
+		hasFP, liveFP = true, true
+	}
+	if c.lazyActive && c.lazySP == sp {
+		c.lazyActive = false
+		c.FPCCR &^= fpcLSPACT
+	}
+	fpBase := sp
+	basic := sp
+	if hasFP {
+		basic = fpBase + 72
+	}
+	c.R[0] = c.Bus.Read32(basic + 0)
+	c.R[1] = c.Bus.Read32(basic + 4)
+	c.R[2] = c.Bus.Read32(basic + 8)
+	c.R[3] = c.Bus.Read32(basic + 12)
+	c.R[12] = c.Bus.Read32(basic + 16)
+	c.R[14] = c.Bus.Read32(basic + 20)
+	pc := c.Bus.Read32(basic + 24)
+	xpsr := c.Bus.Read32(basic + 28)
 	c.APSR = (c.APSR &^ 0xF8000000) | (xpsr & 0xF8000000)
 	it := uint8((xpsr>>10&0x3F)<<2 | (xpsr>>25)&3)
-	sp += 32
-	if excReturn&0x10 == 0 { // standard frame: restore the FP context
+	sp = basic + 32
+	if restoreFP {
 		for i := range 16 {
-			c.S[i] = c.Bus.Read32(sp + uint32(i*4))
+			c.S[i] = c.Bus.Read32(fpBase + uint32(i*4))
 		}
-		c.FPSCR = c.Bus.Read32(sp + 64)
-		sp += 72
+		c.FPSCR = c.Bus.Read32(fpBase + 64)
 		c.FPUActive = true
+		c.CONTROL |= 4
+	} else if liveFP {
+		// The reserved lazy frame was never materialised: the FP state was
+		// never touched, so it stays live.
+		c.FPUActive = true
+		c.CONTROL |= 4
 	} else {
 		c.FPUActive = false
+		c.CONTROL &^= 4
 	}
 	if xpsr&(1<<9) != 0 {
 		sp += 4 // padding inserted to align the frame
@@ -507,10 +689,10 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 		}
 		c.R[13] = sp
 	} else {
+		// Returning to a preempted handler: the frame is on MSP.
 		c.R[13] = c.MSP
 	}
 	c.R[15] = pc &^ 1
-	_ = excReturn
 }
 
 // Halt stops the core with a diagnostic reason.
@@ -542,7 +724,7 @@ func (c *CPU) DescribeRegister(i int) string {
 func (c *CPU) UserMode() bool { return c.IPSR == 0 }
 
 // setControl updates CONTROL, banking the stack pointer when SPSEL changes in
-// thread mode.
+// thread mode. FPCA stays synchronized with the live FP context.
 func (c *CPU) setControl(v uint32) {
 	newSPSEL := v&2 != 0
 	oldSPSEL := c.CONTROL&2 != 0
@@ -555,5 +737,6 @@ func (c *CPU) setControl(v uint32) {
 			c.R[13] = c.PSP
 		}
 	}
-	c.CONTROL = v & 3
+	c.CONTROL = v & 7
+	c.FPUActive = v&4 != 0
 }

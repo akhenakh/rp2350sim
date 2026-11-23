@@ -396,7 +396,7 @@ var hostEnumeration = []setupRequest{
 // tick advances the host state machine. It is called once per chip cycle.
 func (u *usbBlock) tick(c *Chip) {
 	if u.attached && u.intr&u.inte() != 0 {
-		c.NVIC.Pend(usbIRQ)
+		c.PendIRQ(usbIRQ)
 	}
 	if !u.attached || !u.enabled() {
 		return

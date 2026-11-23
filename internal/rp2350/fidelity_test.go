@@ -278,7 +278,7 @@ func TestVTORBankedAndVECTACTIVE(t *testing.T) {
 		t.Fatalf("VTOR banked incorrectly: core0=%#x core1=%#x", c.CPU0.VTOR, c.CPU1.VTOR)
 	}
 	c.CPU1.IPSR = 15
-	if got := c.Read32(SCSBase + 0xD04); got != 15 {
+	if got := c.Read32(SCSBase+0xD04) & 0x1FF; got != 15 {
 		t.Fatalf("VECTACTIVE on core 1 = %d", got)
 	}
 }

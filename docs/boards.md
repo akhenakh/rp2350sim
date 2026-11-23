@@ -263,15 +263,26 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 - **CYW43439 / Bluetooth:** not emulated; the Pico 2 W uses the virtual Wi-Fi
   described above.
 - **Core 1:** works with `-scheduler=cores` (SIO launch, WFE/SEV, tasks on both
-  cores). The default TinyGo tasks scheduler is single-core.
-- **Interrupt nesting:** exceptions are delivered at IPSR 0; a pending
-  higher-priority exception does not preempt the current handler yet.
-- **System exceptions:** SVC halts with an explicit message; SysTick and PendSV
-  are stored but do not pend an exception. A port that needs an RTOS kernel
-  (SVC/PendSV/SysTick, priority nesting, fault escalation) is not supported.
+  cores). The default TinyGo tasks scheduler is single-core. The SCS page is
+  banked per core: VTOR, NVIC enable/pending/priority state, SysTick and the
+  system-exception pending bits are private, and shared peripheral IRQs are
+  replicated to both cores.
+- **Exceptions and nesting:** preemptive priority nesting, 4 priority bits,
+  tail-chaining, PendSV, SysTick (CPU clock and 1 MHz reference), SVC (with
+  HardFault escalation when masked), NMI, PRIMASK/FAULTMASK/BASEPRI and
+  MSPLIM/PSPLIM are supported. A Zephyr/FreeRTOS-style supervisor kernel
+  (PSP tasks, SVC first-task launch, PendSV switching) runs; see
+  `firmware/c/rtosctx`.
+- **Floating point exceptions:** extended frames, eager and lazy (ASPEN/LSPEN,
+  LSPACT) stacking are modelled, including handlers that save EXC_RETURN before
+  their first FP instruction.
+- **Not enforced:** MSPLIM/PSPLIM violations, CPACR gating and the MPU/SAU
+  registers (they are stored and readable, but no protection is applied), so
+  `CONFIG_USERSPACE` isolation and stack-guard faults are not modelled.
+  Fault escalation beyond masked SVC (bus/usage/mem faults) is not generated.
 - **Peripheral interrupts:** NVIC lines are wired for DMA, both timers, UART RX,
-  USB and PIO. SPI, I2C, ADC, GPIO-edge and PWM wrap interrupts are not
-  delivered yet.
+  USB, PIO, POWMAN, SIO FIFO (25) and SIO doorbell (26). SPI, I2C, ADC,
+  GPIO-edge and PWM wrap interrupts are not delivered yet.
 - **PIO OUT:** an empty OSR is refilled from the TX FIFO even when autopull is
   disabled, because TinyGo's `SetX`/`SetY` rely on it. Treat this as more
   permissive than hardware when porting hand-written PIO.

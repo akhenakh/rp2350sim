@@ -113,7 +113,7 @@ func newUART(c *Chip, base uint32, id int) *uartBlock {
 		case 0x38: // UARTIMSC
 			u.imsc = v
 			if u.raw&u.imsc != 0 {
-				c.NVIC.Pend(u.irq)
+				c.PendIRQ(u.irq)
 			}
 		case 0x44: // UARTICR
 			u.raw &^= v
@@ -134,7 +134,7 @@ func (u *uartBlock) tick() {
 	}
 	u.raw |= uartRXIM
 	if u.imsc&uartRXIM != 0 {
-		u.chip.NVIC.Pend(u.irq)
+		u.chip.PendIRQ(u.irq)
 	}
 }
 

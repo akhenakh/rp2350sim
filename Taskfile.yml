@@ -681,6 +681,7 @@ tasks:
       - 'build/usbhello.elf'
       - 'build/usbecho.elf'
       - 'build/aontimer.elf'
+      - 'build/rtosctx.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
@@ -691,6 +692,12 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/hello.elf -seconds 1 -quiet -expect "hello c done" -stop-on-expect'
+
+  c:rtosctx:
+    desc: Run the C preemptive context-switch demo (SVC, SysTick, PendSV, BASEPRI)
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/rtosctx.elf -seconds 2 -quiet -expect "rtosctx ok a=5 b=5 nested=1 crit=1" -stop-on-expect'
 
   c:usbhello:
     desc: Run the Pico SDK USB CDC stdio hello world (TinyUSB)

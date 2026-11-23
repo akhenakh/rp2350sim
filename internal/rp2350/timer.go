@@ -136,7 +136,7 @@ func (t *timerBlock) pend() {
 	}
 	for i := range 4 {
 		if active&(1<<uint(i)) != 0 {
-			t.chip.NVIC.Pend(t.idx*4 + i)
+			t.chip.PendIRQ(t.idx*4 + i)
 		}
 	}
 	t.chip.CPU0.Sleeping = false
@@ -158,7 +158,7 @@ func (t *timerBlock) tick(now uint64) {
 		if int32(uint32(now)-t.alarm[i]) >= 0 {
 			t.armed &^= bit
 			t.intR |= bit
-			t.chip.NVIC.Pend(t.idx*4 + i)
+			t.chip.PendIRQ(t.idx*4 + i)
 			t.chip.CPU0.Sleeping = false
 			t.chip.CPU0.SleepOnEvent = false
 			t.chip.CPU1.Sleeping = false

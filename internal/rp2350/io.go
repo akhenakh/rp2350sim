@@ -206,12 +206,22 @@ func (io *ioBank) reset() {}
 
 // SIO.
 
+// SIO interrupt numbers on the RP2350.
+const (
+	sioIRQFIFO = 25
+	sioIRQBell = 26
+)
+
 type sioBlock struct {
 	fifo [2][]uint32 // fifo[i] is core i's receive queue
 	// fifoStWOF is set when a write finds the peer queue full; ROE on
 	// overflow of the local queue. Both are write-1-to-clear.
 	fifoWOF [2]bool
 	fifoROE [2]bool
+
+	// doorbellIn holds the doorbell bits set for each core. A nonzero value
+	// raises SIO_IRQ_BELL on that core.
+	doorbellIn [2]uint32
 
 	spinlock uint32
 
@@ -235,6 +245,7 @@ func (s *sioBlock) reset() {
 	s.core1Parked = true
 	s.fifoWOF = [2]bool{}
 	s.fifoROE = [2]bool{}
+	s.doorbellIn = [2]uint32{}
 }
 
 func (s *sioBlock) read(c *Chip, off uint32) uint32 {
@@ -278,9 +289,14 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 		}
 		v := s.fifo[src][0]
 		s.fifo[src] = s.fifo[src][1:]
+		if len(s.fifo[src]) == 0 {
+			c.clearCorePendingIRQ(src, sioIRQFIFO)
+		}
 		return v
 	case 0x5C: // SPINLOCK_ST
 		return s.spinlock
+	case 0x180, 0x184, 0x188, 0x18C: // DOORBELL_*: the input bits for this core
+		return s.doorbellIn[c.core]
 	}
 	if off >= 0x100 && off < 0x180 { // SPINLOCK0..31
 		n := (off - 0x100) / 4
@@ -338,6 +354,24 @@ func (s *sioBlock) write(c *Chip, off, v uint32) {
 		}
 	case 0x54: // FIFO_WR
 		s.push(c, c.core, v)
+	case 0x180: // DOORBELL_OUT_SET: set the peer's input bits
+		peer := 1 - c.core
+		s.doorbellIn[peer] |= v
+		c.pendCoreIRQ(peer, sioIRQBell)
+	case 0x184: // DOORBELL_OUT_CLR
+		peer := 1 - c.core
+		s.doorbellIn[peer] &^= v
+		if s.doorbellIn[peer] == 0 {
+			c.clearCorePendingIRQ(peer, sioIRQBell)
+		}
+	case 0x188: // DOORBELL_IN_SET: set this core's input bits
+		s.doorbellIn[c.core] |= v
+		c.pendCoreIRQ(c.core, sioIRQBell)
+	case 0x18C: // DOORBELL_IN_CLR
+		s.doorbellIn[c.core] &^= v
+		if s.doorbellIn[c.core] == 0 {
+			c.clearCorePendingIRQ(c.core, sioIRQBell)
+		}
 	}
 	if off >= 0x100 && off < 0x180 {
 		n := (off - 0x100) / 4
@@ -355,6 +389,7 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 		// watch for the multicore launch sequence.
 		if len(s.fifo[0]) < 8 {
 			s.fifo[0] = append(s.fifo[0], v)
+			c.pendCoreIRQ(0, sioIRQFIFO)
 		} else {
 			s.fifoWOF[0] = true
 		}
@@ -380,6 +415,7 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 		return
 	}
 	s.fifo[dst] = append(s.fifo[dst], v)
+	c.pendCoreIRQ(dst, sioIRQFIFO)
 }
 
 // inputWord builds a 32-bit GPIO input value for the given base pin.

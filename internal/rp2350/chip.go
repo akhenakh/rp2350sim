@@ -58,6 +58,9 @@ type Chip struct {
 	CPU0 *m33.CPU
 	CPU1 *m33.CPU
 
+	// ppb is the per-core private System Control Space (NVIC/SCB/SysTick).
+	// NVIC aliases core 0 so existing single-core callers keep their meaning.
+	ppb  [2]*NVIC
 	NVIC *NVIC
 
 	// Cycles is the master clock counter, in CPU cycles at 150 MHz.
@@ -203,11 +206,13 @@ func New() *Chip {
 		c.tmr[i].init(c, i)
 	}
 
-	c.NVIC = &NVIC{chip: c}
+	c.ppb[0] = &NVIC{chip: c, core: 0}
+	c.ppb[1] = &NVIC{chip: c, core: 1}
+	c.NVIC = c.ppb[0]
 	c.CPU0 = m33.New(c)
-	c.CPU0.Interrupts = c.NVIC
+	c.CPU0.Interrupts = c.ppb[0]
 	c.CPU1 = m33.New(c)
-	c.CPU1.Interrupts = c.NVIC
+	c.CPU1.Interrupts = c.ppb[1]
 
 	c.addRegBlock(newResets(c))
 	c.addRegBlock(newClocks(c))
@@ -306,11 +311,22 @@ func (c *Chip) Run(n uint64) uint64 {
 		if c.Cycles&7 == 0 && c.canIdleSkip() {
 			skip := cyclesPerMicrosecond - c.Cycles%cyclesPerMicrosecond
 			skip = min(skip, n-done)
-			c.Cycles += skip
-			done += skip
-			c.usbPoll = 7 // check host input on this tick
-			c.tickPeripherals()
-			continue
+			// A SysTick wrap is the only other reason a sleeping core has to
+			// run; land on it exactly instead of overshooting to the next
+			// microsecond boundary.
+			skip = min(skip, c.ppb[0].cyclesUntilSysTick(c.Cycles))
+			skip = min(skip, c.ppb[1].cyclesUntilSysTick(c.Cycles))
+			if skip == 0 {
+				skip = 1
+			}
+			// A due SysTick wrap may have just pended and woken a core.
+			if c.canIdleSkip() {
+				c.Cycles += skip
+				done += skip
+				c.usbPoll = 7 // check host input on this tick
+				c.tickPeripherals()
+				continue
+			}
 		}
 		c.Step()
 		done++
@@ -425,6 +441,10 @@ func (c *Chip) advanceSleep(max uint64) {
 }
 
 func (c *Chip) tickPeripherals() {
+	// SysTick is cycle-accurate: the lazy comparison is cheap enough to run on
+	// every cycle, and a WFI wake must happen before the cores are stepped.
+	c.ppb[0].tickSysTick(c.Cycles)
+	c.ppb[1].tickSysTick(c.Cycles)
 	// Timers and PWM counters only need microsecond resolution; running them
 	// once per microsecond instead of once per cycle leaves the per-cycle
 	// budget to the CPU. Tick every boundary crossed since the last call: a
@@ -479,6 +499,44 @@ func (c *Chip) tickPeripherals() {
 
 // NVIC delivers interrupts to the cores.
 
+// ppbForCore returns the private System Control Space of the executing core.
+func (c *Chip) ppbForCore() *NVIC {
+	if c.core == 1 {
+		return c.ppb[1]
+	}
+	return c.ppb[0]
+}
+
+// PendIRQ marks a shared peripheral IRQ pending on both cores. Each core's
+// NVIC decides independently whether the interrupt is enabled and at what
+// priority, exactly like the RP2350's replicated interrupt lines.
+func (c *Chip) PendIRQ(irq int) {
+	c.ppb[0].Pend(irq)
+	c.ppb[1].Pend(irq)
+}
+
+// ClearPendingIRQ clears a shared peripheral IRQ on both cores.
+func (c *Chip) ClearPendingIRQ(irq int) {
+	c.ppb[0].ClearPending(irq)
+	c.ppb[1].ClearPending(irq)
+}
+
+// pendCoreIRQ pends a per-core interrupt (SIO FIFO and doorbell) on one core.
+func (c *Chip) pendCoreIRQ(core, irq int) {
+	if core < 0 || core > 1 {
+		return
+	}
+	c.ppb[core].Pend(irq)
+}
+
+// clearCorePendingIRQ clears a per-core interrupt on one core.
+func (c *Chip) clearCorePendingIRQ(core, irq int) {
+	if core < 0 || core > 1 {
+		return
+	}
+	c.ppb[core].ClearPending(irq)
+}
+
 // Reset performs a chip reset and starts both cores from flash.
 // Package identifies the bonded RP2350 variant: QFN-60 is the RP2350A with
 // 30 GPIOs, QFN-80 is the RP2350B with 48.
@@ -527,7 +585,9 @@ func (c *Chip) Reset() {
 	c.CPU1.Reset()
 	c.CPU0.Parked = false
 	c.CPU1.Parked = false
-	c.NVIC.reset()
+	c.ppb[0].reset()
+	c.ppb[1].reset()
+	c.NVIC = c.ppb[0]
 	c.Pins.reset()
 	c.io.reset()
 	c.sio.reset()
@@ -1005,7 +1065,7 @@ func (c *Chip) readMMIO(addr uint32) uint32 {
 		return c.sio.read(c, addr-SIOBase)
 	}
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
-		return c.NVIC.read(addr - SCSBase)
+		return c.ppbForCore().read(addr - SCSBase)
 	}
 	if c.otp != nil {
 		if v, ok := c.otp.readWindow(addr); ok {
@@ -1051,7 +1111,7 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 		return
 	}
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
-		c.NVIC.write(addr-SCSBase, v)
+		c.ppbForCore().write(addr-SCSBase, v)
 		return
 	}
 	if b := c.regBlockFor(addr); b != nil {
@@ -1092,8 +1152,9 @@ func (c *Chip) writeMMIO8(addr uint32, v uint8) {
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
 		off := (addr - SCSBase) &^ 3
 		shift := (addr & 3) * 8
-		old := c.NVIC.read(off)
-		c.NVIC.write(off, old&^(0xFF<<shift)|uint32(v)<<shift)
+		n := c.ppbForCore()
+		old := n.read(off)
+		n.write(off, old&^(0xFF<<shift)|uint32(v)<<shift)
 		return
 	}
 	for _, b := range c.regs {
@@ -1122,8 +1183,9 @@ func (c *Chip) writeMMIO16(addr uint32, v uint16) {
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
 		off := (addr - SCSBase) &^ 3
 		shift := (addr & 2) * 8
-		old := c.NVIC.read(off)
-		c.NVIC.write(off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+		n := c.ppbForCore()
+		old := n.read(off)
+		n.write(off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
 		return
 	}
 	for _, b := range c.regs {

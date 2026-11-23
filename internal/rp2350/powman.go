@@ -169,9 +169,9 @@ func (p *powmanBlock) write(c *Chip, off, v uint32) {
 
 func (p *powmanBlock) syncIRQ(c *Chip) {
 	if (p.intr|p.force)&p.inte&powmanIntTimer != 0 {
-		c.NVIC.Pend(powmanIRQ)
+		c.PendIRQ(powmanIRQ)
 	} else {
-		c.NVIC.ClearPending(powmanIRQ)
+		c.ClearPendingIRQ(powmanIRQ)
 	}
 }
 

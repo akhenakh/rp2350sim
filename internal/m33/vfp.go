@@ -28,7 +28,11 @@ func (c *CPU) vfpS(i int) float32       { return math.Float32frombits(c.S[i&31])
 func (c *CPU) vfpSetS(i int, v float32) { c.S[i&31] = math.Float32bits(v) }
 
 func (c *CPU) vfpExecute(hw1, hw2 uint16) {
+	// The first FP instruction in a handler completes a lazily reserved FP
+	// frame, exactly as the hardware does.
+	c.flushLazy()
 	c.FPUActive = true
+	c.CONTROL |= 4
 	if hw1&0xFE00 == 0xEC00 {
 		if hw1&0xFF00 == 0xEC00 && hw1&0x0060 == 0x40 { // VMOV double <-> core pair
 			c.vfpDoubleTransfer(hw1, hw2)

@@ -229,7 +229,18 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 			return
 		}
 		if cond == 0xF {
-			c.Halt("SVC instruction (unsupported)")
+			// R15 already holds the return address after SVC. A SVC blocked
+			// by PRIMASK, FAULTMASK or an equal-or-higher active priority
+			// escalates to HardFault on Armv8-M.
+			if c.Interrupts != nil && !c.Interrupts.CanTakeSync(c, 11) {
+				if c.FAULTMASK&1 != 0 || c.IPSR == 3 {
+					c.Halt("SVC escalated to lockup")
+					return
+				}
+				c.Exception(3)
+				return
+			}
+			c.Exception(11)
 			return
 		}
 		if c.condTrue(cond) {

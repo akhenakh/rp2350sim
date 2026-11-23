@@ -280,9 +280,9 @@ func (p *pioBlock) updateIRQ() {
 		active := (p.irq | intf) & inte
 		irq := 15 + 2*p.id + i
 		if active != 0 {
-			p.chip.NVIC.Pend(irq)
+			p.chip.PendIRQ(irq)
 		} else {
-			p.chip.NVIC.ClearPending(irq)
+			p.chip.ClearPendingIRQ(irq)
 		}
 	}
 }

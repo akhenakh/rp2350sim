@@ -334,6 +334,9 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		out=$("$EMU" -fw "$BUILD/pico-c/aontimer.elf" -seconds 2 -quiet \
 			-expect "aon alarm 1001" -stop-on-expect 2>&1)
 		contains "Pico SDK AON timer" "aon alarm 1001" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/rtosctx.elf" -seconds 2 -quiet \
+			-expect "rtosctx ok" -stop-on-expect 2>&1)
+		contains "C RTOS context switch" "rtosctx ok a=5 b=5 nested=1 crit=1" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/dcp.elf" -seconds 1 -quiet 2>&1)
