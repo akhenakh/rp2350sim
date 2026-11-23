@@ -30,3 +30,26 @@ func TestBootselDrivesQSPICSN(t *testing.T) {
 		t.Fatalf("QSPI_CSN after reset with BOOTSEL held = %#x", got)
 	}
 }
+
+// TestBootselAtBoot checks that the reset sample is recorded and survives the
+// pin-model reset.
+func TestBootselAtBoot(t *testing.T) {
+	c := New()
+	if c.BootselAtBoot() {
+		t.Fatal("BOOTSEL reported at a cold boot")
+	}
+	c.SetBootsel(true)
+	c.Boot()
+	if !c.BootselAtBoot() {
+		t.Fatal("BOOTSEL held at Boot was not recorded")
+	}
+	// Releasing the button does not rewrite the previous boot's sample.
+	c.SetBootsel(false)
+	if !c.BootselAtBoot() {
+		t.Fatal("releasing BOOTSEL changed the boot sample")
+	}
+	c.Boot()
+	if c.BootselAtBoot() {
+		t.Fatal("BOOTSEL reported at a boot without it held")
+	}
+}

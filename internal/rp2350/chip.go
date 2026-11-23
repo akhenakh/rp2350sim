@@ -98,7 +98,8 @@ type Chip struct {
 	// The synthetic bootrom does not enter USB boot mode, but firmware can read
 	// the line through SIO GPIO_HI_IN bit 27 (QSPI_CSN), as the TinyUSB BSP and
 	// the real bootrom do.
-	bootselHeld bool
+	bootselHeld   bool
+	bootselAtBoot bool
 
 	io     ioBank
 	sio    sioBlock
@@ -551,6 +552,11 @@ func (c *Chip) SetBootsel(held bool) { c.bootselHeld = held }
 // BootselHeld reports whether the BOOTSEL button is currently pressed.
 func (c *Chip) BootselHeld() bool { return c.bootselHeld }
 
+// BootselAtBoot reports whether BOOTSEL was held when the current image
+// booted. The real bootrom samples the line at reset; the synthetic bootrom
+// records it but does not enter USB picoboot mode.
+func (c *Chip) BootselAtBoot() bool { return c.bootselAtBoot }
+
 // Reset performs a chip reset and starts both cores from flash.
 // Package identifies the bonded RP2350 variant: QFN-60 is the RP2350A with
 // 30 GPIOs, QFN-80 is the RP2350B with 48.
@@ -653,6 +659,12 @@ func (c *Chip) applyReset() {
 
 // Boot vectors core 0 at the image in flash.
 func (c *Chip) Boot() {
+	// Record the button state before Reset (which preserves it) so the UI can
+	// report a BOOTSEL-held boot, as the bootrom would sample it.
+	c.bootselAtBoot = c.bootselHeld
+	if c.bootselAtBoot {
+		c.Logger.Debug("bootsel held at reset; USB boot mode is not modelled")
+	}
 	c.selectPartition()
 	c.Reset()
 	c.booted = true
