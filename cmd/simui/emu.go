@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,6 +71,21 @@ type MachineState struct {
 	Backlight *BacklightState
 	SD        *SDState
 	OTP       *OTPState
+
+	// Inputs is a copy of the interactive board-control state, keyed by
+	// InputDef.ID.
+	Inputs      map[string]InputValue
+	BootselHeld bool
+}
+
+// InputValue is the host-side state of one interactive board input.
+type InputValue struct {
+	// On is the pressed/closed state of a button, switch or BOOTSEL input.
+	On bool
+	// Volts is the wiper voltage of an ADC potentiometer/slider.
+	Volts float32
+	// Phase is the quadrature phase (0..3) of a rotary encoder.
+	Phase uint8
 }
 
 // TouchState is the last reported touch point in panel coordinates.
@@ -150,6 +166,11 @@ type Emu struct {
 	lcdOn    bool
 
 	board *BoardDef
+
+	// inputs holds the interactive board controls; bootselHeld survives chip
+	// resets and is shared by the panel and the board diagram.
+	inputs      map[string]InputValue
+	bootselHeld bool
 
 	ws      *devices.WS2812B
 	touch   *devices.CST816D
@@ -272,10 +293,149 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	if b != nil {
 		e.scopePins = b.ScopePins()
 	}
+	e.initInputsLocked()
 	if e.img != nil || e.fwPath != "" {
 		e.rebootLocked()
 	} else {
 		e.loadLocked()
+	}
+}
+
+// initInputsLocked resets the interactive controls to their board defaults.
+func (e *Emu) initInputsLocked() {
+	e.inputs = map[string]InputValue{}
+	e.bootselHeld = false
+	if e.board == nil {
+		return
+	}
+	for _, in := range e.board.Inputs {
+		v := InputValue{On: in.Initial}
+		if in.Kind == "adc" {
+			v.Volts = float32(in.DefaultVolts())
+		}
+		e.inputs[in.ID] = v
+	}
+}
+
+// inputDefLocked finds an input definition on the current board.
+func (e *Emu) inputDefLocked(id string) *InputDef {
+	if e.board == nil {
+		return nil
+	}
+	for i := range e.board.Inputs {
+		if e.board.Inputs[i].ID == id {
+			return &e.board.Inputs[i]
+		}
+	}
+	return nil
+}
+
+// SetInput updates one interactive board control and drives the chip pins.
+// Values outside an ADC input's range are clamped.
+func (e *Emu) SetInput(id string, v InputValue) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	in := e.inputDefLocked(id)
+	if in == nil {
+		return
+	}
+	switch in.Kind {
+	case "adc":
+		v.Volts = min(max(v.Volts, float32(in.Min)), float32(in.Max))
+		v.On, v.Phase = false, 0
+	case "encoder":
+		return
+	case "bootsel":
+		e.bootselHeld = v.On
+	default:
+		v.Volts, v.Phase = 0, 0
+	}
+	e.inputs[id] = v
+	e.applyInputsLocked()
+}
+
+// StepEncoder advances a rotary encoder by one quadrature phase (+1 clockwise,
+// -1 counter-clockwise).
+func (e *Emu) StepEncoder(id string, delta int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	in := e.inputDefLocked(id)
+	if in == nil || in.Kind != "encoder" {
+		return
+	}
+	v := e.inputs[id]
+	v.Phase = uint8((int(v.Phase) + delta) & 3)
+	e.inputs[id] = v
+	e.applyInputsLocked()
+}
+
+// SetBootsel presses or releases the BOOTSEL button, pulling the QSPI chip
+// select low while held. A bootsel input on the board is kept in sync.
+func (e *Emu) SetBootsel(held bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.bootselHeld = held
+	if e.board != nil {
+		for i := range e.board.Inputs {
+			in := &e.board.Inputs[i]
+			if in.Kind == "bootsel" {
+				v := e.inputs[in.ID]
+				v.On = held
+				e.inputs[in.ID] = v
+			}
+		}
+	}
+	if e.chip != nil {
+		e.chip.SetBootsel(held)
+	}
+}
+
+// applyInputsLocked drives every board input onto the chip. Called after a
+// reset (which clears the pin model) and after an input changes.
+func (e *Emu) applyInputsLocked() {
+	c := e.chip
+	if c == nil || e.board == nil {
+		return
+	}
+	for _, in := range e.board.Inputs {
+		v := e.inputs[in.ID]
+		low := in.IsActiveLow()
+		switch in.Kind {
+		case "button", "switch":
+			level := v.On
+			if low {
+				level = !level
+			}
+			c.Pins.SetExternal(in.Pin, level)
+		case "encoder":
+			a, b := quadraturePhase(v.Phase)
+			if low {
+				a, b = !a, !b
+			}
+			c.Pins.SetExternal(in.PinA, a)
+			c.Pins.SetExternal(in.PinB, b)
+		case "adc":
+			c.Pins.SetAnalog(in.Pin, v.Volts)
+		case "bootsel":
+			e.bootselHeld = v.On
+		}
+	}
+	c.SetBootsel(e.bootselHeld)
+}
+
+// quadraturePhase returns the asserted (closed-to-active) A/B pattern of a
+// standard rotary encoder at a phase: 00 (detent) -> 10 -> 11 -> 01 -> 00.
+// Active-low inputs (pull-ups) invert these to get the electrical levels.
+func quadraturePhase(phase uint8) (a, b bool) {
+	switch phase & 3 {
+	case 1:
+		return true, false
+	case 2:
+		return true, true
+	case 3:
+		return false, true
+	default:
+		return false, false
 	}
 }
 
@@ -1235,12 +1395,14 @@ func (e *Emu) flushMIDILocked() {
 func (e *Emu) loadLocked() {
 	e.resetChip()
 	if e.img == nil {
+		e.applyInputsLocked()
 		return
 	}
 	for _, seg := range e.img.Segments {
 		e.chip.LoadSegment(seg.Addr, seg.Data)
 	}
 	e.chip.Boot()
+	e.applyInputsLocked()
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount = e.lastBoots
 	e.flashWrites = 0
@@ -1261,6 +1423,7 @@ func (e *Emu) rebootLocked() {
 		copy(e.chip.Flash, flash)
 	}
 	e.chip.Boot()
+	e.applyInputsLocked()
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount++
 	e.lastChipFW = e.chip.FlashWrites()
@@ -1347,6 +1510,7 @@ func (e *Emu) LoadFlash(path string) error {
 	e.resetChip()
 	e.chip.LoadFlashImage(data)
 	e.chip.Boot()
+	e.applyInputsLocked()
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount = e.lastBoots
 	e.flashWrites = 0
@@ -1633,6 +1797,11 @@ func (e *Emu) Snapshot() MachineState {
 			s.Buses = append(s.Buses, fmt.Sprintf("SPI%d CS%d tcp %s · listening", br.Bus, br.CS, where))
 		}
 	}
+	if len(e.inputs) > 0 {
+		s.Inputs = make(map[string]InputValue, len(e.inputs))
+		maps.Copy(s.Inputs, e.inputs)
+	}
+	s.BootselHeld = e.bootselHeld
 	return s
 }
 

@@ -27,6 +27,7 @@ type BoardDef struct {
 	WS2812      *LEDDevice     `yaml:"ws2812"`
 	PSRAM       *PSRAMDevice   `yaml:"psram"`
 	Analog      []SignalDef    `yaml:"analog"`
+	Inputs      []InputDef     `yaml:"inputs"`
 	Scope       []int          `yaml:"scope"`
 	Logic       *LogicDevice   `yaml:"logic"`
 	Serial      []SerialDevice `yaml:"serial"`
@@ -197,6 +198,45 @@ func (d *PSRAMDevice) LatencyCycles() int {
 		return 0
 	}
 	return d.Latency
+}
+
+// InputDef is one interactive board control on the Board tab: a momentary
+// pushbutton, a slide switch, a rotary encoder, an ADC potentiometer/slider or
+// the BOOTSEL button.
+type InputDef struct {
+	Kind string `yaml:"kind"` // button, switch, encoder, adc, bootsel
+	ID   string `yaml:"id"`
+	// Label is shown on the control; it defaults to the upper-cased id.
+	Label string `yaml:"label"`
+	// Pin is the single GPIO of a button, switch or ADC input.
+	Pin int `yaml:"pin"`
+	// PinA/PinB are the two quadrature lines of an encoder.
+	PinA int `yaml:"pin_a"`
+	PinB int `yaml:"pin_b"`
+	// ActiveLow inverts the electrical level (the default, as on the Pico's
+	// BOOTSEL and most breakout buttons).
+	ActiveLow *bool `yaml:"active_low"`
+	// Initial is the switch position at board load (true = closed/on).
+	Initial bool `yaml:"initial"`
+	// Volts is the initial ADC voltage; it defaults to mid-scale.
+	Volts *float64 `yaml:"volts"`
+	// Min, Max and Step configure an ADC slider.
+	Min  float64 `yaml:"min"`
+	Max  float64 `yaml:"max"`
+	Step float64 `yaml:"step"`
+}
+
+// IsActiveLow reports whether the input is active low (default true).
+func (d *InputDef) IsActiveLow() bool {
+	return d.ActiveLow == nil || *d.ActiveLow
+}
+
+// DefaultVolts returns the initial ADC voltage (mid-scale when unset).
+func (d *InputDef) DefaultVolts() float64 {
+	if d.Volts != nil {
+		return *d.Volts
+	}
+	return (d.Min + d.Max) / 2
 }
 
 // SignalDef describes a generated analog waveform on a pin (scope demo).
@@ -526,6 +566,95 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 			if p.Latency < 0 {
 				return nil, fmt.Errorf("boards: %s: psram latency must not be negative", b.ID)
+			}
+		}
+		maxPin := 29
+		if b.Package == "qfn80" {
+			maxPin = 47
+		}
+		usedPins := map[int]string{}
+		checkPin := func(who string, pin int) error {
+			if pin < 0 || pin > maxPin {
+				return fmt.Errorf("%s pin must be 0..%d", who, maxPin)
+			}
+			if prev, ok := usedPins[pin]; ok {
+				return fmt.Errorf("%s and %s both use GP%d", prev, who, pin)
+			}
+			usedPins[pin] = who
+			return nil
+		}
+		inputIDs := map[string]bool{}
+		bootselCount := 0
+		for i := range b.Inputs {
+			in := &b.Inputs[i]
+			kind := strings.ToLower(strings.TrimSpace(in.Kind))
+			switch kind {
+			case "pushbutton", "button", "btn":
+				kind = "button"
+			case "switch", "slide", "toggle":
+				kind = "switch"
+			case "encoder", "rotary":
+				kind = "encoder"
+			case "adc", "pot", "potentiometer", "slider":
+				kind = "adc"
+			case "bootsel", "boot":
+				kind = "bootsel"
+			default:
+				return nil, fmt.Errorf("boards: %s: unknown input kind %q", b.ID, in.Kind)
+			}
+			in.Kind = kind
+			if in.ID == "" {
+				return nil, fmt.Errorf("boards: %s: input %d has no id", b.ID, i+1)
+			}
+			if inputIDs[in.ID] {
+				return nil, fmt.Errorf("boards: %s: duplicate input id %q", b.ID, in.ID)
+			}
+			inputIDs[in.ID] = true
+			if in.Label == "" {
+				in.Label = strings.ToUpper(in.ID)
+			}
+			switch kind {
+			case "button", "switch":
+				if err := checkPin(in.ID, in.Pin); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+			case "encoder":
+				if in.PinA == in.PinB {
+					return nil, fmt.Errorf("boards: %s: encoder %s needs two different pins", b.ID, in.ID)
+				}
+				if err := checkPin(in.ID+" A", in.PinA); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+				if err := checkPin(in.ID+" B", in.PinB); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+			case "adc":
+				if in.Pin < 26 || in.Pin > 29 {
+					return nil, fmt.Errorf("boards: %s: adc %s pin must be 26..29", b.ID, in.ID)
+				}
+				if err := checkPin(in.ID, in.Pin); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+				if in.Max <= in.Min {
+					in.Min, in.Max = 0, 3.3
+				}
+				in.Min = max(in.Min, 0)
+				in.Max = min(in.Max, 3.3)
+				if in.Max <= in.Min {
+					return nil, fmt.Errorf("boards: %s: adc %s range must be inside 0..3.3 V", b.ID, in.ID)
+				}
+				if in.Step <= 0 {
+					in.Step = 0.01
+				}
+				if in.Volts != nil {
+					v := min(max(*in.Volts, in.Min), in.Max)
+					in.Volts = &v
+				}
+			case "bootsel":
+				bootselCount++
+				if bootselCount > 1 {
+					return nil, fmt.Errorf("boards: %s: only one bootsel input is allowed", b.ID)
+				}
 			}
 		}
 	}

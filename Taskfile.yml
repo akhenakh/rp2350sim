@@ -798,7 +798,7 @@ tasks:
 
   docs:images:
     desc: Regenerate the guide screenshots for DVI, MIDI, audio, scope, logic, RP2350B, USB and OTA
-    deps: [firmware:audio, firmware:midi, firmware:protocols, c:build, picoexamples:build]
+    deps: [firmware:audio, firmware:midi, firmware:protocols, firmware:blinky, c:build, picoexamples:build]
     cmds:
       - bash tools/render_docs_images.sh {{.BUILD}}
 

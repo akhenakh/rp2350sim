@@ -33,6 +33,7 @@ var (
 	boards             []BoardDef
 	selectedBoard      *BoardDef
 	pendingBoardPicker bool
+	inputArgs          []string
 	activeTab          = tabBoard
 	scopePins          []int
 	scopeZoom          = 1.0
@@ -275,14 +276,82 @@ func selectBoard(b *BoardDef) {
 	busTermErrs = map[string]string{}
 	busInput = ""
 	busSel = 0
+	clearInputViews()
 	selectedBoard = b
 	activeTab = tabBoard
 	scopePins = b.ScopePins()
 	emu.SetBoard(b)
+	applyInputSpecs(b)
 	if busAutoConnect {
 		autoConnectBusTerminals()
 	}
 	RequestNextFrame()
+}
+
+// applyInputSpecs applies --input ID=VALUE specs to the selected board. It is
+// used by headless snapshots and scripted demos; normal sessions use the
+// Board tab widgets.
+func applyInputSpecs(b *BoardDef) {
+	if b == nil {
+		return
+	}
+	for _, spec := range inputArgs {
+		id, val, ok := strings.Cut(spec, "=")
+		if !ok {
+			fmt.Fprintf(os.Stderr, "--input %q: expected id=value\n", spec)
+			continue
+		}
+		var in *InputDef
+		for i := range b.Inputs {
+			if b.Inputs[i].ID == id {
+				in = &b.Inputs[i]
+				break
+			}
+		}
+		if in == nil {
+			fmt.Fprintf(os.Stderr, "--input %q: board %s has no input %q\n", spec, b.ID, id)
+			continue
+		}
+		switch in.Kind {
+		case "button", "switch", "bootsel":
+			on, err := parseOnOff(val)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "--input %q: %v\n", spec, err)
+				continue
+			}
+			emu.SetInput(id, InputValue{On: on})
+		case "adc":
+			v, err := strconv.ParseFloat(strings.TrimSpace(val), 32)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "--input %q: %v\n", spec, err)
+				continue
+			}
+			emu.SetInput(id, InputValue{Volts: float32(v)})
+		case "encoder":
+			n, err := strconv.Atoi(strings.TrimSpace(val))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "--input %q: %v\n", spec, err)
+				continue
+			}
+			step := 1
+			if n < 0 {
+				step, n = -1, -n
+			}
+			for range n {
+				emu.StepEncoder(id, step)
+			}
+		}
+	}
+}
+
+func parseOnOff(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "on", "1", "true", "press", "pressed", "down":
+		return true, nil
+	case "off", "0", "false", "release", "released", "up":
+		return false, nil
+	}
+	return false, fmt.Errorf("expected on or off")
 }
 
 // autoConnectBusTerminals attaches the Bus tab's device side to every bridge
@@ -502,9 +571,295 @@ func tabButton(label string, tab int) {
 
 func boardAndPins(snap MachineState) {
 	Container(Attrs(Row, Grow(1), Expand, Gap(14)), func() {
-		boardPanel(snap)
+		Container(Attrs(FixWidth(255), Gap(10)), func() {
+			boardPanel(snap)
+			inputsPanel(snap)
+		})
 		pinsPanel(snap)
 	})
+}
+
+// inputView keeps the UI-local state a widget needs across frames. The
+// authoritative button/switch/ADC state lives in Emu; these fields are the
+// drag accumulation and the value buffer ProcessSlider mutates.
+type inputView struct {
+	volts   float32
+	detents int
+}
+
+var inputViews = map[string]*inputView{}
+
+type encoderDrag struct {
+	active bool
+	y      float32
+}
+
+func clearInputViews() { inputViews = map[string]*inputView{} }
+
+// snapInput returns a board input state, zero when the board has none.
+func snapInput(snap MachineState, id string) InputValue {
+	if snap.Inputs == nil {
+		return InputValue{}
+	}
+	return snap.Inputs[id]
+}
+
+func inputViewFor(id string, v InputValue) *inputView {
+	iv := inputViews[id]
+	if iv == nil {
+		iv = &inputView{volts: v.Volts, detents: int(v.Phase)}
+		inputViews[id] = iv
+	}
+	return iv
+}
+
+// inputsPanel renders the board's interactive controls: momentary buttons,
+// slide switches, rotary encoders, ADC pots/sliders and BOOTSEL.
+func inputsPanel(snap MachineState) {
+	if selectedBoard == nil || len(selectedBoard.Inputs) == 0 {
+		return
+	}
+	Container(Attrs(Gap(5), Pad(8), Corners(8), Background(150, 18, 12, 1),
+		BorderWidth(1), BorderColor(150, 25, 22, 1)), func() {
+		Container(Attrs(Row, CrossMid, Gap(6)), func() {
+			Label("Inputs", FontSize(15), FontWeight(700))
+			Filler(1)
+			Label("click · drag · wheel", FontSize(10), TextColor(220, 6, 62, 1))
+		})
+		for _, in := range selectedBoard.Inputs {
+			control := &in
+			switch control.Kind {
+			case "button", "bootsel":
+				inputMomentary(*control, snap)
+			case "switch":
+				inputSwitch(*control, snap)
+			case "encoder":
+				inputEncoder(*control, snap)
+			case "adc":
+				inputADC(*control, snap)
+			}
+		}
+	})
+}
+
+func inputMomentary(in InputDef, snap MachineState) {
+	st := snapInput(snap, in.ID)
+	pin := "QSPI CS"
+	if in.Kind == "button" {
+		pin = fmt.Sprintf("GP%d", in.Pin)
+	}
+	Container(Attrs(Row, CrossMid, Gap(8), FixHeight(32), Pad2(3, 8), Corners(4),
+		Background(220, 10, 20, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+		state := ProcessButtonEvents(false)
+		// Only pointer transitions write the input; a value already held by
+		// --input or the diagram must not be cancelled on the first frame.
+		pressed := Use[bool]("input-press:" + in.ID)
+		if state.Active && !*pressed {
+			*pressed = true
+			emu.SetInput(in.ID, InputValue{On: true})
+			RequestNextFrame()
+		} else if !state.Active && *pressed {
+			*pressed = false
+			emu.SetInput(in.ID, InputValue{On: false})
+			RequestNextFrame()
+		}
+		on := st.On || state.Active
+		if state.Hovered {
+			ModAttrs(Background(220, 12, 26, 1))
+		}
+		if on {
+			ModAttrs(Background(140, 45, 34, 1))
+		}
+		Container(Attrs(FixSize(34, 16), Corners(3),
+			Background(boolHSLA(on))), func() {
+			Label(pressLabel(on), FontSize(9), FontWeight(700),
+				TextColor(220, 6, 86, 1))
+		})
+		Container(Attrs(Gap(0), Grow(1)), func() {
+			Label(in.Label, FontSize(12), FontWeight(600))
+			Label(pin, FontSize(10), Fonts(Monospace...), TextColor(220, 6, 62, 1))
+		})
+	})
+}
+
+func pressLabel(active bool) string {
+	if active {
+		return "PRESS"
+	}
+	return "READY"
+}
+
+func boolHSLA(active bool) (h, s, l float32, a float32) {
+	if active {
+		return 140, 55, 42, 1
+	}
+	return 220, 12, 32, 1
+}
+
+func inputSwitch(in InputDef, snap MachineState) {
+	on := snapInput(snap, in.ID).On
+	Container(Attrs(Row, CrossMid, Gap(8), FixHeight(32), Pad2(3, 8), Corners(4),
+		Background(220, 10, 20, 1), BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+		st := ProcessToggleEvents(&on, false)
+		if st.Clicked {
+			emu.SetInput(in.ID, InputValue{On: on})
+			RequestNextFrame()
+		}
+		if st.Hovered {
+			ModAttrs(Background(220, 12, 26, 1))
+		}
+		// Track and knob.
+		Container(Attrs(FixSize(34, 16), Corners(8),
+			Background(switchTrackHSLA(on))), func() {
+			x := float32(2)
+			if on {
+				x = 34 - 14
+			}
+			Container(Attrs(Float(x, 2), FixSize(12, 12), Corners(6),
+				Background(220, 8, 82, 1)), func() {})
+		})
+		Container(Attrs(Gap(0), Grow(1)), func() {
+			Label(in.Label, FontSize(12), FontWeight(600))
+			Label(fmt.Sprintf("GP%d", in.Pin), FontSize(10), Fonts(Monospace...),
+				TextColor(220, 6, 62, 1))
+		})
+		Label(switchLabel(on), FontSize(10), FontWeight(700),
+			TextColor(switchTextHSLA(on)))
+	})
+}
+
+func switchLabel(on bool) string {
+	if on {
+		return "ON"
+	}
+	return "OFF"
+}
+
+func switchTrackHSLA(on bool) (h, s, l float32, a float32) {
+	if on {
+		return 140, 45, 34, 1
+	}
+	return 220, 10, 30, 1
+}
+
+func switchTextHSLA(on bool) (h, s, l, a float32) {
+	if on {
+		return 140, 60, 70, 1
+	}
+	return 220, 5, 58, 1
+}
+
+func inputADC(in InputDef, snap MachineState) {
+	st := snapInput(snap, in.ID)
+	iv := inputViewFor(in.ID, st)
+	v := iv.volts
+	Container(Attrs(Gap(2), Pad(3), Corners(4), Background(220, 10, 20, 1),
+		BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+		Container(Attrs(Row, CrossMid, Gap(6)), func() {
+			Label(in.Label, FontSize(12), FontWeight(600))
+			Label(fmt.Sprintf("GP%d", in.Pin), FontSize(10), Fonts(Monospace...),
+				TextColor(220, 6, 62, 1))
+			Filler(1)
+			Label(fmt.Sprintf("%.2f V", v), FontSize(11), Fonts(Monospace...),
+				TextColor(140, 40, 72, 1))
+		})
+		Container(Attrs(FixWidth(220), FixHeight(20)), func() {
+			sl := ProcessSlider(&v, SliderConfig{
+				Min: float32(in.Min), Max: float32(in.Max),
+				Step: float32(in.Step), Width: 220, HandleInset: 7,
+			})
+			Container(Attrs(Float(0, 6), FixSize(sl.Width, 6), Corners(3),
+				Background(220, 8, 28, 1)), func() {})
+			Container(Attrs(Float(0, 6), FixSize(max(sl.T*sl.Width, 2), 6), Corners(3),
+				Background(140, 45, 42, 1)), func() {})
+			Container(Attrs(Float(sl.HandleX, 3), FixSize(14, 14), Corners(7),
+				Background(boolHSLA(sl.Active || sl.Hovered))), func() {})
+		})
+	})
+	iv.volts = v
+	if math.Abs(float64(v-st.Volts)) > 1e-4 {
+		emu.SetInput(in.ID, InputValue{Volts: v})
+		RequestNextFrame()
+	}
+}
+
+func inputEncoder(in InputDef, snap MachineState) {
+	st := snapInput(snap, in.ID)
+	iv := inputViewFor(in.ID, st)
+	delta := 0
+	Container(Attrs(Row, CrossMid, Gap(8), Pad(3), Corners(4), Background(220, 10, 20, 1),
+		BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
+		Container(Attrs(FixSize(42, 42), Corners(21), Background(220, 10, 24, 1),
+			BorderWidth(1), BorderColor(220, 10, 36, 1)), func() {
+			btn := ProcessButtonEvents(false)
+			if btn.Hovered {
+				ModAttrs(Background(220, 12, 30, 1))
+				if sc := GetFrameInput().Scroll[1]; sc > 0 {
+					delta = 1
+				} else if sc < 0 {
+					delta = -1
+				}
+			}
+			drag := Use[encoderDrag]("enc-drag:" + in.ID)
+			if btn.Active {
+				if !drag.active {
+					drag.active = true
+					drag.y = btn.Local[1]
+				}
+				if dy := btn.Local[1] - drag.y; dy >= 10 {
+					delta = 1
+					drag.y = btn.Local[1]
+				} else if dy <= -10 {
+					delta = -1
+					drag.y = btn.Local[1]
+				}
+				ModAttrs(Background(220, 12, 32, 1))
+			} else {
+				drag.active = false
+			}
+			// Indicator dot: one quarter turn per quadrature phase.
+			ang := float64(iv.detents) * math.Pi / 8
+			dx := 21 + 12*math.Sin(ang) - 3
+			dy := 21 - 12*math.Cos(ang) - 3
+			Container(Attrs(Float(float32(dx), float32(dy)), FixSize(6, 6), Corners(3),
+				Background(140, 60, 62, 1)), func() {})
+		})
+		Container(Attrs(Gap(1), Grow(1)), func() {
+			Label(in.Label, FontSize(12), FontWeight(600))
+			Label(fmt.Sprintf("GP%d / GP%d", in.PinA, in.PinB), FontSize(10),
+				Fonts(Monospace...), TextColor(220, 6, 62, 1))
+			Container(Attrs(Row, Gap(4)), func() {
+				if inputStepButton("‹") {
+					delta = -1
+				}
+				if inputStepButton("›") {
+					delta = 1
+				}
+			})
+		})
+	})
+	if delta != 0 {
+		iv.detents += delta
+		emu.StepEncoder(in.ID, delta)
+		RequestNextFrame()
+	}
+}
+
+// inputStepButton is a tiny momentary arrow; it reports a completed click.
+func inputStepButton(label string) bool {
+	clicked := false
+	Container(Attrs(FixSize(22, 18), Corners(3), Background(220, 12, 28, 1),
+		Center), func() {
+		st := ProcessButtonEvents(false)
+		if st.Hovered {
+			ModAttrs(Background(220, 14, 34, 1))
+		}
+		if st.Clicked {
+			clicked = true
+		}
+		Label(label, FontSize(14), FontWeight(700))
+	})
+	return clicked
 }
 
 func toolbar(snap MachineState) {
@@ -1208,7 +1563,29 @@ func boardCenter(row int, snap MachineState) {
 				BorderWidth(1), BorderColor(210, 10, 55, 1)), func() {})
 			Label("LED", FontSize(8), TextColor(220, 5, 65, 1))
 		case 16:
-			Container(Attrs(FixSize(20, 9), Corners(2), Background(210, 8, 42, 1)), func() {})
+			Container(Attrs(FixSize(34, 12), Corners(2), Background(210, 8, 42, 1)),
+				func() {
+					st := ProcessButtonEvents(false)
+					pressed := Use[bool]("diagram-bootsel")
+					if st.Active && !*pressed {
+						*pressed = true
+						emu.SetBootsel(true)
+						RequestNextFrame()
+					} else if !st.Active && *pressed {
+						*pressed = false
+						emu.SetBootsel(false)
+						RequestNextFrame()
+					}
+					held := snap.BootselHeld || st.Active
+					if st.Hovered {
+						ModAttrs(BorderWidth(1), BorderColor(140, 50, 62, 1))
+					}
+					if held {
+						ModAttrs(Background(140, 55, 40, 1))
+					}
+					Label("BOOT", FontSize(7), FontWeight(700),
+						TextColor(220, 6, 86, 1))
+				})
 			Label("BOOTSEL", FontSize(7), TextColor(220, 5, 65, 1))
 		}
 	})
@@ -2499,6 +2876,10 @@ func main() {
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
 	boardID := flag.String("board", "", "board id to select at startup (see --list-boards)")
+	flag.Func("input", "set a board input at startup: ID=on|off|VOLTS|+N|-N (repeatable)", func(v string) error {
+		inputArgs = append(inputArgs, v)
+		return nil
+	})
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, console")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")

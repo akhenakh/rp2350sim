@@ -32,6 +32,8 @@ render pico2-midi midi 1 midi "$ROOT/$BUILD/midi.elf"
 render pico2-audio audio 1 audio "$ROOT/$BUILD/audio.elf"
 render pico2-analog scope 0.02 scope
 render pico2-analog logic 0.05 logic "$ROOT/$BUILD/protocols.elf"
+render pico2 board 0.3 board "$ROOT/$BUILD/blinky.elf"
+render pico2-inputs board 0 inputs --input btn1=on --input sw1=on --input pot1=2.2 --input enc1=+2
 render pico2b board 0.1 rp2350b
 render pico2 console 1 console "$ROOT/firmware/c/build/usbhello.elf"
 
@@ -43,4 +45,4 @@ ffmpeg -v error -y -i "$ROOT/$BUILD/docs-ota-2x.png" -vf scale=1280:820:flags=la
 	"$IMAGES/ota.png"
 rm -f "$flash"
 
-echo "updated docs/images: dvi midi audio scope logic rp2350b console ota"
+echo "updated docs/images: dvi midi audio scope logic board inputs rp2350b console ota"

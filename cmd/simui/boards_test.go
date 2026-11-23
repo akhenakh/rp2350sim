@@ -177,3 +177,86 @@ boards:
 		t.Fatal("duplicate SPI CS was accepted")
 	}
 }
+
+// TestBoardsValidateInputs checks the interactive-control schema: unique ids,
+// valid package pins, ADC-only pins 26-29, distinct encoder lines, no shared
+// GPIO and a single BOOTSEL.
+func TestBoardsValidateInputs(t *testing.T) {
+	bad := []string{
+		`inputs: [{ kind: adc, id: p, pin: 20 }]`,
+		`inputs: [{ kind: button, id: b, pin: 40 }]`,
+		`inputs: [{ kind: button, id: b, pin: 15 }, { kind: switch, id: s, pin: 15 }]`,
+		`inputs: [{ kind: encoder, id: e, pin_a: 12, pin_b: 12 }]`,
+		`inputs: [{ kind: button, id: b, pin: 15 }, { kind: button, id: b, pin: 16 }]`,
+		`inputs: [{ kind: nope, id: x, pin: 15 }]`,
+		`inputs: [{ kind: bootsel, id: a }, { kind: bootsel, id: b }]`,
+	}
+	for _, snippet := range bad {
+		writeBoards(t, "boards:\n  - id: t\n    "+snippet+"\n")
+		if _, err := LoadBoards(); err == nil {
+			t.Fatalf("invalid inputs accepted: %s", snippet)
+		}
+	}
+
+	writeBoards(t, `boards:
+  - id: ok
+    package: qfn80
+    inputs:
+      - { kind: Button, id: b, pin: 40 }
+      - { kind: slide, id: s, pin: 14, initial: true }
+      - { kind: rotary, id: e, pin_a: 12, pin_b: 13 }
+      - { kind: pot, id: p, pin: 27 }
+      - { kind: boot, id: boot }
+`)
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := boards[0].Inputs
+	if in[0].Kind != "button" || in[1].Kind != "switch" || in[2].Kind != "encoder" ||
+		in[3].Kind != "adc" || in[4].Kind != "bootsel" {
+		t.Fatalf("kinds not normalized: %+v", in)
+	}
+	if in[3].Min != 0 || in[3].Max != 3.3 || in[3].DefaultVolts() != 1.65 {
+		t.Fatalf("adc defaults = %+v", in[3])
+	}
+	if in[0].Label != "B" {
+		t.Fatalf("label default = %q", in[0].Label)
+	}
+	if !in[1].Initial {
+		t.Fatal("switch initial position lost")
+	}
+}
+
+// TestEmbeddedInputsBoard guards the pico2-inputs demo board and the BOOTSEL
+// entry on the default Pico 2 board.
+func TestEmbeddedInputsBoard(t *testing.T) {
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var demo, pico *BoardDef
+	for i := range boards {
+		switch boards[i].ID {
+		case "pico2-inputs":
+			demo = &boards[i]
+		case "pico2":
+			pico = &boards[i]
+		}
+	}
+	if demo == nil {
+		t.Fatal("pico2-inputs board is missing")
+	}
+	kinds := map[string]bool{}
+	for _, in := range demo.Inputs {
+		kinds[in.Kind] = true
+	}
+	for _, k := range []string{"button", "switch", "encoder", "adc", "bootsel"} {
+		if !kinds[k] {
+			t.Fatalf("pico2-inputs is missing a %s control: %+v", k, demo.Inputs)
+		}
+	}
+	if pico == nil || len(pico.Inputs) != 1 || pico.Inputs[0].Kind != "bootsel" {
+		t.Fatalf("pico2 bootsel input = %+v", pico)
+	}
+}

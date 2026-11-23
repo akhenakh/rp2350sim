@@ -285,6 +285,11 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 - **Peripheral interrupts:** NVIC lines are wired for DMA, both timers, UART RX,
   USB, PIO, POWMAN, SIO FIFO (25) and SIO doorbell (26). SPI, I2C, ADC,
   GPIO-edge and PWM wrap interrupts are not delivered yet.
+- **BOOTSEL:** the Board tab's BOOTSEL control (and a YAML `bootsel` input)
+  pulls the QSPI chip-select line low. Firmware reads it through
+  `SIO_GPIO_HI_IN` bit 27 (QSPI_CSN), as the TinyUSB BSP does; the synthetic
+  bootrom does not enter USB mass-storage/picoboot boot mode, so a held button
+  is visible to firmware but does not start picoboot.
 - **PIO OUT:** an empty OSR is refilled from the TX FIFO even when autopull is
   disabled, because TinyGo's `SetX`/`SetY` rely on it. Treat this as more
   permissive than hardware when porting hand-written PIO.

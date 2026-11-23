@@ -37,6 +37,7 @@ Startup flags:
 | flag | meaning |
 |---|---|
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
+| `--input ID=VALUE` | set a board input before the first frame (`on`/`off`, volts, `+N`/`-N`); repeatable |
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
 | `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `audio`, `midi`, `otp`, `bus`, `debug`, `console` |
@@ -181,6 +182,40 @@ Panels size themselves to the window. Click a GPIO chip in the scope to add it.
 A board with `psram` shows its size and per-access stall in the status line.
 
 ![Board tab](images/board.png)
+
+### Board inputs
+
+Boards can declare interactive controls in `inputs:`. They appear under the
+board diagram and drive the pins the firmware reads:
+
+| kind | interaction | wiring |
+|---|---|---|
+| `button` | momentary press (or Space/Enter when focused) | one GPIO, active low by default |
+| `switch` | click toggles the position | one GPIO |
+| `encoder` | drag the knob, use the wheel, or `‹`/`›` | two GPIOs, one quadrature step per detent |
+| `adc` | slider | GP26–GP29; sets the voltage the ADC channels and scope read |
+| `bootsel` | momentary press | QSPI chip select, not a GPIO |
+
+```yaml
+inputs:
+  - { kind: button, id: btn1, label: BTN 1, pin: 15 }
+  - { kind: switch, id: sw1, label: SW 1, pin: 14, initial: false }
+  - { kind: encoder, id: enc1, label: ENC 1, pin_a: 12, pin_b: 13 }
+  - { kind: adc, id: pot1, label: POT 1, pin: 26, volts: 1.65, step: 0.05 }
+  - { kind: bootsel, id: bootsel, label: BOOTSEL }
+```
+
+`active_low: false` inverts a button, switch or encoder line. The board diagram's
+BOOTSEL button is always clickable and pulls the QSPI chip select low; firmware
+can read it through `SIO_GPIO_HI_IN` bit 27 (QSPI_CSN), as the TinyUSB BSP and
+the bootrom do. The synthetic bootrom does not enter USB mass-storage boot mode,
+so a held BOOTSEL is visible to firmware but does not start picoboot.
+
+`--input ID=VALUE` sets controls before the first frame (repeatable), for
+screenshots and scripted demos: `on`/`off` for buttons, switches and BOOTSEL, a
+voltage for ADC inputs, and a signed step count for encoders (`enc1=+3`).
+
+![Pico 2 with a button, switch, encoder and ADC pot](images/inputs.png)
 
 The `pico2b` board selects the QFN-80 package: the header diagram, GPIO table
 and scope expose GP0–GP47 instead of the RP2350A's GP0–GP29.
