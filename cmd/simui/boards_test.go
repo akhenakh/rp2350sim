@@ -51,6 +51,11 @@ func TestBoardsIncludeTouchLCD2(t *testing.T) {
 	if touch.LCD == nil || touch.LCD.Rotation != 90 || touch.LCD.BacklightPin() != 15 {
 		t.Fatalf("touch-lcd2 LCD = %+v", touch.LCD)
 	}
+	// The YAML is the logical post-rotation frame. The native panel is
+	// 240x320 portrait; rotation 90 must display the runner's 320x240.
+	if touch.LCD.Width != 320 || touch.LCD.Height != 240 {
+		t.Fatalf("touch-lcd2 logical LCD = %dx%d, want 320x240", touch.LCD.Width, touch.LCD.Height)
+	}
 	if touch.Touch == nil || touch.Touch.Addr != 0x15 || touch.Touch.RSTPin() != 20 {
 		t.Fatalf("touch-lcd2 touch = %+v", touch.Touch)
 	}
@@ -100,6 +105,30 @@ func TestBoardsRejectSameChipSelect(t *testing.T) {
 `)
 	if _, err := LoadBoards(); err == nil {
 		t.Fatal("same CS on one bus was accepted")
+	}
+}
+
+// TestLCDAspectUsesLogicalSize checks the pre-frame placeholder uses the
+// YAML's post-rotation size, matching the framebuffer once firmware runs.
+func TestLCDAspectUsesLogicalSize(t *testing.T) {
+	old := selectedBoard
+	defer func() { selectedBoard = old }()
+	selectedBoard = &BoardDef{LCD: &LCDDevice{Width: 320, Height: 240, Rotation: 90}}
+	if w, h := lcdAspect(MachineState{}); w != 320 || h != 240 {
+		t.Fatalf("lcdAspect = %dx%d, want 320x240", w, h)
+	}
+}
+
+// TestBoardsRejectSharedEthernetUART checks that CH9120 and Wi-Fi cannot
+// claim the same hardware UART.
+func TestBoardsRejectSharedEthernetUART(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: uart-clash
+    ethernet: { kind: ch9120, uart: 1 }
+    wifi: { uart: 1 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("CH9120 and Wi-Fi accepted the same UART")
 	}
 }
 

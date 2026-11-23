@@ -331,6 +331,14 @@ func LoadBoards() ([]BoardDef, error) {
 			b.Name = b.ID
 		}
 		spi := map[spiPin]string{}
+		var uartOwner [2]string
+		claimUART := func(uart int, who string) error {
+			if uartOwner[uart] != "" {
+				return fmt.Errorf("%s and %s both use UART%d", uartOwner[uart], who, uart)
+			}
+			uartOwner[uart] = who
+			return nil
+		}
 		i2cAddrs := map[struct {
 			bus  int
 			addr int
@@ -398,6 +406,9 @@ func LoadBoards() ([]BoardDef, error) {
 			case "ch9120":
 				if d.UART < 0 || d.UART > 1 {
 					return nil, fmt.Errorf("boards: %s: ch9120 uart must be 0 or 1", b.ID)
+				}
+				if err := claimUART(d.UART, "ethernet ch9120"); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 				}
 			default:
 				return nil, fmt.Errorf("boards: %s: unknown ethernet kind %q", b.ID, d.Kind)
@@ -501,6 +512,9 @@ func LoadBoards() ([]BoardDef, error) {
 		if w := b.Wifi; w != nil {
 			if w.UART < 0 || w.UART > 1 {
 				return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
+			}
+			if err := claimUART(w.UART, "wifi"); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
 		if p := b.PSRAM; p != nil {
