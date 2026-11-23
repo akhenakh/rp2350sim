@@ -205,6 +205,27 @@ func TestSDCardMultiBlockWrite(t *testing.T) {
 	}
 }
 
+// TestSDCardMultiReadPastEnd checks that a read past the last block stops
+// with an SPI data error token instead of an endless 0xFF stream.
+func TestSDCardMultiReadPastEnd(t *testing.T) {
+	card := sdFixture(t)
+	last := uint32(card.Blocks() - 1)
+	arg := last
+	if !card.highCap {
+		arg = last * 512
+	}
+	if r := sdCommand(t, card, 18, arg); r != 0 {
+		t.Fatalf("CMD18 = %#x", r)
+	}
+	sdReadData(t, card)
+	if tok := card.Transfer(0xFF); tok != 0x08 {
+		t.Fatalf("past-end token = %#x, want data error 0x08", tok)
+	}
+	if card.multiRead {
+		t.Fatal("multiple-block read continued past the card")
+	}
+}
+
 // TestSDCardMultiReadStop checks that CMD12 is recognised while the card is
 // still in a multiple-block read, without dropping CS.
 func TestSDCardMultiReadStop(t *testing.T) {

@@ -129,8 +129,14 @@ func (s *SDCard) Transfer(tx byte) byte {
 	// next block when the byte starts a command frame, or the command would be
 	// swallowed as data clocks.
 	if len(s.out) == 0 && s.multiRead && s.cmdLen == 0 && (tx < 0x40 || tx > 0x7F) {
-		s.queueBlock(s.multiAddr)
-		s.multiAddr++
+		if s.queueBlock(s.multiAddr) {
+			s.multiAddr++
+		} else {
+			// Past the end of the card: stop the stream with an SPI data
+			// error token instead of returning 0xFF forever.
+			s.multiRead = false
+			s.out = append(s.out, 0x08, 0xFF)
+		}
 	}
 	if len(s.out) > 0 {
 		v := s.out[0]
@@ -302,15 +308,17 @@ func (s *SDCard) blockAddr(arg uint32) uint32 {
 	return arg / 512
 }
 
-// queueBlock emits the data token, one block and the CRC.
-func (s *SDCard) queueBlock(block uint32) {
+// queueBlock emits the data token, one block and the CRC. It reports false
+// when the block is outside the card.
+func (s *SDCard) queueBlock(block uint32) bool {
 	if int(block) >= s.Blocks() {
-		return
+		return false
 	}
 	s.out = append(s.out, 0xFE)
 	start := int(block) * 512
 	s.out = append(s.out, s.image[start:start+512]...)
 	s.out = append(s.out, 0xFF, 0xFF)
+	return true
 }
 
 func (s *SDCard) queueData(data []byte) {
