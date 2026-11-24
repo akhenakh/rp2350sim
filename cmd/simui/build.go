@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ type buildDrawerState struct {
 
 	tab        int
 	sourcePath string
+	sourceSpec string
 	doc        TextDocument
 	saved      string
 	docErr     string
@@ -178,24 +180,26 @@ func shellCommand(ctx context.Context, line string) *exec.Cmd {
 	return exec.CommandContext(ctx, "sh", "-c", line)
 }
 
-// loadSource reads path into the editor. It is called from the UI thread when
-// the drawer is first opened or the user presses Open.
-func (b *buildDrawerState) loadSource(path string) {
+// loadSource reads path into the editor. The committed source path and document
+// change only after a successful read, so a failed Open preserves the old file.
+func (b *buildDrawerState) loadSource(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		b.docErr = "choose a source file"
-		return
+		return fmt.Errorf("choose a source file")
 	}
-	b.sourcePath = path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		b.docErr = err.Error()
-		return
+		return err
 	}
+	b.sourcePath = path
+	b.sourceSpec = path
 	b.doc.SetText(string(data))
 	b.saved = string(data)
 	b.dirty = false
 	b.docErr = ""
+	return nil
 }
 
 func (b *buildDrawerState) saveSource() {
@@ -374,9 +378,9 @@ func sourceTab(bp *buildDrawerState) {
 	Container(Attrs(Grow(1), Expand, Gap(6)), func() {
 		Label("File", FontSize(11), FontWeight(600), TextColor(220, 5, 62, 1))
 		Container(Attrs(Row, Gap(6), CrossMid), func() {
-			TextInputExt(&bp.sourcePath, attrs)
+			TextInputExt(&bp.sourceSpec, attrs)
 			if Button(NoIcon, "Open") {
-				bp.loadSource(bp.sourcePath)
+				_ = bp.loadSource(bp.sourceSpec)
 				RequestNextFrame()
 			}
 			if Button(NoIcon, "Save") {

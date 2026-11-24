@@ -88,6 +88,29 @@ func TestInferBuildPlanTinyGo(t *testing.T) {
 	}
 }
 
+func TestLoadSourceCommitsOnlyAfterRead(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.go")
+	bad := filepath.Join(dir, "missing.go")
+	if err := os.WriteFile(good, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bp := newBuildDrawerState()
+	if err := bp.loadSource(good); err != nil {
+		t.Fatal(err)
+	}
+	bp.sourceSpec = bad
+	if err := bp.loadSource(bad); err == nil {
+		t.Fatal("missing source loaded")
+	}
+	if bp.sourcePath != good || bp.sourceSpec != bad {
+		t.Fatalf("failed open changed paths: committed=%q input=%q", bp.sourcePath, bp.sourceSpec)
+	}
+	if got := bp.doc.Text(); got != "package main\n" {
+		t.Fatalf("failed open replaced document with %q", got)
+	}
+}
+
 func TestInferBuildPlanCMake(t *testing.T) {
 	root := t.TempDir()
 	c := filepath.Join(root, "firmware", "c")

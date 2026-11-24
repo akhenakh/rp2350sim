@@ -67,6 +67,79 @@ func TestFirmwareWatcherReloadsOnStableChange(t *testing.T) {
 	}
 }
 
+func TestFirmwareWatcherCapturesBaselineAtWatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fw.elf")
+	if err := os.WriteFile(path, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := newFirmwareWatcher()
+	calls := 0
+	w.Watch(path, func(string) error { calls++; return nil })
+	if err := os.WriteFile(path, []byte("two-long"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.poll() // observe the new fingerprint
+	w.poll() // first stable poll
+	w.poll() // second stable poll
+	if calls != 1 {
+		t.Fatalf("reload calls = %d, want 1", calls)
+	}
+}
+
+func TestFirmwareWatcherSerializesPathChanges(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.elf")
+	second := filepath.Join(dir, "second.elf")
+	if err := os.WriteFile(first, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := newFirmwareWatcher()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	w.Watch(first, func(string) error {
+		close(entered)
+		<-release
+		return nil
+	})
+	if err := os.WriteFile(first, []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pollDone := make(chan struct{})
+	go func() {
+		w.poll()
+		w.poll()
+		w.poll()
+		close(pollDone)
+	}()
+	<-entered
+
+	secondCalls := 0
+	watchDone := make(chan struct{})
+	go func() {
+		w.Watch(second, func(string) error { secondCalls++; return nil })
+		close(watchDone)
+	}()
+	close(release)
+	<-pollDone
+	<-watchDone
+	if secondCalls != 0 {
+		t.Fatalf("path change replayed the new baseline %d times", secondCalls)
+	}
+	if err := os.WriteFile(second, []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.poll()
+	w.poll()
+	w.poll()
+	if secondCalls != 1 {
+		t.Fatalf("new path reload calls = %d, want 1", secondCalls)
+	}
+}
+
 func TestFirmwareWatcherKeepsWatchingAfterError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fw.elf")

@@ -761,6 +761,20 @@ func (w *W5500) rxAppend(n int, data []byte) {
 	s.ints |= w5IntReceive
 }
 
+// Close releases every host socket and invalidates outstanding dial/accept
+// callbacks. A W5500 attached to a UI board is discarded after this call.
+func (w *W5500) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	w.closed = true
+	for n := range w.socks {
+		w.closeSocket(n)
+	}
+}
+
 func (w *W5500) closeSocket(n int) {
 	if n < 0 || n >= len(w.socks) || w.socks[n] == nil {
 		return

@@ -131,7 +131,7 @@ func RootView() {
 	// that handled the click renders a consistent tab set.
 	if pendingBoardPicker {
 		pendingBoardPicker = false
-		selectedBoard = nil
+		returnToBoardPicker()
 	}
 
 	if emu.Booted() {
@@ -283,9 +283,9 @@ func boardBadges(b *BoardDef) []string {
 	return out
 }
 
-func selectBoard(b *BoardDef) {
-	// Release held piano notes on the old board before its endpoint goes
-	// away, so they cannot be sent to the new board on release.
+func releaseBoardResources() {
+	// Queue Note-Off/All-Notes-Off before SetBoard flushes them to the old
+	// transport, then close UI terminals owned by the old board.
 	panicMIDI()
 	for _, term := range busTerms {
 		term.Close()
@@ -294,12 +294,37 @@ func selectBoard(b *BoardDef) {
 	busTermErrs = map[string]string{}
 	busInput = ""
 	busSel = 0
+}
+
+func returnToBoardPicker() {
+	releaseBoardResources()
+	if firmwareWatch != nil {
+		firmwareWatch.Stop()
+		firmwareWatch = nil
+	}
+	clearInputViews()
+	emu.SetBoard(nil)
+	selectedBoard = nil
+	activeTab = tabBoard
+	scopePins = nil
+	RequestNextFrame()
+}
+
+func selectBoard(b *BoardDef) {
+	releaseBoardResources()
 	clearInputViews()
 	selectedBoard = b
 	activeTab = tabBoard
 	scopePins = b.ScopePins()
 	emu.SetBoard(b)
 	applyInputSpecs(b)
+	if watchEnabled && fwPath != "" {
+		mode := "firmware"
+		if flashMode {
+			mode = "flash"
+		}
+		watchFile(fwPath, mode)
+	}
 	if busAutoConnect {
 		autoConnectBusTerminals()
 	}
@@ -3069,13 +3094,13 @@ func main() {
 	usedFlash := false
 	if rest := flag.Args(); len(rest) > 0 {
 		fwPath = rest[0]
-		if err := emu.Load(fwPath); err != nil {
+		if err := emu.LoadPaused(fwPath); err != nil {
 			fmt.Fprintln(os.Stderr, "firmware load:", err)
 			os.Exit(1)
 		}
 	} else if *flashPath != "" {
 		fwPath = *flashPath
-		if err := emu.LoadFlash(*flashPath); err != nil {
+		if err := emu.LoadFlashPaused(*flashPath); err != nil {
 			fmt.Fprintln(os.Stderr, "flash load:", err)
 			os.Exit(1)
 		}
@@ -3121,6 +3146,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gdb:", err)
 			os.Exit(2)
 		}
+	}
+	// Startup loads stay paused until debugger breakpoints and the GDB server
+	// are installed, so even a reset-vector breakpoint sees the first fetch.
+	if !*paused && *runTo <= 0 {
+		emu.SetRunning(true)
 	}
 	if *touchAt != "" {
 		xStr, yStr, ok := strings.Cut(*touchAt, ",")

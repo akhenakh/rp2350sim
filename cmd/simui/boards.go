@@ -422,6 +422,15 @@ func LoadBoards() ([]BoardDef, error) {
 			if err := validSPI(spi, d.SPI, d.CS, "lcd"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
+			if d.Width <= 0 || d.Height <= 0 {
+				return nil, fmt.Errorf("boards: %s: lcd needs positive width and height", b.ID)
+			}
+			if d.Rotation != 0 && d.Rotation != 90 && d.Rotation != 180 && d.Rotation != 270 {
+				return nil, fmt.Errorf("boards: %s: lcd rotation must be 0, 90, 180 or 270", b.ID)
+			}
+			if d.DC < 0 || d.RST < 0 {
+				return nil, fmt.Errorf("boards: %s: lcd needs dc and rst pins", b.ID)
+			}
 		}
 		if d := b.Touch; d != nil {
 			if d.Bus != 0 && d.Bus != 1 {
@@ -433,6 +442,21 @@ func LoadBoards() ([]BoardDef, error) {
 			if d.Width <= 0 || d.Height <= 0 {
 				return nil, fmt.Errorf("boards: %s: touch needs width and height", b.ID)
 			}
+			if d.Rotation != 0 && d.Rotation != 90 && d.Rotation != 180 && d.Rotation != 270 {
+				return nil, fmt.Errorf("boards: %s: touch rotation must be 0, 90, 180 or 270", b.ID)
+			}
+			if d.INT < 0 {
+				return nil, fmt.Errorf("boards: %s: touch needs an interrupt pin", b.ID)
+			}
+			if lcd := b.LCD; lcd != nil {
+				w, h := lcd.Width, lcd.Height
+				if lcd.Rotation == 90 || lcd.Rotation == 270 {
+					w, h = h, w
+				}
+				if d.Width != w || d.Height != h {
+					return nil, fmt.Errorf("boards: %s: touch geometry %dx%d does not match native LCD %dx%d", b.ID, d.Width, d.Height, w, h)
+				}
+			}
 		}
 		if d := b.IMU; d != nil {
 			if d.Bus != 0 && d.Bus != 1 {
@@ -440,6 +464,9 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 			if err := addI2C(d.Bus, d.Addr, "imu"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+			if d.INT < 0 {
+				return nil, fmt.Errorf("boards: %s: imu needs an interrupt pin", b.ID)
 			}
 		}
 		if d := b.Battery; d != nil {
@@ -500,21 +527,32 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 		if d := b.Audio; d != nil {
 			pinOK := func(p int) bool { return p >= 0 && p <= 47 }
+			audioPins := map[int]bool{}
+			addAudioPin := func(p int) error {
+				if !pinOK(p) {
+					return fmt.Errorf("invalid GPIO %d", p)
+				}
+				if audioPins[p] {
+					return fmt.Errorf("audio pins must be distinct")
+				}
+				audioPins[p] = true
+				return nil
+			}
+			var pins []int
 			switch d.Kind {
 			case "i2s":
-				if !pinOK(d.BCLK) || !pinOK(d.LRCLK) || !pinOK(d.Data) {
-					return nil, fmt.Errorf("boards: %s: audio i2s needs bclk, lrclk and data pins", b.ID)
-				}
+				pins = []int{d.BCLK, d.LRCLK, d.Data}
 			case "pdm":
-				if !pinOK(d.Data) || !pinOK(d.Clock) {
-					return nil, fmt.Errorf("boards: %s: audio pdm needs data and clock pins", b.ID)
-				}
+				pins = []int{d.Data, d.Clock}
 			case "pwm":
-				if !pinOK(d.Pin) {
-					return nil, fmt.Errorf("boards: %s: audio pwm needs pin", b.ID)
-				}
+				pins = []int{d.Pin}
 			default:
 				return nil, fmt.Errorf("boards: %s: unknown audio kind %q", b.ID, d.Kind)
+			}
+			for _, pin := range pins {
+				if err := addAudioPin(pin); err != nil {
+					return nil, fmt.Errorf("boards: %s: audio %s: %w", b.ID, d.Kind, err)
+				}
 			}
 			if d.Rate <= 0 {
 				d.Rate = 48000
@@ -541,7 +579,9 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 		}
 		switch b.Package {
-		case "", "qfn60", "qfn80":
+		case "":
+			b.Package = "qfn60"
+		case "qfn60", "qfn80":
 		default:
 			return nil, fmt.Errorf("boards: %s: unknown package %q (qfn60 or qfn80)", b.ID, b.Package)
 		}
@@ -634,11 +674,82 @@ func LoadBoards() ([]BoardDef, error) {
 		if b.Package == "qfn80" {
 			maxPin = 47
 		}
-		devicePins := map[int]string{}
-		addDevicePin := func(who string, pin int) {
-			if pin >= 0 {
-				devicePins[pin] = who
+		pinInPackage := func(pin int) bool { return pin >= 0 && pin <= maxPin }
+		if len(b.Scope) > devices.MaxTraceChannels {
+			return nil, fmt.Errorf("boards: %s: scope supports at most %d pins", b.ID, devices.MaxTraceChannels)
+		}
+		seenScope := map[int]bool{}
+		for _, pin := range b.Scope {
+			if !pinInPackage(pin) || seenScope[pin] {
+				return nil, fmt.Errorf("boards: %s: invalid or duplicate scope pin GP%d", b.ID, pin)
 			}
+			seenScope[pin] = true
+		}
+		if l := b.Logic; l != nil {
+			logicPin := func(pin int, optional bool) error {
+				if pin == -1 && optional {
+					return nil
+				}
+				if !pinInPackage(pin) {
+					return fmt.Errorf("GP%d is outside the selected package", pin)
+				}
+				return nil
+			}
+			if u := l.UART; u != nil {
+				if u.Bus != 0 && u.Bus != 1 {
+					return nil, fmt.Errorf("boards: %s: logic uart bus must be 0 or 1", b.ID)
+				}
+				if u.Baud <= 0 {
+					return nil, fmt.Errorf("boards: %s: logic uart baud must be positive", b.ID)
+				}
+				if err := logicPin(u.TX, false); err != nil {
+					return nil, fmt.Errorf("boards: %s: logic uart tx: %w", b.ID, err)
+				}
+				if err := logicPin(u.RX, false); err != nil {
+					return nil, fmt.Errorf("boards: %s: logic uart rx: %w", b.ID, err)
+				}
+			}
+			if d := l.I2C; d != nil {
+				if d.Bus != 0 && d.Bus != 1 {
+					return nil, fmt.Errorf("boards: %s: logic i2c bus must be 0 or 1", b.ID)
+				}
+				for _, pin := range []int{d.SDA, d.SCL} {
+					if err := logicPin(pin, false); err != nil {
+						return nil, fmt.Errorf("boards: %s: logic i2c: %w", b.ID, err)
+					}
+				}
+			}
+			if d := l.SPI; d != nil {
+				if d.Bus != 0 && d.Bus != 1 {
+					return nil, fmt.Errorf("boards: %s: logic spi bus must be 0 or 1", b.ID)
+				}
+				if err := logicPin(d.SCK, false); err != nil {
+					return nil, fmt.Errorf("boards: %s: logic spi sck: %w", b.ID, err)
+				}
+				if err := logicPin(d.MOSI, false); err != nil {
+					return nil, fmt.Errorf("boards: %s: logic spi mosi: %w", b.ID, err)
+				}
+				if err := logicPin(d.MISOPin(), true); err != nil {
+					return nil, fmt.Errorf("boards: %s: logic spi miso: %w", b.ID, err)
+				}
+				if err := logicPin(d.CSPin(), true); err != nil {
+					return nil, fmt.Errorf("boards: %s: logic spi cs: %w", b.ID, err)
+				}
+			}
+		}
+		devicePins := map[int]string{}
+		devicePinErr := ""
+		addDevicePin := func(who string, pin int) {
+			if pin < 0 {
+				return
+			}
+			if pin > maxPin {
+				if devicePinErr == "" {
+					devicePinErr = fmt.Sprintf("%s pin GP%d is outside the selected package", who, pin)
+				}
+				return
+			}
+			devicePins[pin] = who
 		}
 		if d := b.LCD; d != nil {
 			addDevicePin("lcd cs", d.CS)
@@ -667,6 +778,9 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 		}
 		if d := b.WS2812; d != nil {
+			if d.Pin < 0 {
+				return nil, fmt.Errorf("boards: %s: ws2812 needs a pin", b.ID)
+			}
 			addDevicePin("ws2812", d.Pin)
 		}
 		if d := b.PSRAM; d != nil {
@@ -678,12 +792,35 @@ func LoadBoards() ([]BoardDef, error) {
 		if d := b.Battery; d != nil {
 			addDevicePin("battery", d.Pin)
 		}
+		for i, src := range b.Analog {
+			if !pinInPackage(src.Pin) {
+				return nil, fmt.Errorf("boards: %s: analog %d pin must be 0..%d", b.ID, i+1, maxPin)
+			}
+			addDevicePin("analog", src.Pin)
+		}
 		if d := b.Audio; d != nil {
+			var pins []int
+			switch d.Kind {
+			case "i2s":
+				pins = []int{d.BCLK, d.LRCLK, d.Data}
+			case "pdm":
+				pins = []int{d.Data, d.Clock}
+			case "pwm":
+				pins = []int{d.Pin}
+			}
+			for _, pin := range pins {
+				if owner, ok := devicePins[pin]; ok {
+					return nil, fmt.Errorf("boards: %s: audio pin GP%d conflicts with %s", b.ID, pin, owner)
+				}
+			}
 			addDevicePin("audio bclk", d.BCLK)
 			addDevicePin("audio lrclk", d.LRCLK)
 			addDevicePin("audio data", d.Data)
 			addDevicePin("audio clock", d.Clock)
 			addDevicePin("audio pwm", d.Pin)
+		}
+		if devicePinErr != "" {
+			return nil, fmt.Errorf("boards: %s: %s", b.ID, devicePinErr)
 		}
 		usedPins := map[int]string{}
 		checkPin := func(who string, pin int) error {

@@ -13,12 +13,17 @@ import (
 // the callback runs, so a linker writing the file in place is not caught
 // half-finished.
 type firmwareWatcher struct {
-	mu       sync.Mutex
-	path     string
-	interval time.Duration
-	onChange func(path string) error
-	done     chan struct{}
-	started  bool
+	// reloadMu serializes a path/mode change with an in-flight reload. Together
+	// with generation it prevents a stale callback from republishing state after
+	// the toolbar has selected another file.
+	reloadMu   sync.Mutex
+	mu         sync.Mutex
+	path       string
+	interval   time.Duration
+	onChange   func(path string) error
+	done       chan struct{}
+	started    bool
+	generation uint64
 
 	fingerprint fileFingerprint
 	have        bool
@@ -52,8 +57,8 @@ func watchFile(path, mode string) {
 	}
 	if firmwareWatch == nil {
 		firmwareWatch = newFirmwareWatcher()
-		firmwareWatch.Start()
 	}
+	firmwareWatch.Start()
 	reload := func(p string) error { return emu.Reload(p) }
 	if mode == "flash" {
 		reload = func(p string) error { return emu.ReloadFlash(p) }
@@ -75,15 +80,31 @@ func (w *firmwareWatcher) Start() {
 
 // Watch points the watcher at path and resets the change baseline. reload is
 // called with path after a stable change; its error is shown in the toolbar.
+// The initial fingerprint is captured synchronously so a write immediately
+// after Watch is observed as a change rather than silently becoming baseline.
 func (w *firmwareWatcher) Watch(path string, reload func(string) error) {
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+	fp, have := fingerprintFile(path)
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.generation++
 	w.path = path
 	w.onChange = reload
-	w.have = false
+	w.fingerprint = fp
+	w.have = have
 	w.pending = false
 	w.stable = 0
 	w.err = ""
+}
+
+func fingerprintFile(path string) (fileFingerprint, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileFingerprint{}, false
+	}
+	return fileFingerprint{size: info.Size(), mtime: info.ModTime(), mode: info.Mode()}, true
 }
 
 // Stop ends the polling goroutine.
@@ -111,7 +132,7 @@ func (w *firmwareWatcher) Status() WatchStatus {
 	defer w.mu.Unlock()
 	return WatchStatus{
 		Path: w.path, Reloads: w.reloads, Last: w.lastReload,
-		Err: w.err, Watching: w.path != "", Interval: w.interval,
+		Err: w.err, Watching: w.started && w.path != "", Interval: w.interval,
 	}
 }
 
@@ -129,19 +150,26 @@ func (w *firmwareWatcher) run() {
 }
 
 func (w *firmwareWatcher) poll() {
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+
 	w.mu.Lock()
 	path := w.path
+	generation := w.generation
 	w.mu.Unlock()
 	if path == "" {
 		return
 	}
-	info, err := os.Stat(path)
-	if err != nil {
+	fp, have := fingerprintFile(path)
+	if !have {
 		return
 	}
-	fp := fileFingerprint{size: info.Size(), mtime: info.ModTime(), mode: info.Mode()}
 
 	w.mu.Lock()
+	if generation != w.generation || path != w.path {
+		w.mu.Unlock()
+		return
+	}
 	if !w.have {
 		w.fingerprint = fp
 		w.have = true
@@ -177,13 +205,17 @@ func (w *firmwareWatcher) poll() {
 	}
 	if err := reload(path); err != nil {
 		w.mu.Lock()
-		w.err = err.Error()
+		if generation == w.generation {
+			w.err = err.Error()
+		}
 		w.mu.Unlock()
 		return
 	}
 	w.mu.Lock()
-	w.err = ""
-	w.reloads++
-	w.lastReload = time.Now()
+	if generation == w.generation {
+		w.err = ""
+		w.reloads++
+		w.lastReload = time.Now()
+	}
 	w.mu.Unlock()
 }

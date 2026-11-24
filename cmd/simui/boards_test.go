@@ -313,6 +313,40 @@ func TestEmbeddedPresetBoard(t *testing.T) {
 	}
 }
 
+func TestBoardsValidateGeometryAndOwnership(t *testing.T) {
+	bad := []string{
+		`lcd: { spi: 0, cs: 17, dc: 16, rst: 20, height: 135 }`,
+		`lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 135, rotation: 45 }`,
+		`lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 320, height: 240, rotation: 90 }
+		 touch: { bus: 0, addr: 0x15, int: 29, width: 240, height: 320 }`,
+		`logic: { uart: { tx: 40, rx: 41, baud: 115200 } }`,
+		`scope: [40]`,
+		`audio: { kind: i2s, bclk: 0, lrclk: 0, data: 1 }`,
+		`lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 135, backlight: 25 }
+		 audio: { kind: pwm, pin: 25 }`,
+		`analog: [{ pin: 26 }]
+		 audio: { kind: pwm, pin: 26 }`,
+	}
+	for _, snippet := range bad {
+		writeBoards(t, "boards:\n  - id: t\n    "+snippet+"\n")
+		if _, err := LoadBoards(); err == nil {
+			t.Fatalf("invalid board accepted: %s", snippet)
+		}
+	}
+
+	writeBoards(t, "boards:\n  - id: defaulted\n")
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boards[0].Package != "qfn60" {
+		t.Fatalf("default package = %q, want qfn60", boards[0].Package)
+	}
+	if len(boards[0].Inputs) != 1 || boards[0].Inputs[0].ID != "bootsel" {
+		t.Fatalf("default BOOTSEL input = %+v", boards[0].Inputs)
+	}
+}
+
 func TestBoardsValidatePresets(t *testing.T) {
 	good := `boards:
   - id: ok

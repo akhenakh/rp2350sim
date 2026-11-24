@@ -161,6 +161,9 @@ type Emu struct {
 	running     bool
 	console     []byte
 	consolePos  int64
+	// usbInput holds host console bytes until the emulated CDC host is ready.
+	// UART input is delivered immediately; USB input is drained on run chunks.
+	usbInput []byte
 
 	lcdGen   uint64
 	lcdFrame *image.RGBA
@@ -291,20 +294,68 @@ func NewEmu() *Emu {
 }
 
 // SetBoard selects the board whose devices are attached on the next boot.
+// Passing nil returns to the picker and releases the running firmware and
+// host sockets while retaining the loaded image for the next selection.
 func (e *Emu) SetBoard(b *BoardDef) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// Delivers queued Note-Off/All-Notes-Off messages to the old transport
+	// before resetChip drops its endpoints.
+	e.flushMIDILocked()
+	if b == nil {
+		e.stopLocked()
+		return
+	}
 	e.board = b
 	e.errText = ""
-	if b != nil {
-		e.scopePins = b.ScopePins()
-	}
+	e.scopePins = b.ScopePins()
 	e.initInputsLocked()
 	if e.img != nil || e.fwPath != "" {
 		e.rebootLocked()
 	} else if err := e.loadLocked(); err != nil {
 		e.errText = err.Error()
 	}
+}
+
+// stopLocked releases host resources and leaves an idle, boardless chip for
+// the picker. The caller holds e.mu.
+func (e *Emu) stopLocked() {
+	e.running = false
+	if e.debugger != nil && e.chip != nil {
+		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
+	}
+	for _, br := range e.bridges {
+		br.Close()
+	}
+	e.bridges = nil
+	e.bridgeErrs = nil
+	e.serialSig = ""
+	for _, br := range e.busAll {
+		br.Close()
+	}
+	e.busAll = nil
+	e.i2cBuses = nil
+	e.spiBuses = nil
+	e.busErrors = nil
+	e.busSig = ""
+	if e.w5500 != nil {
+		e.w5500.Close()
+	}
+	if e.w6300 != nil {
+		e.w6300.Close()
+	}
+	if e.ch9120 != nil {
+		e.ch9120.Close()
+	}
+	e.board = nil
+	e.scopePins = nil
+	e.errText = ""
+	e.usbInput = nil
+	e.initInputsLocked()
+	e.resetChip()
+	e.applyInputsLocked()
+	e.console = e.console[:0]
+	e.consolePos = 0
 }
 
 // initInputsLocked resets the interactive controls to their board defaults.
@@ -1489,6 +1540,14 @@ func (e *Emu) SendMIDI(m midi.Message) {
 	}
 }
 
+// FlushMIDI delivers queued host-to-device messages immediately. Board changes
+// use it so Note-Off messages cannot be delivered to the newly selected board.
+func (e *Emu) FlushMIDI() {
+	e.mu.Lock()
+	e.flushMIDILocked()
+	e.mu.Unlock()
+}
+
 // flushMIDILocked delivers queued messages. The caller holds e.mu.
 func (e *Emu) flushMIDILocked() {
 	if len(e.midiPending) == 0 || e.chip == nil {
@@ -1626,16 +1685,24 @@ func (e *Emu) SaveFlash() {
 // closes are not lost.
 func (e *Emu) SyncSD() {
 	e.mu.Lock()
-	sd := e.sd
-	e.mu.Unlock()
-	if sd != nil {
-		_ = sd.Sync()
+	defer e.mu.Unlock()
+	if e.sd != nil {
+		_ = e.sd.Sync()
 	}
 }
 
 // LoadFlash boots the vector table from a raw flash image without loading an
 // ELF. It is used to resume after a previous self-update.
 func (e *Emu) LoadFlash(path string) error {
+	return e.loadFlash(path, true, false)
+}
+
+// LoadFlashPaused loads a raw flash image without starting execution.
+func (e *Emu) LoadFlashPaused(path string) error {
+	return e.loadFlash(path, false, false)
+}
+
+func (e *Emu) loadFlash(path string, start, preservePause bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -1653,6 +1720,7 @@ func (e *Emu) LoadFlash(path string) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	wasRunning, paused := e.runStateLocked()
 	e.img = nil
 	e.debugInfo = nil
 	e.fwPath = path
@@ -1668,12 +1736,28 @@ func (e *Emu) LoadFlash(path string) error {
 	e.lastChipFW = e.chip.FlashWrites()
 	e.console = e.console[:0]
 	e.consolePos = 0
-	e.running = true
+	e.running = start
+	if preservePause {
+		e.running = wasRunning && !paused
+		if !e.running && e.chip != nil && e.debugger != nil {
+			e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
+		}
+	}
 	return nil
 }
 
 // Load reads a firmware image and starts running it.
 func (e *Emu) Load(path string) error {
+	return e.loadFirmware(path, true, false)
+}
+
+// LoadPaused reads a firmware image without starting execution. Startup
+// breakpoints are installed through this path before the first instruction.
+func (e *Emu) LoadPaused(path string) error {
+	return e.loadFirmware(path, false, false)
+}
+
+func (e *Emu) loadFirmware(path string, start, preservePause bool) error {
 	img, err := firmware.Load(path)
 	if err == nil {
 		err = img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize)
@@ -1686,6 +1770,7 @@ func (e *Emu) Load(path string) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	wasRunning, paused := e.runStateLocked()
 	e.img = img
 	e.debugInfo = nil
 	if img.Format == "elf" {
@@ -1697,39 +1782,32 @@ func (e *Emu) Load(path string) error {
 		e.errText = err.Error()
 		return err
 	}
-	e.running = true
+	e.running = start
+	if preservePause {
+		e.running = wasRunning && !paused
+		if !e.running && e.chip != nil && e.debugger != nil {
+			e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
+		}
+	}
 	return nil
 }
 
+func (e *Emu) runStateLocked() (running, paused bool) {
+	running = e.running
+	paused = e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
+	return running, paused
+}
+
 // Reload reads the firmware again and restarts it, preserving an intentional
-// pause. It is the live-reload path used by --watch and the Build drawer.
+// pause. The state decision and image swap share one lock, so observers never
+// see a half-loaded machine temporarily running.
 func (e *Emu) Reload(path string) error {
-	e.mu.Lock()
-	wasRunning := e.running
-	paused := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
-	e.mu.Unlock()
-	if err := e.Load(path); err != nil {
-		return err
-	}
-	if !wasRunning || paused {
-		e.SetRunning(false)
-	}
-	return nil
+	return e.loadFirmware(path, false, true)
 }
 
 // ReloadFlash reloads a raw flash image, preserving an intentional pause.
 func (e *Emu) ReloadFlash(path string) error {
-	e.mu.Lock()
-	wasRunning := e.running
-	paused := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
-	e.mu.Unlock()
-	if err := e.LoadFlash(path); err != nil {
-		return err
-	}
-	if !wasRunning || paused {
-		e.SetRunning(false)
-	}
-	return nil
+	return e.loadFlash(path, false, true)
 }
 
 // RunFor synchronously advances the machine by a number of cycles. It is used
@@ -1739,11 +1817,13 @@ func (e *Emu) RunFor(cycles uint64) {
 	defer e.mu.Unlock()
 	e.debugger.Resume()
 	const chunk = 500_000
-	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped {
+	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped &&
+		!(e.frozen.triggered && e.trigger.Pause) {
 		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
 		e.advanceScheduledInputsLocked()
 		e.flushMIDILocked()
+		e.flushUSBInputLocked()
 		e.checkScopeTriggerLocked()
 		cycles -= n
 	}
@@ -1796,6 +1876,7 @@ func (e *Emu) loop() {
 			e.chip.Run(chunk)
 			e.advanceScheduledInputsLocked()
 			e.flushMIDILocked()
+			e.flushUSBInputLocked()
 			e.checkScopeTriggerLocked()
 			boots = e.chip.BootCount()
 			if e.debugger.Stopped {
@@ -2002,14 +2083,46 @@ func (e *Emu) Snapshot() MachineState {
 	return s
 }
 
-// SendInput forwards host bytes to the USB CDC OUT endpoint and UART0.
+// SendInput forwards host bytes to UART0 immediately and queues them for USB
+// CDC until the emulated host has enumerated and armed the OUT endpoint.
 func (e *Emu) SendInput(data []byte) {
+	if len(data) == 0 {
+		return
+	}
 	e.mu.Lock()
-	e.chip.SendUSBCDC(data)
+	defer e.mu.Unlock()
+	const maxQueued = 64 * 1024
+	if len(data) > maxQueued {
+		data = data[len(data)-maxQueued:]
+	}
+	e.usbInput = append(e.usbInput, data...)
+	if len(e.usbInput) > maxQueued {
+		e.usbInput = append([]byte(nil), e.usbInput[len(e.usbInput)-maxQueued:]...)
+	}
 	e.chip.SendUART(0, data)
-	e.addUSBEvent(e.chip.Cycles, false, data)
 	for _, b := range data {
 		e.addUART(0, e.chip.Cycles, true, b)
 	}
-	e.mu.Unlock()
+	e.flushUSBInputLocked()
+}
+
+// flushUSBInputLocked publishes queued console bytes in endpoint-sized packets.
+// The caller holds e.mu.
+func (e *Emu) flushUSBInputLocked() {
+	sent := 0
+	for sent < len(e.usbInput) && e.chip != nil && e.chip.USBCDCReady() {
+		n := min(64, len(e.usbInput)-sent)
+		packet := e.usbInput[sent : sent+n]
+		e.chip.SendUSBCDC(packet)
+		e.addUSBEvent(e.chip.Cycles, false, packet)
+		sent += n
+	}
+	if sent == 0 {
+		return
+	}
+	if sent == len(e.usbInput) {
+		e.usbInput = nil
+		return
+	}
+	e.usbInput = append([]byte(nil), e.usbInput[sent:]...)
 }

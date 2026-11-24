@@ -584,6 +584,18 @@ func (d *CH9120) stopNetworkLocked() {
 	d.txBuf = nil
 }
 
+// Close releases the module's host sockets and prevents later reconfiguration
+// from reopening them. The UI discards the module when leaving a board.
+func (d *CH9120) Close() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return
+	}
+	d.closed = true
+	d.stopNetworkLocked()
+}
+
 // Status describes the module for the UI.
 func (d *CH9120) Status() string {
 	d.mu.Lock()
