@@ -70,7 +70,7 @@ func initBuildDrawer(dir, cmd, source string) {
 	}
 	bp.buildDir, bp.buildCmd = dir, cmd
 	if source != "" {
-		bp.loadSource(source)
+		_ = bp.loadSource(source)
 	}
 	buildPanel = bp
 }

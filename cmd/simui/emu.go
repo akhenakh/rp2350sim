@@ -1818,7 +1818,7 @@ func (e *Emu) RunFor(cycles uint64) {
 	e.debugger.Resume()
 	const chunk = 500_000
 	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped &&
-		!(e.frozen.triggered && e.trigger.Pause) {
+		(!e.frozen.triggered || !e.trigger.Pause) {
 		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
 		e.advanceScheduledInputsLocked()
