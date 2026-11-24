@@ -34,7 +34,11 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	c.FPUActive = true
 	c.CONTROL |= 4
 	if hw1&0xFE00 == 0xEC00 {
-		if hw1&0xFF00 == 0xEC00 && hw1&0x0060 == 0x40 { // VMOV double <-> core pair
+		// VMOV Dm,Rt,Rt2 and VMOV Rt,Rt2,Dm are EC40..EC5F (U=0, P=0,
+		// W=0, D=1). Masking only 0xFF00 also matched the non-writeback
+		// VSTMIA/VLDMIA forms starting at an odd single register (ECC0/
+		// ECD0), which must go to vfpLoadStore.
+		if hw1&0xFFE0 == 0xEC40 {
 			c.vfpDoubleTransfer(hw1, hw2)
 			return
 		}

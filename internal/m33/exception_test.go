@@ -203,13 +203,15 @@ func TestSpecialRegisterEncodings(t *testing.T) {
 	}
 }
 
-// TestSVCInsideITBlockStacksITState checks that a conditional SVC still
-// stacks the IT state and starts the handler with a clean ITSTATE.
+// TestSVCInsideITBlockStacksITState checks that a conditional SVC stacks the
+// advanced IT state: SVC returns to the following instruction, so the next
+// instruction must still see its condition.
 func TestSVCInsideITBlockStacksITState(t *testing.T) {
 	bus := codeBus()
 	vectorAt(bus, 0x8000, 11, 0x9000)
-	put16(t, bus, 0, 0xBF08) // it eq
+	put16(t, bus, 0, 0xBF04) // itt eq (two instructions)
 	put16(t, bus, 2, 0xDF00) // svceq #0
+	put16(t, bus, 4, 0x2001) // moveq r0, #1
 	put16(t, bus, 0x9000, 0xE7FE)
 	c := New(bus)
 	c.Interrupts = &fakeIRQ{allow: true}
@@ -217,8 +219,8 @@ func TestSVCInsideITBlockStacksITState(t *testing.T) {
 	c.MSP = 0x7000
 	c.R[13] = c.MSP
 	c.APSR = flagZ
-	stepAt(t, c, 0) // IT
-	if c.itstate != 0x08 {
+	stepAt(t, c, 0) // ITT
+	if c.itstate != 0x04 {
 		t.Fatalf("ITSTATE = %#x", c.itstate)
 	}
 	c.R[15] = 2
@@ -231,11 +233,17 @@ func TestSVCInsideITBlockStacksITState(t *testing.T) {
 	}
 	xpsr := bus.Read32(c.MSP + 28)
 	if got := uint8((xpsr>>10&0x3F)<<2 | (xpsr>>25)&3); got != 0x08 {
-		t.Fatalf("stacked ITSTATE = %#x, want 8", got)
+		t.Fatalf("stacked ITSTATE = %#x, want 8 (the next instruction)", got)
 	}
 	c.exceptionReturn(0xFFFFFFF9)
 	if c.itstate != 0x08 {
 		t.Fatalf("restored ITSTATE = %#x", c.itstate)
+	}
+	c.R[0] = 0
+	c.R[15] = 4
+	c.Step() // moveq under the restored IT state
+	if c.R[0] != 1 || c.itstate != 0 {
+		t.Fatalf("post-SVC instruction: r0=%#x ITSTATE=%#x", c.R[0], c.itstate)
 	}
 }
 
@@ -281,8 +289,8 @@ func TestControlKeepsFPCA(t *testing.T) {
 	}
 }
 
-// TestExtendedFrameLayout checks the architectural FP frame: the FP area sits
-// below the basic frame and SP points at S0.
+// TestExtendedFrameLayout checks the architectural FP frame: the basic frame
+// is at SP and the FP area follows it at SP+32.
 func TestExtendedFrameLayout(t *testing.T) {
 	bus := codeBus()
 	vectorAt(bus, 0x8000, 15, 0x9000)
@@ -293,6 +301,7 @@ func TestExtendedFrameLayout(t *testing.T) {
 	c.R[0] = 0xCAFE
 	c.FPUActive = true
 	c.CONTROL = 4
+	c.FPCCR = fpcASPN // eager stacking for this layout check
 	c.S[0] = 0x3F800000
 	c.FPSCR = 0x10
 
@@ -467,5 +476,91 @@ func TestLazyFrameNotUsedReclaimsSpace(t *testing.T) {
 	}
 	if c.S[2] != 0x3E800000 {
 		t.Fatalf("S2 = %#x", c.S[2])
+	}
+}
+
+// TestFPCCRResetAndFPCAR checks the Cortex-M33 reset FPCCR defaults (ASPEN and
+// LSPEN set) and that a lazy entry publishes the FP area through FPCAR.
+func TestFPCCRResetAndFPCAR(t *testing.T) {
+	c := New(newTestBus())
+	if c.FPCCR != fpcASPN|fpcLSPEN {
+		t.Fatalf("reset FPCCR = %#x, want 0xc0000000", c.FPCCR)
+	}
+	bus := codeBus()
+	vectorAt(bus, 0x8000, 15, 0x9000)
+	put16(t, bus, 0x9000, 0xEE30, 0x0A00) // vadd.f32 s0, s0, s0
+	c = New(bus)
+	c.VTOR = 0x8000
+	c.MSP = 0x7000
+	c.R[13] = c.MSP
+	c.FPUActive = true
+	c.CONTROL = 4
+	c.S[0] = 0x3F800000
+	c.Exception(15)
+	if c.FPCAR != c.MSP+32 {
+		t.Fatalf("FPCAR = %#x, want %#x", c.FPCAR, c.MSP+32)
+	}
+	relocated := c.MSP + 0x200
+	c.SetFPCAR(relocated)
+	c.Step() // first FP instruction materialises the lazy frame
+	if got := bus.Read32(relocated); got != 0x3F800000 {
+		t.Fatalf("relocated FP area = %#x, want the pre-instruction S0", got)
+	}
+}
+
+// TestExtendedFrameWithPadding checks the combined alignment padding and FP
+// area layout, which Zephyr's ESF walk depends on.
+func TestExtendedFrameWithPadding(t *testing.T) {
+	bus := codeBus()
+	vectorAt(bus, 0x8000, 15, 0x9000)
+	c := New(bus)
+	c.VTOR = 0x8000
+	c.MSP = 0x7004 // 4 mod 8: a padding word is required
+	c.R[13] = c.MSP
+	c.FPUActive = true
+	c.CONTROL = 4
+	c.FPCCR = fpcASPN // eager
+	c.S[0] = 0x3F800000
+	c.Exception(15)
+	// 4 byte pad + 32 basic + 72 FP.
+	if c.MSP != 0x7000-104 {
+		t.Fatalf("frame SP = %#x, want %#x", c.MSP, 0x7000-104)
+	}
+	if got := bus.Read32(c.MSP + 32); got != 0x3F800000 {
+		t.Fatalf("S0 = %#x", got)
+	}
+	xpsr := bus.Read32(c.MSP + 28)
+	if xpsr&(1<<9) == 0 {
+		t.Fatal("stacked xPSR does not record the padding word")
+	}
+	c.exceptionReturn(0xFFFFFFE9)
+	if c.MSP != 0x7004 {
+		t.Fatalf("returned MSP = %#x, want 0x7004", c.MSP)
+	}
+}
+
+// TestFaultmaskSurvivesNMIReturn checks the ARMv8-M rule that a return from
+// NMI leaves FAULTMASK alone; other returns clear it.
+func TestFaultmaskSurvivesNMIReturn(t *testing.T) {
+	mk := func(ipsr uint32) (*CPU, *testBus) {
+		bus := codeBus()
+		c := New(bus)
+		c.MSP = 0x7000
+		c.R[13] = c.MSP
+		c.IPSR = ipsr
+		c.FAULTMASK = 1
+		bus.Write32(0x7000+24, 0x1235)
+		bus.Write32(0x7000+28, 0x01000000)
+		return c, bus
+	}
+	c, _ := mk(2)
+	c.exceptionReturn(0xFFFFFFF9)
+	if c.FAULTMASK != 1 {
+		t.Fatal("return from NMI cleared FAULTMASK")
+	}
+	c, _ = mk(15)
+	c.exceptionReturn(0xFFFFFFF9)
+	if c.FAULTMASK != 0 {
+		t.Fatal("return from SysTick did not clear FAULTMASK")
 	}
 }

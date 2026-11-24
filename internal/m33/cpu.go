@@ -97,6 +97,9 @@ type CPU struct {
 	// FPCCR is the FP context control register: ASPEN/LSPEN select automatic
 	// and lazy FP stacking. LSPACT marks a reserved lazy frame.
 	FPCCR uint32
+	// FPCAR locates the FP context area for lazy stacking. It is set on a
+	// lazy exception entry and is writable by software.
+	FPCAR uint32
 
 	Bus        Bus
 	Interrupts Interrupts
@@ -177,7 +180,9 @@ func (c *CPU) Reset() {
 		c.S[i] = 0
 	}
 	c.FPSCR = 0
-	c.FPCCR = fpcASPN // automatic FP stacking, eager by default
+	// Cortex-M33 reset values: automatic and lazy FP preservation enabled.
+	c.FPCCR = fpcASPN | fpcLSPEN
+	c.FPCAR = 0
 	c.FPUActive = false
 	c.lazyActive = false
 	c.lazySP = 0
@@ -491,9 +496,10 @@ func (c *CPU) Exception(n uint32) {
 	}
 	if lazy {
 		// The space is reserved now; the data is written on the handler's
-		// first FP instruction, which also clears EXC_RETURN bit 4.
+		// first FP instruction. FPCAR points at the FP area (SP+32).
 		c.lazyActive = true
 		c.lazySP = frameSP
+		c.FPCAR = fpBase &^ 7
 		c.FPCCR |= fpcLSPACT
 	}
 	// Handler mode always uses MSP.
@@ -549,6 +555,17 @@ func (c *CPU) flushLazy() {
 	c.FPCCR &^= fpcLSPACT
 }
 
+// SetFPCAR relocates the lazy FP context area. FPCAR is 8-byte aligned and
+// points at the first stacked FP register (SP+32 in the extended frame).
+func (c *CPU) SetFPCAR(v uint32) {
+	c.FPCAR = v &^ 7
+	if c.lazyActive {
+		if c.FPCAR >= 32 {
+			c.lazySP = c.FPCAR - 32
+		}
+	}
+}
+
 // SetFPCCR updates the FP context control register. Software may clear
 // LSPACT after taking over the FP save itself (Zephyr's PendSV does), which
 // cancels the hardware lazy trigger while keeping the reserved stack space.
@@ -567,6 +584,7 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 		c.Halt("exception return in thread mode")
 		return
 	}
+	returning := c.IPSR
 	if c.Interrupts != nil {
 		c.Interrupts.ReturnException(c.IPSR)
 	}
@@ -627,7 +645,10 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 	}
 	c.IPSR = xpsr & 0x1FF
 	c.itstate = it
-	c.FAULTMASK = 0
+	// FAULTMASK is cleared on exception return except when returning from NMI.
+	if returning != 2 {
+		c.FAULTMASK = 0
+	}
 	c.monitorValid = false
 	if toThread {
 		if usePSP {

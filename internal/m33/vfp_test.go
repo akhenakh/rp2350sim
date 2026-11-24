@@ -114,3 +114,53 @@ func TestVFPDoubleRegisterBounds(t *testing.T) {
 		t.Fatalf("halt reason = %q", cpu.HaltReason)
 	}
 }
+
+// TestVFPBlockOddStart guards the VMOV Dm,Rt,Rt2 dispatch mask: the
+// non-writeback VSTMIA/VLDMIA forms starting at an odd single register
+// (ECC0/ECD0) used to be mistaken for the double core transfer.
+func TestVFPBlockOddStart(t *testing.T) {
+	cpu := New(newExecBus())
+	cpu.R[0] = 0x20000500
+	cpu.S[1] = math.Float32bits(11)
+	cpu.S[2] = math.Float32bits(22)
+	cpu.exec32Coproc(0xECC0, 0x0A02) // vstmia r0, {s1-s2}
+	if cpu.Halted {
+		t.Fatalf("vstmia odd start halted: %s", cpu.HaltReason)
+	}
+	if cpu.R[0] != 0x20000500 {
+		t.Fatalf("non-writeback vstmia changed r0 to %#x", cpu.R[0])
+	}
+	if got := cpu.Bus.Read32(0x20000500); got != math.Float32bits(11) {
+		t.Fatalf("store s1 = %#x", got)
+	}
+	if got := cpu.Bus.Read32(0x20000504); got != math.Float32bits(22) {
+		t.Fatalf("store s2 = %#x", got)
+	}
+	cpu.S[1], cpu.S[2] = 0, 0
+	cpu.exec32Coproc(0xECD0, 0x0A02) // vldmia r0, {s1-s2}
+	if cpu.Halted {
+		t.Fatalf("vldmia odd start halted: %s", cpu.HaltReason)
+	}
+	if math.Float32frombits(cpu.S[1]) != 11 || math.Float32frombits(cpu.S[2]) != 22 {
+		t.Fatalf("load odd start = %v,%v", math.Float32frombits(cpu.S[1]), math.Float32frombits(cpu.S[2]))
+	}
+}
+
+// TestVFPVMOVDoubleStillWorks checks the corrected mask still matches
+// EC4x/EC5x.
+func TestVFPVMOVDoubleStillWorks(t *testing.T) {
+	cpu := New(newTestBus())
+	cpu.R[2], cpu.R[3] = 0x11223344, 0x55667788
+	cpu.exec32Coproc(0xEC43, 0x2B15) // vmov d5, r2, r3
+	if cpu.Halted {
+		t.Fatalf("vmov d5 halted: %s", cpu.HaltReason)
+	}
+	if cpu.S[10] != 0x11223344 || cpu.S[11] != 0x55667788 {
+		t.Fatalf("d5 = %#x %#x", cpu.S[10], cpu.S[11])
+	}
+	cpu.R[2], cpu.R[3] = 0, 0
+	cpu.exec32Coproc(0xEC53, 0x2B15) // vmov r2, r3, d5
+	if cpu.R[2] != 0x11223344 || cpu.R[3] != 0x55667788 {
+		t.Fatalf("vmov read = %#x %#x", cpu.R[2], cpu.R[3])
+	}
+}

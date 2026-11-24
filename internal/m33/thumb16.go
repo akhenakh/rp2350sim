@@ -240,6 +240,10 @@ func (c *CPU) exec16(pc uint32, hw uint16) {
 				c.Exception(3)
 				return
 			}
+			// SVC returns to the following instruction, so the stacked IT
+			// state must be the advanced one; Step's post-instruction advance
+			// is a no-op after Exception clears ITSTATE.
+			c.advanceIT()
 			c.Exception(11)
 			return
 		}

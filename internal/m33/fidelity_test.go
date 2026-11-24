@@ -272,3 +272,35 @@ func TestExceptionClearsMonitor(t *testing.T) {
 		t.Fatal("exception entry left the exclusive monitor armed")
 	}
 }
+
+// TestPostIndexedLdrPcKeepsReturnedSP covers the handler idiom that loads an
+// EXC_RETURN with a post-indexed PC load: the writeback must happen before
+// exception return replaces SP, or R13 is clobbered with the handler's MSP.
+func TestPostIndexedLdrPcKeepsReturnedSP(t *testing.T) {
+	bus := codeBus()
+	put16(t, bus, 0, 0xF85D, 0xFB04) // ldr.w pc, [sp], #4
+	c := New(bus)
+	c.IPSR = 11
+	c.MSP = 0x8000
+	bus.Write32(0x8000, 0xFFFFFFFD) // thread, PSP
+	c.PSP = 0x6000
+	c.R[13] = c.MSP
+	bus.Write32(0x6000+24, 0x1235) // PC with Thumb bit
+	bus.Write32(0x6000+28, 0x01000000)
+	stepAt(t, c, 0)
+	if t.Failed() {
+		return
+	}
+	if c.IPSR != 0 || c.CONTROL&2 == 0 {
+		t.Fatalf("IPSR=%d CONTROL=%d", c.IPSR, c.CONTROL)
+	}
+	if c.R[15] != 0x1234 {
+		t.Fatalf("PC = %#x", c.R[15])
+	}
+	if c.R[13] != 0x6020 || c.PSP != 0x6020 {
+		t.Fatalf("SP=%#x PSP=%#x, want 0x6020", c.R[13], c.PSP)
+	}
+	if c.MSP != 0x8004 {
+		t.Fatalf("MSP = %#x, want the post-indexed 0x8004", c.MSP)
+	}
+}

@@ -709,14 +709,26 @@ func (c *CPU) exec32LoadStore(hw1, hw2 uint16) {
 			if p {
 				addr = uint32(int32(base) + offset)
 			}
-			c.doLoadStore(op, signed, addr, rt)
-			if w {
+			writeback := func() {
+				if !w {
+					return
+				}
 				if p {
 					c.R[rn] = addr
 				} else {
 					c.R[rn] = uint32(int32(base) + offset)
 				}
 			}
+			// An LDR that writes PC can branch to an EXC_RETURN, which
+			// replaces SP. Write the base back first so the return's SP is
+			// not overwritten with the handler's old SP.
+			if rt == 15 && op == 5 {
+				writeback()
+				c.doLoadStore(op, signed, addr, rt)
+				return
+			}
+			c.doLoadStore(op, signed, addr, rt)
+			writeback()
 			return
 		}
 		// Register offset form (T2).
