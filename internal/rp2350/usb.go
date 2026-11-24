@@ -25,8 +25,18 @@ type usbBlock struct {
 	// Controller interrupt state (INTR), BUFF_STATUS latches and SIE_STATUS
 	// bits that firmware writes 1 to in order to clear.
 	intr       uint32
+	intf       uint32
 	buffStatus uint32
+	buffCPU    uint32
 	sieStatus  uint32
+	irqActive  bool
+
+	// The controller's double-buffer selector is private. Completion pending
+	// bits model BUFF_STATUS reasserting after a W1C when the other buffer has
+	// also completed.
+	bufSelect      [16][2]bool // endpoint, direction (IN=0, OUT=1)
+	buffPending    [16][2]uint8
+	bufCompletions [16][2]uint8
 
 	attached bool
 	addr     uint32
@@ -54,10 +64,6 @@ type usbBlock struct {
 	needStatus bool
 	statusSent bool
 
-	// outPID is the DATA0/DATA1 toggle the host sends on each OUT endpoint.
-	// Control EP0 data and status packets are always DATA1.
-	outPID [16]bool
-
 	collected []byte
 
 	// OnCDC receives bytes the firmware sends on the CDC data endpoint.
@@ -82,16 +88,24 @@ const (
 )
 
 const (
-	usbADDRENDP   = 0x000
-	usbMAINCTRL   = 0x040
-	usbSIECTRL    = 0x04C
-	usbSIESTATUS  = 0x050
-	usbBUFFSTATUS = 0x058
-	usbEPSTALLARM = 0x068
-	usbINTR       = 0x08C
-	usbINTE       = 0x090
-	usbINTF       = 0x094
-	usbINTS       = 0x098
+	usbADDRENDP    = 0x000
+	usbMAINCTRL    = 0x040
+	usbSIECTRL     = 0x04C
+	usbSIESTATUS   = 0x050
+	usbBUFFSTATUS  = 0x058
+	usbBUFFCPU     = 0x05C
+	usbEPSTALLARM  = 0x068
+	usbNAKPOLL     = 0x06C
+	usbMUXING      = 0x074
+	usbINTR        = 0x08C
+	usbINTE        = 0x090
+	usbINTF        = 0x094
+	usbINTS        = 0x098
+	usbIRQMask     = 0x00FFFFFF
+	usbMainPHYISO  = 1 << 2
+	usbSIEPullDown = 1 << 15
+	usbNAKPollRst  = 0x00100010
+	usbMuxToPHY    = 1
 )
 
 // Interrupt bits in INTR/INTE/INTS.
@@ -116,7 +130,9 @@ const (
 // DPRAM buffer-control bits for a direction's control register.
 const (
 	usbBufFull   = 0x8000
+	usbBufLast   = 0x4000
 	usbBufData1  = 0x2000
+	usbBufSel    = 0x1000
 	usbBufStall  = 0x0800
 	usbBufAvail  = 0x0400
 	usbBufLen    = 0x03FF
@@ -126,13 +142,19 @@ const (
 
 // DPRAM endpoint-control registers start at EP1 (EP0 has fixed buffers).
 const (
-	usbEpCtrlBase   = 0x008
-	usbEpCtrlEnable = 1 << 31
-	usbEpCtrlDouble = 1 << 30
-	usbEpCtrlAddr   = 0xFFFF
-	usbEpDataBase   = 0x180 // end of EP0 buffers, start of the shared pool
-	usbEp0Buf       = 0x100
-	usbDPSRAMSize   = 0x1000
+	usbEpCtrlBase    = 0x008
+	usbEpCtrlEnable  = 1 << 31
+	usbEpCtrlDouble  = 1 << 30
+	usbEpCtrlInt1Buf = 1 << 29
+	usbEpCtrlInt2Buf = 1 << 28
+	usbEpCtrlAddr    = 0xFFC0
+	usbEpDataBase    = 0x180 // end of EP0 buffers, start of the shared pool
+	usbEp0Buf        = 0x100
+	usbEp0Buf1       = 0x140
+	usbDPSRAMSize    = 0x1000
+	usbSIEEP0Double  = 1 << 30
+	usbSIEEP0Int1Buf = 1 << 29
+	usbSIEEP0Int2Buf = 1 << 28
 )
 
 // DPRAM layout helpers.
@@ -153,22 +175,51 @@ func usbBufDataOff(ep int, in bool) uint32 {
 	return off
 }
 
-// epDataAddr reads the buffer address the firmware programmed in EP_CONTROL.
+func usbEpCtrlOff(ep int, in bool) uint32 {
+	off := uint32(usbEpCtrlBase + (ep-1)*8)
+	if !in {
+		off += 4
+	}
+	return off
+}
+
+func usbDirection(in bool) int {
+	if in {
+		return 0
+	}
+	return 1
+}
+
+func usbBufferBit(ep int, in bool) uint32 {
+	return 1 << uint(ep*2+usbDirection(in))
+}
+
+func usbBufferHalf(ctrl uint32, buf int) uint32 {
+	if buf == 0 {
+		return ctrl & 0xFFFF
+	}
+	return ctrl >> usbBuf1Shift
+}
+
+func usbSetBufferHalf(ctrl uint32, buf int, half uint32) uint32 {
+	if buf == 0 {
+		return ctrl&0xFFFF0000 | half&0xFFFF
+	}
+	return ctrl&0xFFFF | half<<usbBuf1Shift
+}
+
+// epDataAddr reads the directional buffer address programmed in EP_CONTROL.
 // TinyUSB allocates endpoint buffers dynamically and exposes the DPRAM offset
 // there; TinyGo programs the same register with its fixed layout.
 func (u *usbBlock) epDataAddr(ep int, in bool) uint32 {
 	if ep == 0 {
 		return usbEp0Buf
 	}
-	reg := uint32(usbEpCtrlBase + (ep-1)*8)
-	if !in {
-		reg += 4
-	}
-	ctrl := u.word(reg)
-	// A single-buffered endpoint needs 64 bytes, a double-buffered one 128;
-	// the top 64 bytes of DPRAM are valid only in the single-buffer case.
+	ctrl := u.word(usbEpCtrlOff(ep, in))
+	// Bits 0..5 are ignored by the controller. Each direction has its own
+	// geometry: OUT may be double buffered even when IN is not, or vice versa.
 	need := uint32(64)
-	if u.epDouble(ep) {
+	if u.epDouble(ep, in) {
 		need = 128
 	}
 	if ctrl&usbEpCtrlEnable != 0 {
@@ -179,48 +230,87 @@ func (u *usbBlock) epDataAddr(ep int, in bool) uint32 {
 	return usbBufDataOff(ep, in)
 }
 
-// epDouble reports whether EP_CONTROL enables the endpoint's second buffer.
-func (u *usbBlock) epDouble(ep int) bool {
-	if ep == 0 {
-		return false
+func (u *usbBlock) bufferAddr(ep int, in bool, buf int) uint32 {
+	addr := u.epDataAddr(ep, in)
+	if buf == 1 {
+		if ep == 0 {
+			return usbEp0Buf1
+		}
+		return addr + 64
 	}
-	return u.word(uint32(usbEpCtrlBase+(ep-1)*8))&usbEpCtrlDouble != 0
+	return addr
 }
 
-// epInReady reports whether the firmware fully armed buffer 0 of an IN
-// endpoint. TinyUSB writes the control twice (first without AVAIL, then with
-// AVAIL after a settle delay); ACKing the intermediate write would send the
-// same packet twice. TinyGo sets both bits in one write.
+// epDouble reports whether this direction's EP_CONTROL enables its second
+// buffer. EP0 has no EP_CONTROL word; SIE_CTRL owns its geometry.
+func (u *usbBlock) epDouble(ep int, in bool) bool {
+	if ep == 0 {
+		return u.regs.regs[usbSIECTRL/4]&usbSIEEP0Double != 0
+	}
+	return u.word(usbEpCtrlOff(ep, in))&usbEpCtrlDouble != 0
+}
+
+func (u *usbBlock) selectedBuffer(ep int, in bool) int {
+	if u.epDouble(ep, in) && u.bufSelect[ep][usbDirection(in)] {
+		return 1
+	}
+	return 0
+}
+
+func (u *usbBlock) epIntEveryBuffer(ep int, in bool) bool {
+	if ep == 0 {
+		return u.regs.regs[usbSIECTRL/4]&usbSIEEP0Int1Buf != 0
+	}
+	return u.word(usbEpCtrlOff(ep, in))&usbEpCtrlInt1Buf != 0
+}
+
+func (u *usbBlock) epIntEveryTwoBuffers(ep int, in bool) bool {
+	if ep == 0 {
+		return u.regs.regs[usbSIECTRL/4]&usbSIEEP0Int2Buf != 0
+	}
+	return u.word(usbEpCtrlOff(ep, in))&usbEpCtrlInt2Buf != 0
+}
+
+// epInReady reports whether the selected IN buffer is fully armed. TinyUSB
+// writes the control twice (first without AVAIL, then with AVAIL after a settle
+// delay); ACKing the intermediate write would send the same packet twice.
 func (u *usbBlock) epInReady(ep int) bool {
 	ctrl := u.word(usbBufCtrlOff(ep))
-	if usbBufferReady(ctrl & 0xFFFF) {
-		return true
-	}
-	// A double-buffered endpoint may have only buffer 1 armed; do not wait
-	// for buffer 0 to be re-armed first.
-	return u.epDouble(ep) && usbBufferReady(ctrl>>usbBuf1Shift)
+	buf := u.selectedBuffer(ep, true)
+	return usbBufferReady(usbBufferHalf(ctrl, buf))
 }
 
 func usbBufferReady(ctrl uint32) bool {
 	return ctrl&usbBufFull != 0 && ctrl&usbBufAvail != 0
 }
 
-// epOutReady reports whether the device has armed buffer 0 of an OUT endpoint.
+// epOutReady reports whether the selected OUT buffer is armed and empty.
 func (u *usbBlock) epOutReady(ep int) bool {
 	ctrl := u.word(usbBufCtrlOffOut(ep))
-	return ctrl&usbBufAvail != 0 && ctrl&usbBufFull == 0
+	half := usbBufferHalf(ctrl, u.selectedBuffer(ep, false))
+	return half&usbBufAvail != 0 && half&usbBufFull == 0
 }
 
 func (u *usbBlock) setEndpointDefaults() {
 	u.cdcNotify, u.cdcIn, u.cdcOut = 1, 2, 2
 	u.midiIn, u.midiOut = 3, 3
-	u.outPID = [16]bool{}
 }
 
 func (u *usbBlock) reset() {
-	u.intr = 0
-	u.buffStatus = 0
+	u.intr, u.intf = 0, 0
+	u.buffStatus, u.buffCPU = 0, 0
 	u.sieStatus = 0
+	u.bufSelect = [16][2]bool{}
+	u.buffPending = [16][2]uint8{}
+	u.bufCompletions = [16][2]uint8{}
+	u.irqActive = false
+	if u.chip != nil {
+		u.chip.ClearPendingIRQ(usbIRQ)
+	}
+	u.regs.regs[usbMAINCTRL/4] = usbMainPHYISO
+	u.regs.regs[usbSIECTRL/4] = usbSIEPullDown
+	u.regs.regs[usbNAKPOLL/4] = usbNAKPollRst
+	u.regs.regs[usbMUXING/4] = usbMuxToPHY
 	u.attached = false
 	u.addr = 0
 	u.state = usbHostDetached
@@ -237,6 +327,8 @@ func (u *usbBlock) reset() {
 func newUSB(c *Chip) *usbBlock {
 	u := &usbBlock{chip: c}
 	u.dpram = newRegBlock(usbDPRAMBase, 0x1000)
+	u.dpram.noAliases = true
+	u.dpram.writeFn = u.writeDPRAM
 	u.regs = newRegBlock(usbRegsBase, 0x1000)
 	u.regs.readFn = u.read
 	u.regs.writeFn = u.write
@@ -254,10 +346,14 @@ func (u *usbBlock) read(c *Chip, off uint32) (uint32, bool) {
 		return u.sieStatus, true
 	case usbBUFFSTATUS:
 		return u.buffStatus, true
+	case usbBUFFCPU:
+		return u.buffCPU, true
 	case usbINTR:
 		return u.intr, true
+	case usbINTF:
+		return u.intf, true
 	case usbINTS:
-		return u.intr & u.inte(), true
+		return u.ints(), true
 	}
 	return 0, false
 }
@@ -276,17 +372,17 @@ func (u *usbBlock) write(c *Chip, off, v uint32) {
 		}
 		u.sieStatus &^= v & (usbSIESetupRec | usbSIEReset | usbSIEACKRec)
 	case usbBUFFSTATUS:
-		u.buffStatus &^= v
-		if u.buffStatus == 0 {
-			u.intr &^= usbINTBuffStatus
-		}
+		u.clearBuffStatus(v)
+	case usbINTF:
+		u.intf = v & usbIRQMask
 	case usbINTS:
-		u.intr &^= v
+		// Read-only status after masking and forcing.
 	case usbSIECTRL:
 		if v&usbSIEPullupEn != 0 && !u.attached {
 			u.attach()
 		}
 	}
+	u.syncIRQ(c)
 }
 
 // clear handles the +0x3000 CLR alias. The controller's status and interrupt
@@ -296,13 +392,30 @@ func (u *usbBlock) clear(c *Chip, off, v uint32) {
 	switch off {
 	case usbSIESTATUS, usbBUFFSTATUS, usbINTS:
 		u.write(c, off, v)
+	case usbINTF:
+		u.intf &^= v
 	default:
 		u.regs.regs[off/4] &^= v
 	}
+	u.syncIRQ(c)
 }
 
-func (u *usbBlock) inte() uint32  { return u.regs.regs[usbINTE/4] }
+func (u *usbBlock) inte() uint32  { return u.regs.regs[usbINTE/4] & usbIRQMask }
+func (u *usbBlock) ints() uint32  { return (u.intr | u.intf) & u.inte() }
 func (u *usbBlock) enabled() bool { return u.regs.regs[usbMAINCTRL/4]&usbMainEnable != 0 }
+
+func (u *usbBlock) syncIRQ(c *Chip) {
+	active := u.ints() != 0
+	if active == u.irqActive {
+		return
+	}
+	u.irqActive = active
+	if active {
+		c.PendIRQ(usbIRQ)
+		return
+	}
+	c.ClearPendingIRQ(usbIRQ)
+}
 
 // idleForSkip reports whether the USB host cannot be mid-handshake, so a
 // microsecond jump will not disturb it. Enumeration waits on tick counters;
@@ -325,6 +438,17 @@ func (u *usbBlock) attach() {
 func (u *usbBlock) word(off uint32) uint32 { return u.dpram.regs[off/4] }
 
 func (u *usbBlock) setWord(off, v uint32) { u.dpram.regs[off/4] = v }
+
+func (u *usbBlock) writeDPRAM(c *Chip, off, v uint32) {
+	if off < usbBufCtrlOff(0) || off >= 0x100 {
+		return
+	}
+	ep := int((off - usbBufCtrlOff(0)) / 8)
+	in := off&4 == 0
+	if u.word(off)&usbBufSel != 0 && u.epDouble(ep, in) {
+		u.bufSelect[ep][usbDirection(in)] = false
+	}
+}
 
 func (u *usbBlock) writeBytes(off uint32, b []byte) {
 	for i, v := range b {
@@ -350,13 +474,83 @@ func (u *usbBlock) readBytes(off uint32, n int) []byte {
 	return b
 }
 
-func (u *usbBlock) raiseBuff(bits uint32) {
-	u.buffStatus |= bits
-	u.intr |= usbINTBuffStatus
+func (u *usbBlock) syncBuffIRQ(c *Chip) {
+	if u.buffStatus != 0 {
+		u.intr |= usbINTBuffStatus
+	} else {
+		u.intr &^= usbINTBuffStatus
+	}
+	u.syncIRQ(c)
+}
+
+func (u *usbBlock) completeBuffer(ep int, in bool, buf int) {
+	dir := usbDirection(in)
+	if u.epDouble(ep, in) {
+		u.bufSelect[ep][dir] = buf == 0
+	} else {
+		u.bufSelect[ep][dir] = false
+	}
+	u.bufCompletions[ep][dir]++
+	bit := usbBufferBit(ep, in)
+	if u.epIntEveryBuffer(ep, in) {
+		u.buffPending[ep][dir] |= 1 << uint(buf)
+		if u.buffStatus&bit == 0 {
+			u.buffStatus |= bit
+			if buf == 1 {
+				u.buffCPU |= bit
+			} else {
+				u.buffCPU &^= bit
+			}
+		}
+	} else if u.epDouble(ep, in) && u.epIntEveryTwoBuffers(ep, in) && u.bufCompletions[ep][dir]&1 == 0 {
+		u.buffStatus |= bit
+		u.buffCPU &^= bit
+	}
+	u.syncBuffIRQ(u.chip)
+}
+
+func (u *usbBlock) clearBuffStatus(v uint32) {
+	for ep := range 16 {
+		for dir := range 2 {
+			in := dir == 0
+			bit := usbBufferBit(ep, in)
+			if v&bit == 0 || u.buffStatus&bit == 0 {
+				continue
+			}
+			u.buffStatus &^= bit
+			if u.epIntEveryBuffer(ep, in) {
+				handled := 0
+				if u.buffCPU&bit != 0 {
+					handled = 1
+				}
+				u.buffPending[ep][dir] &^= 1 << uint(handled)
+			}
+			if u.buffPending[ep][dir] != 0 {
+				u.buffStatus |= bit
+				if u.buffPending[ep][dir]&1 != 0 {
+					u.buffCPU &^= bit
+				} else {
+					u.buffCPU |= bit
+				}
+			} else {
+				u.buffCPU &^= bit
+			}
+		}
+	}
+	u.syncBuffIRQ(u.chip)
 }
 
 func (u *usbBlock) setSIEStatus(bits uint32) {
 	u.sieStatus |= bits
+	if bits&usbSIESetupRec != 0 {
+		u.intr |= usbINTSetupReq
+		u.regs.regs[usbEPSTALLARM/4] &^= 3
+		u.bufSelect[0] = [2]bool{}
+	}
+	if bits&usbSIEReset != 0 {
+		u.intr |= usbINTBusReset
+	}
+	u.syncIRQ(u.chip)
 }
 
 // setupRequest is one control transfer the emulated host performs.
@@ -395,9 +589,7 @@ var hostEnumeration = []setupRequest{
 
 // tick advances the host state machine. It is called once per chip cycle.
 func (u *usbBlock) tick(c *Chip) {
-	if u.attached && u.intr&u.inte() != 0 {
-		c.PendIRQ(usbIRQ)
-	}
+	u.syncIRQ(c)
 	if !u.attached || !u.enabled() {
 		return
 	}
@@ -405,7 +597,6 @@ func (u *usbBlock) tick(c *Chip) {
 	case usbHostResetWait:
 		if u.wait--; u.wait <= 0 {
 			u.setSIEStatus(usbSIEReset)
-			u.intr |= usbINTBusReset
 			u.state = usbHostAfterReset
 			u.wait = 100
 		}
@@ -438,7 +629,7 @@ func (u *usbBlock) beginStep() {
 	setup := req.bytes()
 	u.writeBytes(0, setup[:4])
 	u.writeBytes(4, setup[4:])
-	u.intr |= usbINTSetupReq
+	u.setSIEStatus(usbSIESetupRec)
 	u.outSent = false
 	u.needStatus = false
 	u.statusSent = false
@@ -452,36 +643,38 @@ func (u *usbBlock) beginStep() {
 		slog.Int("length", int(req.length)))
 }
 
-// takeIN consumes every armed IN buffer of an endpoint. It returns the payload
-// and acknowledges the packet to the controller: the hardware clears AVAIL and
-// FULL but preserves LENGTH, which TinyUSB reads to account the transfer.
-// Double-buffered endpoints (TinyUSB bulk IN) can hold two packets in the low
-// and high halves of the control word, with buffer 1 at +64.
+// takeIN consumes the selected IN buffer and performs the controller's status
+// writeback. LENGTH, LAST and the next DATA PID survive; controller-owned
+// FULL/AVAIL/SEL and STALL are cleared.
 func (u *usbBlock) takeIN(ep int) []byte {
-	ctrl := u.word(usbBufCtrlOff(ep))
-	low := ctrl & 0xFFFF
-	addr := u.epDataAddr(ep, true)
-	keep := low
-	var data []byte
-	if usbBufferReady(low) {
-		n := int(low & usbBufLen)
-		data = u.readBytes(addr, n)
-		keep = low &^ (usbBufFull | usbBufAvail)
+	if !u.epInReady(ep) {
+		return nil
 	}
-	if u.epDouble(ep) {
-		high := ctrl >> usbBuf1Shift
-		keepHigh := high
-		if usbBufferReady(high) {
-			n1 := int(high & usbBufLen)
-			data = append(data, u.readBytes(addr+64, n1)...)
-			keepHigh = high &^ (usbBufFull | usbBufAvail)
-		}
-		keep |= keepHigh << usbBuf1Shift
+	off := usbBufCtrlOff(ep)
+	ctrl := u.word(off)
+	buf := u.selectedBuffer(ep, true)
+	half := usbBufferHalf(ctrl, buf)
+	n := min(int(half&usbBufLen), 64)
+	data := u.readBytes(u.bufferAddr(ep, true, buf), n)
+	keep := half & (usbBufLen | usbBufLast)
+	if half&usbBufData1 == 0 {
+		keep |= usbBufData1
 	}
+	u.setWord(off, usbSetBufferHalf(ctrl, buf, keep))
+	u.completeBuffer(ep, true, buf)
 	u.chip.Logger.Debug("usb in packet", slog.Int("ep", ep), slog.Int("bytes", len(data)))
-	u.setWord(usbBufCtrlOff(ep), keep)
-	u.raiseBuff(1 << uint(ep*2))
 	return data
+}
+
+func (u *usbBlock) writeEP0OUT(n int, data1 bool) {
+	buf := u.selectedBuffer(0, false)
+	ctrl := u.word(usbBufCtrlOffOut(0))
+	half := uint32(n) | usbBufFull
+	if data1 {
+		half |= usbBufData1
+	}
+	u.setWord(usbBufCtrlOffOut(0), usbSetBufferHalf(ctrl, buf, half))
+	u.completeBuffer(0, false, buf)
 }
 
 func (u *usbBlock) pollControl() {
@@ -501,11 +694,11 @@ func (u *usbBlock) pollControl() {
 			if u.buffStatus&1 != 0 {
 				return
 			}
-			if ctrl&usbBufAvail == 0 || ctrl&usbBufFull != 0 {
+			half := usbBufferHalf(ctrl, u.selectedBuffer(0, false))
+			if half&usbBufAvail == 0 || half&usbBufFull != 0 {
 				return
 			}
-			u.setWord(usbBufCtrlOffOut(0), usbBufFull|usbBufData1)
-			u.raiseBuff(1 << 1) // EP0 OUT
+			u.writeEP0OUT(0, true)
 			u.statusSent = true
 			return
 		}
@@ -554,13 +747,14 @@ func (u *usbBlock) pollControl() {
 			return
 		}
 		ctrl := u.word(usbBufCtrlOffOut(0))
-		if ctrl&usbBufAvail == 0 || ctrl&usbBufFull != 0 {
+		buf := u.selectedBuffer(0, false)
+		half := usbBufferHalf(ctrl, buf)
+		if half&usbBufAvail == 0 || half&usbBufFull != 0 {
 			return
 		}
 		payload := make([]byte, req.length)
-		u.writeBytes(u.epDataAddr(0, false), payload)
-		u.setWord(usbBufCtrlOffOut(0), uint32(req.length)|usbBufData1|usbBufFull)
-		u.raiseBuff(1 << 1) // EP0 OUT
+		u.writeBytes(u.bufferAddr(0, false, buf), payload)
+		u.writeEP0OUT(int(req.length), true)
 		u.outSent = true
 		return
 	}
@@ -709,15 +903,17 @@ func (u *usbBlock) sendOUT(ep int, data []byte) bool {
 	if len(data) > 64 {
 		data = data[:64]
 	}
-	addr := u.epDataAddr(ep, false)
-	u.writeBytes(addr, data)
-	ctrl := uint32(len(data)) | usbBufFull
-	if u.outPID[ep] {
-		ctrl |= usbBufData1
+	buf := u.selectedBuffer(ep, false)
+	off := usbBufCtrlOffOut(ep)
+	ctrl := u.word(off)
+	armed := usbBufferHalf(ctrl, buf)
+	u.writeBytes(u.bufferAddr(ep, false, buf), data)
+	half := uint32(len(data)) | usbBufFull
+	if armed&usbBufData1 != 0 {
+		half |= usbBufData1
 	}
-	u.outPID[ep] = !u.outPID[ep]
-	u.setWord(usbBufCtrlOffOut(ep), ctrl)
-	u.raiseBuff(1 << uint(ep*2+1))
+	u.setWord(off, usbSetBufferHalf(ctrl, buf, half))
+	u.completeBuffer(ep, false, buf)
 	return true
 }
 

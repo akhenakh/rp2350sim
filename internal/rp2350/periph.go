@@ -24,6 +24,9 @@ type regBlock struct {
 	// resetFn, when set, restores any post-zero reset values and peripheral
 	// state after the register file has been cleared.
 	resetFn func(c *Chip)
+	// noAliases excludes memory-like blocks such as USB DPRAM from the RP2350
+	// register atomic aliases.
+	noAliases bool
 }
 
 func newRegBlock(base, size uint32) *regBlock {

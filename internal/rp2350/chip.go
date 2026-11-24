@@ -1159,7 +1159,7 @@ func (c *Chip) readMMIO(addr uint32) uint32 {
 // SET at +0x2000 and CLR at +0x3000 of a 4 KB register block.
 func (c *Chip) aliasTarget(addr uint32) (uint32, *regBlock, bool) {
 	for _, b := range c.regs {
-		if b.size > 0x1000 {
+		if b.noAliases || b.size > 0x1000 {
 			continue
 		}
 		if addr >= b.base+0x1000 && addr < b.base+0x1000+b.size {
