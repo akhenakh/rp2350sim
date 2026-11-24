@@ -205,6 +205,59 @@ func TestSDCardMultiBlockWrite(t *testing.T) {
 	}
 }
 
+func TestSDCardMultiBlockWriteRejectsInvalidStart(t *testing.T) {
+	card := sdFixture(t)
+	arg := uint32(card.Blocks())
+	if !card.highCap {
+		arg *= 512
+	}
+	if r := sdCommand(t, card, 25, arg); r != 0x20 {
+		t.Fatalf("invalid CMD25 response = %#x, want 0x20", r)
+	}
+	if card.multiWrite || card.writeToken {
+		t.Fatal("invalid CMD25 started a write")
+	}
+}
+
+func TestSDCardMultiBlockWritePastEnd(t *testing.T) {
+	card := sdFixture(t)
+	firstByte := card.image[0]
+	last := uint32(card.Blocks() - 1)
+	arg := last
+	if !card.highCap {
+		arg = last * 512
+	}
+	if r := sdCommand(t, card, 25, arg); r != 0 {
+		t.Fatalf("CMD25 = %#x", r)
+	}
+	card.Transfer(0xFC)
+	for i := range 512 {
+		card.Transfer(byte(i))
+	}
+	card.Transfer(0xFF)
+	card.Transfer(0xFF)
+	if r := card.Transfer(0xFF); r != 0x05 {
+		t.Fatalf("last-block data response = %#x, want 0x05", r)
+	}
+	for range 4 {
+		card.Transfer(0xFF)
+	}
+
+	card.Transfer(0xFC) // one block past the card
+	if tok := card.Transfer(0xFF); tok != 0x08 {
+		t.Fatalf("past-end write token = %#x, want data error 0x08", tok)
+	}
+	if card.multiWrite || card.writeToken {
+		t.Fatal("past-end write continued")
+	}
+	if card.image[0] != firstByte {
+		t.Fatal("past-end block wrapped to the start of the card")
+	}
+	if got := card.image[int(last)*512]; got != 0 {
+		t.Fatalf("last block was not written: %#x", got)
+	}
+}
+
 // TestSDCardMultiReadPastEnd checks that a read past the last block stops
 // with an SPI data error token instead of an endless 0xFF stream.
 func TestSDCardMultiReadPastEnd(t *testing.T) {

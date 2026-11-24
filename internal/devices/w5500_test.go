@@ -57,6 +57,19 @@ func TestW5500Registers(t *testing.T) {
 	}
 }
 
+func TestW5500ReservedSocketRegisters(t *testing.T) {
+	w, c := newTestW5500()
+	for off := uint16(0x30); off < 0x40; off++ {
+		if got := w.readReg(c, off, 1, 1); got[0] != 0 {
+			t.Fatalf("reserved read %#x = %#x", off, got[0])
+		}
+		w.writeReg(c, off, 1, 0xaa)
+	}
+	if got := w.readReg(c, w5SockMode, 1, 1); got[0] != 0 {
+		t.Fatalf("reserved writes changed socket mode to %#x", got[0])
+	}
+}
+
 func TestW5500SocketOpenClose(t *testing.T) {
 	w, c := newTestW5500()
 	// UDP socket: mode 2, then OPEN.

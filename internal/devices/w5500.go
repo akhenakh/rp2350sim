@@ -309,6 +309,9 @@ func (w *W5500) sockRXSize(n int) int {
 }
 
 func (w *W5500) readSockReg(n int, off uint16) byte {
+	if n < 0 || n >= len(w.socks) || w.socks[n] == nil || int(off) >= len(w.sockReg[n]) {
+		return 0
+	}
 	s := w.socks[n]
 	switch off {
 	case w5SockStatus:
@@ -336,6 +339,9 @@ func (w *W5500) readSockReg(n int, off uint16) byte {
 }
 
 func (w *W5500) writeSockReg(n int, off uint16, b byte) {
+	if n < 0 || n >= len(w.socks) || w.socks[n] == nil || int(off) >= len(w.sockReg[n]) {
+		return
+	}
 	s := w.socks[n]
 	w.sockReg[n][off] = b
 	switch off {
@@ -382,6 +388,9 @@ func (w *W5500) writeSockReg(n int, off uint16, b byte) {
 
 // readUint16Sock reads a 16-bit socket register.
 func (w *W5500) readUint16Sock(n int, off uint16) uint16 {
+	if n < 0 || n >= len(w.socks) || w.socks[n] == nil || int(off)+1 >= len(w.sockReg[n]) {
+		return 0
+	}
 	s := w.socks[n]
 	switch off {
 	case w5SockTXFreeSize:

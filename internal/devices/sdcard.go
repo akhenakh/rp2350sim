@@ -286,6 +286,10 @@ func (s *SDCard) command() {
 	case 59: // CRC_ON_OFF
 		s.r1(0)
 	case 25: // WRITE_MULTIPLE_BLOCK
+		if !s.checkAddr(arg) {
+			s.r1(0x20)
+			return
+		}
 		s.r1(0)
 		s.multiAddr = s.blockAddr(arg)
 		s.multiWrite = true
@@ -298,7 +302,11 @@ func (s *SDCard) command() {
 }
 
 func (s *SDCard) checkAddr(arg uint32) bool {
-	return int(s.blockAddr(arg)) < s.Blocks()
+	return s.checkBlock(s.blockAddr(arg))
+}
+
+func (s *SDCard) checkBlock(block uint32) bool {
+	return int(block) < s.Blocks()
 }
 
 func (s *SDCard) blockAddr(arg uint32) uint32 {
@@ -333,14 +341,23 @@ func (s *SDCard) queueData(data []byte) {
 // and end on 0xFD.
 func (s *SDCard) writeData(tx byte) byte {
 	if s.writeBuf == nil {
-		switch {
-		case s.multiWrite && tx == 0xFD: // stop transmission token
-			s.multiWrite = false
-			s.writeToken = false
-			return 0xFF
-		case s.multiWrite && tx != 0xFC:
-			return 0xFF // wait for the next block token
-		case !s.multiWrite && tx != 0xFE:
+		if s.multiWrite {
+			switch tx {
+			case 0xFD: // stop transmission token
+				s.multiWrite = false
+				s.writeToken = false
+				return 0xFF
+			case 0xFC:
+				if !s.checkBlock(s.multiAddr) {
+					s.multiWrite = false
+					s.writeToken = false
+					s.out = append(s.out, 0x08, 0xFF) // out of range
+					return 0xFF
+				}
+			default:
+				return 0xFF // wait for the next block token
+			}
+		} else if tx != 0xFE {
 			return 0xFF
 		}
 		s.writeBuf = make([]byte, 0, 512)
@@ -350,11 +367,16 @@ func (s *SDCard) writeData(tx byte) byte {
 	if len(s.writeBuf) < 512 {
 		s.writeBuf = append(s.writeBuf, tx)
 		if len(s.writeBuf) == 512 {
-			start := int(s.multiAddr) * 512
-			if start+512 <= len(s.image) {
-				copy(s.image[start:start+512], s.writeBuf)
-				s.markDirty()
+			if !s.checkBlock(s.multiAddr) {
+				s.multiWrite = false
+				s.writeToken = false
+				s.writeBuf = nil
+				s.out = append(s.out, 0x08, 0xFF) // out of range
+				return 0xFF
 			}
+			start := int(s.multiAddr) * 512
+			copy(s.image[start:start+512], s.writeBuf)
+			s.markDirty()
 		}
 		return 0xFF
 	}
