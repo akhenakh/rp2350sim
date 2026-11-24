@@ -1337,7 +1337,29 @@ func replicatedMMIO(v uint32, size int) uint32 {
 	return v * 0x00010001
 }
 
+// narrowZeroFill reports whether addr selects the RP2350 +0x4000 alias and
+// returns the register address it targets. Bit 14 is a narrow-write qualifier
+// on APB/AHB (datasheet 2.1.5): the addressed lanes carry the value and the
+// remaining lanes are driven to zero instead of being replicated across the
+// 32-bit data bus.
+func (c *Chip) narrowZeroFill(addr uint32) (uint32, bool) {
+	if addr < PeriphBase || addr >= 0x60000000 || addr&0x4000 == 0 {
+		return addr, false
+	}
+	norm := addr &^ 0x4000
+	if c.regBlockFor(norm) != nil {
+		return norm, true
+	}
+	if _, _, ok := c.aliasTarget(norm); ok {
+		return norm, true
+	}
+	// Not a register alias. Keep the address so genuinely bit-14 targets such
+	// as the OTP raw data view still decode, but zero-fill the data bus.
+	return addr, true
+}
+
 func (c *Chip) writeMMIONarrow(addr uint32, v uint32, size int) {
+	addr, zeroFill := c.narrowZeroFill(addr)
 	shift := (addr & 3) * 8
 	if size == 2 {
 		shift = (addr & 2) * 8
@@ -1346,14 +1368,12 @@ func (c *Chip) writeMMIONarrow(addr uint32, v uint32, size int) {
 	if size == 2 {
 		mask = uint32(0xFFFF) << shift
 	}
-
-	// SIO and SCS registers retain lane-oriented sub-word writes. In
-	// particular CMSIS programs NVIC priority bytes individually. Their merge
-	// reads are side-effect-free so FIFO/spinlock state cannot be consumed.
+	// RP2350 IO registers sample the whole write bus, so SIO narrow writes
+	// broadcast replicated data just like APB/AHB ones. CMSIS still needs the
+	// lane-oriented merge for SCS (NVIC priority bytes).
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
 		off := (addr - SIOBase) &^ 3
-		old := c.sio.peek(c, off)
-		c.sio.write(c, off, old&^mask|v<<shift)
+		c.sio.write(c, off, replicatedMMIO(v, size))
 		return
 	}
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
@@ -1362,6 +1382,10 @@ func (c *Chip) writeMMIONarrow(addr uint32, v uint32, size int) {
 		old := n.peek(off)
 		n.write(off, old&^mask|v<<shift)
 		return
+	}
+	word := replicatedMMIO(v, size)
+	if zeroFill {
+		word = v << shift
 	}
 	if c.writeBootRAMAlias(addr, v, size) {
 		return
@@ -1376,11 +1400,10 @@ func (c *Chip) writeMMIONarrow(addr uint32, v uint32, size int) {
 			b.write(c, off, old&^mask|v<<shift)
 			return
 		}
-		b.write(c, off, replicatedMMIO(v, size))
+		b.write(c, off, word)
 		return
 	}
 	if off, b, ok := c.aliasTarget(addr); ok {
-		word := replicatedMMIO(v, size)
 		switch {
 		case addr >= b.base+0x1000 && addr < b.base+0x2000: // XOR
 			b.write(c, off, b.peek(off)^word)
