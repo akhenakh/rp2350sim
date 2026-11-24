@@ -17,15 +17,39 @@ func (f *fakeWire) ReadAck() (byte, bool) {
 
 func TestI2CDataNACKAborts(t *testing.T) {
 	c := New()
-	c.AttachI2C(0, 0x50, &fakeWire{writeAck: false})
-	i := c.i2c[0]
-	i.addr = 0x50
-	i.dataCmd(0x5a)
-	if i.raw&i2cTXAbrt == 0 {
+	dev := &wireRecorder{acks: []bool{true, false}}
+	c.AttachI2C(0, 0x50, dev)
+	const base = 0x40090000
+	stops := 0
+	c.OnI2C = func(_ int, _ uint64, event string, _ uint8, _ byte, _ bool) {
+		if event == "stop" {
+			stops++
+		}
+	}
+	c.Write32(base+i2cENABLE, 1)
+	c.Write32(base+i2cTAR, 0x50)
+	c.Write32(base+i2cDATA, 0x5a) // address phase ACK
+	c.Write32(base+i2cDATA, 0x5b) // data phase NACK
+	if c.Read32(base+i2cRAWINTR)&i2cTXAbrt == 0 {
 		t.Fatal("TX_ABRT not raised on a data NAK")
 	}
-	if got := c.Read32(c.i2c[0].block.base + i2cTXABRTSRC); got != i2cABRTTXDataNoAck {
+	if got := c.Read32(base + i2cTXABRTSRC); got != i2cABRTTXDataNoAck {
 		t.Fatalf("TX_ABRT_SOURCE = %#x, want %#x", got, i2cABRTTXDataNoAck)
+	}
+	if stops != 1 || dev.ends != 1 {
+		t.Fatalf("NACK completion: stops=%d EndTransaction=%d, want one each", stops, dev.ends)
+	}
+	if !c.i2c[0].idle {
+		t.Fatal("controller not idle after NACK abort")
+	}
+	c.Write32(base+i2cDATA, 0x5c)
+	if dev.writeCalls != 2 {
+		t.Fatal("command was accepted before CLR_TX_ABRT")
+	}
+	c.Read32(base + 0x54)
+	c.Write32(base+i2cDATA, 0x5c)
+	if dev.writeCalls != 3 {
+		t.Fatal("command was not accepted after CLR_TX_ABRT")
 	}
 }
 
@@ -33,8 +57,11 @@ func TestI2CReadWireNAKAborts(t *testing.T) {
 	c := New()
 	c.AttachI2C(0, 0x50, &fakeWire{readAck: false})
 	i := c.i2c[0]
+	i.enable = true
 	i.addr = 0x50
-	i.dataCmd(1 << 8) // read
+	i.idle = false
+	i.addrPhase = false
+	i.dataCmd(1 << 8) // read data phase
 	if i.raw&i2cTXAbrt == 0 {
 		t.Fatal("TX_ABRT not raised on a read NAK")
 	}
@@ -49,7 +76,9 @@ func TestI2CReadWireNAKAborts(t *testing.T) {
 func TestI2CAddressNACKReason(t *testing.T) {
 	c := New()
 	i := c.i2c[0]
+	i.enable = true
 	i.addr = 0x51
+	i.addrPhase = true
 	i.dataCmd(1 << 8) // read from an empty address
 	if got := c.Read32(c.i2c[0].block.base + i2cTXABRTSRC); got != i2cABRT7BAddrNoAck {
 		t.Fatalf("TX_ABRT_SOURCE = %#x, want ABRT_7B_ADDR_NOACK (%#x)", got, i2cABRT7BAddrNoAck)
@@ -60,7 +89,9 @@ func TestI2CWireReadData(t *testing.T) {
 	c := New()
 	c.AttachI2C(0, 0x50, &fakeWire{readByte: 0x12, readAck: true})
 	i := c.i2c[0]
+	i.enable = true
 	i.addr = 0x50
+	i.addrPhase = false
 	i.dataCmd(1 << 8)
 	if i.raw&i2cTXAbrt != 0 {
 		t.Fatal("unexpected abort on a valid read")
