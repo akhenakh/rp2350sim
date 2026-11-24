@@ -929,6 +929,15 @@ func (e *Emu) resetChip() {
 	e.imu = nil
 	e.sd = nil
 	e.blPin = -1
+	if e.ch9120 != nil {
+		e.ch9120.Close()
+	}
+	if e.w5500 != nil {
+		e.w5500.Close()
+	}
+	if e.w6300 != nil {
+		e.w6300.Close()
+	}
 	e.ch9120 = nil
 	e.ethKind = ""
 	e.w5500 = nil

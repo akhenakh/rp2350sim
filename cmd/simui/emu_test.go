@@ -3,9 +3,12 @@ package main
 import (
 	"debug/elf"
 	"encoding/binary"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
@@ -67,6 +70,58 @@ func TestLoadFirmwareMissingFlashBackingStartsErased(t *testing.T) {
 	if info.Size() != rp2350.FlashSize {
 		t.Fatalf("saved flash size = %d, want %d", info.Size(), rp2350.FlashSize)
 	}
+}
+
+func TestEmuResetClosesEthernetListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	addr := "127.0.0.1:" + strconv.Itoa(port)
+
+	e := newTestEmu()
+	e.SetBoard(&BoardDef{ID: "eth", Ethernet: &EthDevice{Kind: "w5500", SPI: 0, CS: 17}})
+	old := e.w5500
+	if old == nil {
+		t.Fatal("W5500 was not attached")
+	}
+	c := e.chip
+	c.Pins.SetExternal(17, false)
+	write := func(off byte, data ...byte) {
+		frame := append([]byte{0, off, 0x0c}, data...) // socket 0 registers, write
+		for _, b := range frame {
+			old.Transfer(b)
+		}
+		c.Pins.SetExternal(17, true)
+		old.Tick()
+		c.Pins.SetExternal(17, false)
+	}
+	write(0x00, 1) // TCP
+	write(0x04, byte(port>>8), byte(port))
+	write(0x01, 2) // LISTEN
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		sockets := old.NetworkInfo().Sockets
+		if len(sockets) == 1 && sockets[0].HostAddr != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("W5500 listener did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	e.Reset()
+	if e.w5500 == old || e.w5500 == nil {
+		t.Fatal("reset did not replace the W5500")
+	}
+	ln, err = net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("reset left the W5500 port bound: %v", err)
+	}
+	_ = ln.Close()
 }
 
 func newTestEmu() *Emu {

@@ -1,11 +1,13 @@
 package devices
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
@@ -28,8 +30,15 @@ type CH9120 struct {
 	// OnByte, when non-nil, observes every byte written by the MCU (for the
 	// logic analyzer).
 	OnByte func(byte)
+	// WriteTimeout bounds transparent socket writes. Zero uses 2 seconds.
+	WriteTimeout time.Duration
 
-	mu sync.Mutex
+	mu        sync.Mutex
+	closed    bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 
 	// Configuration (factory defaults from the datasheet).
 	mode       byte // 0 TCP server, 1 TCP client, 2 UDP server, 3 UDP client
@@ -72,15 +81,52 @@ const (
 
 // NewCH9120 creates a module attached to the given UART and control pins.
 func NewCH9120(chip *rp2350.Chip, uart, cfg0, rst, tcpcs int) *CH9120 {
+	ctx, cancel := context.WithCancel(context.Background())
 	d := &CH9120{
-		Chip:  chip,
-		UART:  uart,
-		CFG0:  cfg0,
-		RST:   rst,
-		TCPCS: tcpcs,
+		Chip:   chip,
+		UART:   uart,
+		CFG0:   cfg0,
+		RST:    rst,
+		TCPCS:  tcpcs,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 	d.setDefaults()
 	return d
+}
+
+// Close cancels pending dials, closes the socket and joins network goroutines.
+func (d *CH9120) Close() {
+	d.closeOnce.Do(func() {
+		d.mu.Lock()
+		d.closed = true
+		if d.cancel != nil {
+			d.cancel()
+		}
+		d.stopNetworkLocked()
+		d.mu.Unlock()
+		d.wg.Wait()
+	})
+}
+
+func (d *CH9120) startNetworkLocked(fn func()) bool {
+	if d.closed {
+		return false
+	}
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		fn()
+	}()
+	return true
+}
+
+func (d *CH9120) dialContext(network, addr string) (net.Conn, error) {
+	ctx := d.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, addr)
 }
 
 func (d *CH9120) setDefaults() {
@@ -120,6 +166,10 @@ func (d *CH9120) ReceiveByte(b byte) {
 		d.OnByte(b)
 	}
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
 	if d.inConfigMode() {
 		d.frame = append(d.frame, b)
 		for len(d.frame) >= 3 {
@@ -291,6 +341,10 @@ func (d *CH9120) Tick() {
 	d.nextTick = now + 150_000 // 1 ms at 150 MHz
 
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
 	rst := d.RST >= 0 && !d.Chip.Pins.Level(d.RST)
 	if rst && !d.lastRST {
 		d.stopNetworkLocked()
@@ -303,14 +357,16 @@ func (d *CH9120) Tick() {
 		data := d.txBuf
 		d.txBuf = nil
 		if d.udp != nil && d.udpPeer != nil {
-			if n, err := d.udp.WriteToUDP(data, d.udpPeer); err != nil {
+			if n, err := writeUDPNet(d.udp, data, d.udpPeer, d.WriteTimeout); err != nil {
 				loggerOr(d.Logger).Debug("ch9120 udp send failed", slog.Any("err", err))
+				d.stopNetworkLocked()
 			} else {
 				loggerOr(d.Logger).Debug("ch9120 tx", slog.String("proto", "udp"), slog.Int("bytes", n))
 			}
 		} else if d.conn != nil {
-			if n, err := d.conn.Write(data); err != nil {
+			if n, err := writeNet(d.conn, data, d.WriteTimeout); err != nil {
 				loggerOr(d.Logger).Debug("ch9120 tcp send failed", slog.Any("err", err))
+				d.stopNetworkLocked()
 			} else {
 				loggerOr(d.Logger).Debug("ch9120 tx", slog.String("proto", "tcp"), slog.Int("bytes", n))
 			}
@@ -328,6 +384,9 @@ func (d *CH9120) Tick() {
 // applyLocked (re)opens the socket using the current configuration. The
 // network work runs in goroutines so the emulator never blocks.
 func (d *CH9120) applyLocked() {
+	if d.closed {
+		return
+	}
 	d.stopNetworkLocked()
 	gen := d.gen
 	addr := net.JoinHostPort(net.IP(d.targetIP[:]).String(), strconv.Itoa(int(d.targetPort)))
@@ -338,13 +397,13 @@ func (d *CH9120) applyLocked() {
 
 	switch mode {
 	case CH9120TCPServer:
-		go d.serveTCP(gen, port)
+		d.startNetworkLocked(func() { d.serveTCP(gen, port) })
 	case CH9120TCPClient:
-		go d.dialTCP(gen, addr)
+		d.startNetworkLocked(func() { d.dialTCP(gen, addr) })
 	case CH9120UDPServer:
-		go d.serveUDP(gen, port)
+		d.startNetworkLocked(func() { d.serveUDP(gen, port) })
 	case CH9120UDPClient:
-		go d.dialUDP(gen, addr)
+		d.startNetworkLocked(func() { d.dialUDP(gen, addr) })
 	}
 }
 
@@ -355,7 +414,7 @@ func (d *CH9120) serveTCP(gen uint64, port uint16) {
 		return
 	}
 	d.mu.Lock()
-	if d.gen != gen {
+	if d.closed || d.gen != gen {
 		d.mu.Unlock()
 		_ = ln.Close()
 		return
@@ -369,7 +428,7 @@ func (d *CH9120) serveTCP(gen uint64, port uint16) {
 			return
 		}
 		d.mu.Lock()
-		if d.gen != gen {
+		if d.closed || d.gen != gen {
 			d.mu.Unlock()
 			_ = conn.Close()
 			return
@@ -386,13 +445,13 @@ func (d *CH9120) serveTCP(gen uint64, port uint16) {
 }
 
 func (d *CH9120) dialTCP(gen uint64, addr string) {
-	conn, err := net.Dial("tcp", addr)
+	conn, err := d.dialContext("tcp", addr)
 	if err != nil {
 		loggerOr(d.Logger).Debug("ch9120 dial failed", slog.String("target", addr), slog.Any("err", err))
 		return
 	}
 	d.mu.Lock()
-	if d.gen != gen {
+	if d.closed || d.gen != gen {
 		d.mu.Unlock()
 		_ = conn.Close()
 		return
@@ -410,7 +469,7 @@ func (d *CH9120) readTCP(gen uint64, conn net.Conn) {
 		n, err := conn.Read(buf)
 		if n > 0 {
 			d.mu.Lock()
-			if d.gen == gen {
+			if !d.closed && d.gen == gen {
 				d.send(append([]byte(nil), buf[:n]...))
 				loggerOr(d.Logger).Debug("ch9120 rx", slog.String("proto", "tcp"), slog.Int("bytes", n))
 			}
@@ -418,7 +477,7 @@ func (d *CH9120) readTCP(gen uint64, conn net.Conn) {
 		}
 		if err != nil {
 			d.mu.Lock()
-			if d.gen == gen {
+			if !d.closed && d.gen == gen {
 				d.connected = false
 				d.conn = nil
 			}
@@ -440,7 +499,7 @@ func (d *CH9120) serveUDP(gen uint64, port uint16) {
 		return
 	}
 	d.mu.Lock()
-	if d.gen != gen {
+	if d.closed || d.gen != gen {
 		d.mu.Unlock()
 		_ = conn.Close()
 		return
@@ -454,7 +513,7 @@ func (d *CH9120) serveUDP(gen uint64, port uint16) {
 		n, peer, err := conn.ReadFromUDP(buf)
 		if n > 0 {
 			d.mu.Lock()
-			if d.gen == gen {
+			if !d.closed && d.gen == gen {
 				d.udpPeer = peer
 				d.send(append([]byte(nil), buf[:n]...))
 				loggerOr(d.Logger).Debug("ch9120 rx", slog.String("proto", "udp"), slog.Int("bytes", n))
@@ -472,18 +531,23 @@ func (d *CH9120) dialUDP(gen uint64, addr string) {
 	if err != nil {
 		return
 	}
-	conn, err := net.DialUDP("udp", nil, raddr)
+	conn, err := d.dialContext("udp", addr)
 	if err != nil {
 		loggerOr(d.Logger).Debug("ch9120 udp dial failed", slog.String("target", addr), slog.Any("err", err))
 		return
 	}
+	uc, ok := conn.(*net.UDPConn)
+	if !ok {
+		_ = conn.Close()
+		return
+	}
 	d.mu.Lock()
-	if d.gen != gen {
+	if d.closed || d.gen != gen {
 		d.mu.Unlock()
 		_ = conn.Close()
 		return
 	}
-	d.udp = conn
+	d.udp = uc
 	d.udpPeer = raddr
 	d.connected = true
 	d.mu.Unlock()
@@ -493,7 +557,7 @@ func (d *CH9120) dialUDP(gen uint64, addr string) {
 		n, err := conn.Read(buf)
 		if n > 0 {
 			d.mu.Lock()
-			if d.gen == gen {
+			if !d.closed && d.gen == gen {
 				d.send(append([]byte(nil), buf[:n]...))
 				loggerOr(d.Logger).Debug("ch9120 rx", slog.String("proto", "udp"), slog.Int("bytes", n))
 			}

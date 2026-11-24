@@ -98,6 +98,15 @@ func TestW6300BufferPointers(t *testing.T) {
 	}
 }
 
+func TestW6300CloseClearsPendingTx(t *testing.T) {
+	w := NewW6300(rp2350.New(), 5)
+	w.socks[0].pendingTx = []byte{1, 2, 3}
+	w.closeSocket(0)
+	if w.socks[0].pendingTx != nil {
+		t.Fatalf("pendingTx after close = %v", w.socks[0].pendingTx)
+	}
+}
+
 func TestW6300CloseLazyUDP(t *testing.T) {
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

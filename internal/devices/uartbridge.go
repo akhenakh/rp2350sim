@@ -21,15 +21,20 @@ type UARTBridge struct {
 
 	// Logger, when non-nil, reports listener and client events.
 	Logger *slog.Logger
+	// WriteTimeout bounds writes to a non-reading client. Zero uses 2 seconds.
+	WriteTimeout time.Duration
 
-	mu     sync.Mutex
-	ln     net.Listener
-	conn   net.Conn
-	client string
+	lifecycle sync.Mutex
+	mu        sync.Mutex
+	ln        net.Listener
+	conn      net.Conn
+	client    string
+	started   bool
+	closed    bool
 
-	tx        chan []byte
-	done      chan struct{}
-	closeOnce sync.Once
+	tx   chan []byte
+	done chan struct{}
+	wg   sync.WaitGroup
 }
 
 // NewUARTBridge creates a bridge for UART 0 or 1 on the given TCP address.
@@ -39,7 +44,13 @@ func NewUARTBridge(chip *rp2350.Chip, uart int, listen string) *UARTBridge {
 	if listen == "" {
 		listen = "127.0.0.1:0"
 	}
-	return &UARTBridge{Chip: chip, UART: uart, ListenAddr: listen}
+	return &UARTBridge{
+		Chip:       chip,
+		UART:       uart,
+		ListenAddr: listen,
+		tx:         make(chan []byte, 4096),
+		done:       make(chan struct{}),
+	}
 }
 
 // Start opens the listener and the pump goroutines.
@@ -47,36 +58,75 @@ func (b *UARTBridge) Start() error {
 	if b.UART < 0 || b.UART > 1 {
 		return fmt.Errorf("uart bridge: invalid UART %d", b.UART)
 	}
+	b.lifecycle.Lock()
+	defer b.lifecycle.Unlock()
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return fmt.Errorf("uart bridge: closed")
+	}
+	if b.started {
+		b.mu.Unlock()
+		return fmt.Errorf("uart bridge: already started")
+	}
+	if b.tx == nil {
+		b.tx = make(chan []byte, 4096)
+	}
+	if b.done == nil {
+		b.done = make(chan struct{})
+	}
+	b.started = true
+	tx, done := b.tx, b.done
+	b.mu.Unlock()
+
 	ln, err := net.Listen("tcp", b.ListenAddr)
 	if err != nil {
+		b.mu.Lock()
+		b.started = false
+		b.mu.Unlock()
 		return err
 	}
 	b.mu.Lock()
 	b.ln = ln
+	b.wg.Add(2)
 	b.mu.Unlock()
-	b.tx = make(chan []byte, 4096)
-	b.done = make(chan struct{})
-	go b.acceptLoop()
-	go b.txLoop()
+	go func() {
+		defer b.wg.Done()
+		b.acceptLoop(ln)
+	}()
+	go func() {
+		defer b.wg.Done()
+		b.txLoop(tx, done)
+	}()
 	loggerOr(b.Logger).Info("uart bridge listening", slog.Int("uart", b.UART), slog.String("addr", ln.Addr().String()))
 	return nil
 }
 
-func (b *UARTBridge) acceptLoop() {
+func (b *UARTBridge) acceptLoop(ln net.Listener) {
 	for {
-		conn, err := b.ln.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
 		b.mu.Lock()
-		if b.conn != nil {
-			_ = b.conn.Close()
+		if b.closed || b.ln != ln {
+			b.mu.Unlock()
+			_ = conn.Close()
+			return
 		}
+		old := b.conn
 		b.conn = conn
 		b.client = conn.RemoteAddr().String()
+		b.wg.Add(1)
 		b.mu.Unlock()
+		if old != nil {
+			_ = old.Close()
+		}
 		loggerOr(b.Logger).Info("uart bridge client", slog.Int("uart", b.UART), slog.String("remote", conn.RemoteAddr().String()))
-		go b.readLoop(conn)
+		go func() {
+			defer b.wg.Done()
+			b.readLoop(conn)
+		}()
 	}
 }
 
@@ -104,39 +154,43 @@ func (b *UARTBridge) readLoop(conn net.Conn) {
 			}
 		}
 		if err != nil {
-			b.mu.Lock()
-			if b.conn == conn {
-				b.conn = nil
-				b.client = ""
-			}
-			b.mu.Unlock()
+			b.dropClient(conn)
 			loggerOr(b.Logger).Info("uart bridge client gone", slog.Int("uart", b.UART))
 			return
 		}
 	}
 }
 
-func (b *UARTBridge) txLoop() {
+func (b *UARTBridge) dropClient(conn net.Conn) {
+	_ = conn.Close()
+	b.mu.Lock()
+	if b.conn == conn {
+		b.conn = nil
+		b.client = ""
+	}
+	b.mu.Unlock()
+}
+
+func (b *UARTBridge) txLoop(tx <-chan []byte, done <-chan struct{}) {
 	for {
 		select {
-		case data := <-b.tx:
+		case <-done:
+			return
+		default:
+		}
+		select {
+		case data := <-tx:
 			b.mu.Lock()
 			conn := b.conn
+			timeout := b.WriteTimeout
 			b.mu.Unlock()
 			if conn == nil {
 				continue
 			}
-			_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if _, err := conn.Write(data); err != nil {
-				_ = conn.Close()
-				b.mu.Lock()
-				if b.conn == conn {
-					b.conn = nil
-					b.client = ""
-				}
-				b.mu.Unlock()
+			if _, err := writeNet(conn, data, timeout); err != nil {
+				b.dropClient(conn)
 			}
-		case <-b.done:
+		case <-done:
 			return
 		}
 	}
@@ -145,11 +199,19 @@ func (b *UARTBridge) txLoop() {
 // Write queues firmware bytes for the connected client. It never blocks the
 // emulator; data is dropped when no client is connected or the queue is full.
 func (b *UARTBridge) Write(data []byte) {
-	if b.tx == nil {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
+	tx, done := b.tx, b.done
+	b.mu.Unlock()
+	if tx == nil {
 		return
 	}
 	select {
-	case b.tx <- append([]byte(nil), data...):
+	case tx <- append([]byte(nil), data...):
+	case <-done:
 	default:
 	}
 }
@@ -166,21 +228,31 @@ func (b *UARTBridge) Status() (listen, client string, connected bool) {
 	return listen, b.client, b.conn != nil
 }
 
-// Close stops the listener and disconnects the client.
+// Close stops the listener, disconnects the client and joins every pump.
 func (b *UARTBridge) Close() {
-	b.closeOnce.Do(func() {
-		if b.done != nil {
-			close(b.done)
-		}
-		b.mu.Lock()
-		if b.conn != nil {
-			_ = b.conn.Close()
-			b.conn = nil
-		}
-		if b.ln != nil {
-			_ = b.ln.Close()
-			b.ln = nil
-		}
+	b.lifecycle.Lock()
+	defer b.lifecycle.Unlock()
+	b.mu.Lock()
+	if b.closed {
 		b.mu.Unlock()
-	})
+		b.wg.Wait()
+		return
+	}
+	b.closed = true
+	b.started = false
+	ln, conn, done := b.ln, b.conn, b.done
+	b.ln = nil
+	b.conn = nil
+	b.client = ""
+	b.mu.Unlock()
+	if done != nil {
+		close(done)
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if ln != nil {
+		_ = ln.Close()
+	}
+	b.wg.Wait()
 }

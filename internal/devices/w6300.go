@@ -1,6 +1,7 @@
 package devices
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -21,8 +22,15 @@ type W6300 struct {
 
 	// Logger, when non-nil, reports socket events.
 	Logger *slog.Logger
+	// WriteTimeout bounds synchronous socket writes. Zero uses 2 seconds.
+	WriteTimeout time.Duration
 
-	mu sync.Mutex
+	mu        sync.Mutex
+	closed    bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 
 	common  [0x4210]byte
 	sockReg [8][0x400]byte
@@ -151,7 +159,8 @@ const (
 
 // NewW6300 creates a W6300 attached to the chip's SPI bus.
 func NewW6300(chip *rp2350.Chip, cs int) *W6300 {
-	w := &W6300{Chip: chip, CS: cs}
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &W6300{Chip: chip, CS: cs, ctx: ctx, cancel: cancel}
 	for i := range w.socks {
 		w.socks[i] = &w6sock{}
 		w.txMem[i] = make([]byte, 32*1024)
@@ -166,6 +175,44 @@ func NewW6300(chip *rp2350.Chip, cs int) *W6300 {
 	w.common[w6SYCR0] = 0x80
 	w.common[w6SYCR1] = 0x80
 	return w
+}
+
+// Close cancels pending dials, closes every socket and joins network goroutines.
+func (w *W6300) Close() {
+	w.closeOnce.Do(func() {
+		w.mu.Lock()
+		w.closed = true
+		if w.cancel != nil {
+			w.cancel()
+		}
+		for i := range w.socks {
+			w.closeSocket(i)
+		}
+		w.active = false
+		w.phase = 0
+		w.mu.Unlock()
+		w.wg.Wait()
+	})
+}
+
+func (w *W6300) startNetworkLocked(fn func()) bool {
+	if w.closed {
+		return false
+	}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		fn()
+	}()
+	return true
+}
+
+func (w *W6300) dialContext(network, addr string) (net.Conn, error) {
+	ctx := w.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, addr)
 }
 
 // Tick samples chip select between SPI bytes, ending a frame when CS is raised.
@@ -441,6 +488,9 @@ func (w *W6300) command(n int, cmd byte) {
 }
 
 func (w *W6300) connect(n int) {
+	if w.closed {
+		return
+	}
 	s := w.socks[n]
 	gen := s.gen
 	dst := net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))
@@ -465,15 +515,15 @@ func (w *W6300) connect(n int) {
 		s.udpServer = false
 		s.status = w6StatusUDP
 		s.irq |= w6IrCon
-		go w.udpReader(n, gen, uc)
+		w.startNetworkLocked(func() { w.udpReader(n, gen, uc) })
 		return
 	}
 	s.status = w6StatusInit
-	go func() {
-		conn, err := net.DialTimeout("tcp", dst, 10*time.Second)
+	w.startNetworkLocked(func() {
+		conn, err := w.dialContext("tcp", dst)
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		if s.gen != gen {
+		if w.closed || s.gen != gen {
 			if conn != nil {
 				_ = conn.Close()
 			}
@@ -489,21 +539,26 @@ func (w *W6300) connect(n int) {
 		s.status = w6StatusEstablished
 		s.irq |= w6IrCon
 		if len(s.pendingTx) > 0 {
-			if _, err := conn.Write(s.pendingTx); err != nil {
+			if _, err := writeNet(conn, s.pendingTx, w.WriteTimeout); err != nil {
+				w.closeSocket(n)
 				s.irq |= w6IrTimeout
-			} else {
-				s.irq |= w6IrSendOK
+				loggerOr(w.Logger).Debug("w6300 pending send failed", slog.Int("sock", n), slog.Any("err", err))
+				return
 			}
+			s.irq |= w6IrSendOK
 			s.pendingTx = nil
 		}
-		go w.tcpReader(n, gen, conn)
+		w.startNetworkLocked(func() { w.tcpReader(n, gen, conn) })
 		loggerOr(w.Logger).Debug("w6300 established", slog.Int("sock", n))
-	}()
+	})
 }
 
 // bindUDP binds the guest source port and starts the datagram reader. A
 // W6300 UDP socket with no CONNECT is a server.
 func (w *W6300) bindUDP(n int) {
+	if w.closed {
+		return
+	}
 	s := w.socks[n]
 	gen := s.gen
 	addr := &net.UDPAddr{Port: int(s.srcPort)}
@@ -518,10 +573,13 @@ func (w *W6300) bindUDP(n int) {
 	s.udpServer = true
 	s.status = w6StatusUDP
 	loggerOr(w.Logger).Debug("w6300 udp bind", slog.Int("sock", n), slog.String("addr", addr.String()))
-	go w.udpReader(n, gen, uc)
+	w.startNetworkLocked(func() { w.udpReader(n, gen, uc) })
 }
 
 func (w *W6300) listen(n int) {
+	if w.closed {
+		return
+	}
 	s := w.socks[n]
 	gen := s.gen
 	addr := ":"
@@ -538,7 +596,7 @@ func (w *W6300) listen(n int) {
 	s.listener = ln
 	s.status = w6StatusListen
 	loggerOr(w.Logger).Debug("w6300 listen", slog.Int("sock", n), slog.String("addr", addr))
-	go func() {
+	w.startNetworkLocked(func() {
 		conn, err := ln.Accept()
 		// The host listener owns the port while waiting; the accepted
 		// connection no longer needs it, and the driver typically
@@ -546,7 +604,7 @@ func (w *W6300) listen(n int) {
 		_ = ln.Close()
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		if s.gen != gen {
+		if w.closed || s.gen != gen {
 			if conn != nil {
 				_ = conn.Close()
 			}
@@ -569,12 +627,15 @@ func (w *W6300) listen(n int) {
 			w.sockReg[n][w6SnDPORTR] = byte(s.destPort >> 8)
 			w.sockReg[n][w6SnDPORTR+1] = byte(s.destPort)
 		}
-		go w.tcpReader(n, gen, conn)
+		w.startNetworkLocked(func() { w.tcpReader(n, gen, conn) })
 		loggerOr(w.Logger).Debug("w6300 accepted", slog.Int("sock", n), slog.String("remote", conn.RemoteAddr().String()))
-	}()
+	})
 }
 
 func (w *W6300) send(n int) {
+	if w.closed {
+		return
+	}
 	s := w.socks[n]
 	size := uint16(w.sockTXSize(n))
 	count := min(s.txWritePtr-s.txReadPtr, size)
@@ -601,19 +662,21 @@ func (w *W6300) send(n int) {
 		if err == nil {
 			s.udp = conn
 			s.udpServer = false
-			go w.udpReader(n, s.gen, conn)
+			gen := s.gen
+			w.startNetworkLocked(func() { w.udpReader(n, gen, conn) })
 		}
 	}
 	if s.udp != nil && s.udpServer {
-		_, err = s.udp.WriteToUDP(data, resolveUDPAddr(net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))))
+		_, err = writeUDPNet(s.udp, data, resolveUDPAddr(net.JoinHostPort(net.IP(s.destIP[:]).String(), strconv.Itoa(int(s.destPort)))), w.WriteTimeout)
 	} else if s.udp != nil {
-		_, err = s.udp.Write(data)
+		_, err = writeNet(s.udp, data, w.WriteTimeout)
 	} else if s.conn != nil {
-		_, err = s.conn.Write(data)
+		_, err = writeNet(s.conn, data, w.WriteTimeout)
 	} else {
 		err = fmt.Errorf("socket not connected")
 	}
 	if err != nil {
+		w.closeSocket(n)
 		s.irq |= w6IrTimeout
 		loggerOr(w.Logger).Debug("w6300 send failed", slog.Int("sock", n), slog.Int("bytes", len(data)), slog.Any("err", err))
 		return
@@ -706,6 +769,9 @@ func (w *W6300) rxAppend(n int, data []byte) {
 }
 
 func (w *W6300) closeSocket(n int) {
+	if n < 0 || n >= len(w.socks) || w.socks[n] == nil {
+		return
+	}
 	s := w.socks[n]
 	s.gen++
 	if s.udp != nil {
@@ -726,6 +792,7 @@ func (w *W6300) closeSocket(n int) {
 		_ = s.listener.Close()
 		s.listener = nil
 	}
+	s.pendingTx = nil
 	s.status = w6StatusClosed
 	s.irq = 0
 	s.txReadPtr, s.txWritePtr = 0, 0

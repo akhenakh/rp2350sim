@@ -143,6 +143,8 @@ func (w *W5500) NetworkInfo() NetworkInfo {
 		}
 		if s.listener != nil {
 			si.HostAddr = reachableAddr(s.listener.Addr())
+		} else if s.udp != nil && s.udpServer {
+			si.HostAddr = reachableAddr(s.udp.LocalAddr())
 		}
 		if info.IP != "" && s.srcPort != 0 {
 			si.GuestAddr = net.JoinHostPort(info.IP, portString(s.srcPort))
@@ -198,6 +200,8 @@ func (w *W6300) NetworkInfo() NetworkInfo {
 		}
 		if s.listener != nil {
 			si.HostAddr = reachableAddr(s.listener.Addr())
+		} else if s.udp != nil && s.udpServer {
+			si.HostAddr = reachableAddr(s.udp.LocalAddr())
 		}
 		if info.IP != "" && s.srcPort != 0 {
 			si.GuestAddr = net.JoinHostPort(info.IP, portString(s.srcPort))

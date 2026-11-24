@@ -94,6 +94,39 @@ func TestW6300NetworkInfo(t *testing.T) {
 	}
 }
 
+func TestUDPServerNetworkInfoHostAddr(t *testing.T) {
+	for _, kind := range []string{"w5500", "w6300"} {
+		t.Run(kind, func(t *testing.T) {
+			conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			var info NetworkInfo
+			if kind == "w5500" {
+				w := NewW5500(rp2350.New(), 17)
+				w.socks[0].proto = 2
+				w.socks[0].status = w5StatusUDP
+				w.socks[0].srcPort = uint16(conn.LocalAddr().(*net.UDPAddr).Port)
+				w.socks[0].udp = conn
+				w.socks[0].udpServer = true
+				info = w.NetworkInfo()
+			} else {
+				w := NewW6300(rp2350.New(), 17)
+				w.socks[0].proto = 2
+				w.socks[0].status = w6StatusUDP
+				w.socks[0].srcPort = uint16(conn.LocalAddr().(*net.UDPAddr).Port)
+				w.socks[0].udp = conn
+				w.socks[0].udpServer = true
+				info = w.NetworkInfo()
+			}
+			if len(info.Sockets) != 1 || info.Sockets[0].HostAddr != reachableAddr(conn.LocalAddr()) {
+				t.Fatalf("UDP server info = %+v", info.Sockets)
+			}
+		})
+	}
+}
+
 func TestCH9120NetworkInfo(t *testing.T) {
 	d := NewCH9120(rp2350.New(), 1, 18, 19, 17)
 	// Defaults are not a firmware-created network.

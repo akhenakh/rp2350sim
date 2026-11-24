@@ -2,6 +2,7 @@ package devices
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,6 +48,7 @@ type BusBridge struct {
 
 	Logger *slog.Logger
 
+	lifecycle sync.Mutex
 	mu        sync.Mutex
 	ioMu      sync.Mutex
 	ln        net.Listener
@@ -55,10 +57,13 @@ type BusBridge struct {
 	client    string
 	waited    bool
 	closed    bool
+	started   bool
 	connCh    chan struct{}
 	reconnect chan struct{}
 	done      chan struct{}
-	closeOnce sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 var (
@@ -72,6 +77,7 @@ func NewBusBridge(kind BusKind, bus int, listen, connect string) *BusBridge {
 	if listen == "" && connect == "" {
 		listen = "127.0.0.1:0"
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &BusBridge{
 		Kind:        kind,
 		Bus:         bus,
@@ -82,23 +88,60 @@ func NewBusBridge(kind BusKind, bus int, listen, connect string) *BusBridge {
 		connCh:      make(chan struct{}, 1),
 		reconnect:   make(chan struct{}, 1),
 		done:        make(chan struct{}),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
 // Start opens the listener or starts the dial loop.
 func (b *BusBridge) Start() error {
-	if b.ConnectAddr != "" {
-		go b.dialLoop()
+	b.lifecycle.Lock()
+	defer b.lifecycle.Unlock()
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return errBusClosed
+	}
+	if b.started {
+		b.mu.Unlock()
+		return errors.New("bus bridge: already started")
+	}
+	b.started = true
+	if b.done == nil {
+		b.done = make(chan struct{})
+	}
+	if b.connCh == nil {
+		b.connCh = make(chan struct{}, 1)
+	}
+	if b.reconnect == nil {
+		b.reconnect = make(chan struct{}, 1)
+	}
+	connect := b.ConnectAddr
+	b.mu.Unlock()
+
+	if connect != "" {
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
+			b.dialLoop()
+		}()
 		return nil
 	}
 	ln, err := net.Listen("tcp", b.ListenAddr)
 	if err != nil {
+		b.mu.Lock()
+		b.started = false
+		b.mu.Unlock()
 		return err
 	}
 	b.mu.Lock()
 	b.ln = ln
+	b.wg.Add(1)
 	b.mu.Unlock()
-	go b.acceptLoop(ln)
+	go func() {
+		defer b.wg.Done()
+		b.acceptLoop(ln)
+	}()
 	b.logger().Info("bus bridge listening",
 		slog.String("kind", string(b.Kind)),
 		slog.Int("bus", b.Bus),
@@ -115,19 +158,29 @@ func (b *BusBridge) timeout() time.Duration {
 	return time.Second
 }
 
+func (b *BusBridge) dialContext() (net.Conn, error) {
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return (&net.Dialer{Timeout: b.timeout()}).DialContext(ctx, "tcp", b.ConnectAddr)
+}
+
 func (b *BusBridge) acceptLoop(ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		b.setConn(conn)
+		if !b.setConn(conn) {
+			return
+		}
 	}
 }
 
 func (b *BusBridge) dialLoop() {
 	for {
-		conn, err := net.DialTimeout("tcp", b.ConnectAddr, b.timeout())
+		conn, err := b.dialContext()
 		if err != nil {
 			b.logger().Debug("bus bridge dial",
 				slog.String("kind", string(b.Kind)),
@@ -139,7 +192,9 @@ func (b *BusBridge) dialLoop() {
 			}
 			continue
 		}
-		b.setConn(conn)
+		if !b.setConn(conn) {
+			return
+		}
 		select {
 		case <-b.done:
 			_ = conn.Close()
@@ -158,32 +213,41 @@ func (b *BusBridge) sleep(d time.Duration) bool {
 	}
 }
 
-func (b *BusBridge) setConn(conn net.Conn) {
+func (b *BusBridge) setConn(conn net.Conn) bool {
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		_ = conn.Close()
+		return false
+	}
 	old := b.conn
+	client := conn.RemoteAddr().String()
 	b.conn = conn
 	b.reader = bufio.NewReaderSize(conn, 4096)
-	b.client = conn.RemoteAddr().String()
+	b.client = client
 	b.mu.Unlock()
 
 	if old != nil && old != conn {
 		_ = old.Close()
 	}
+	if b.Hello != "" {
+		b.ioMu.Lock()
+		_, err := writeNet(conn, []byte(b.Hello+"\n"), b.timeout())
+		b.ioMu.Unlock()
+		if err != nil {
+			b.dropConn(conn)
+			return false
+		}
+	}
 	b.logger().Info("bus bridge client",
 		slog.String("kind", string(b.Kind)),
 		slog.Int("bus", b.Bus),
-		slog.String("remote", b.client))
-
-	if b.Hello != "" {
-		b.ioMu.Lock()
-		_ = conn.SetWriteDeadline(time.Now().Add(b.timeout()))
-		_, _ = conn.Write([]byte(b.Hello + "\n"))
-		b.ioMu.Unlock()
-	}
+		slog.String("remote", client))
 	select {
 	case b.connCh <- struct{}{}:
 	default:
 	}
+	return true
 }
 
 // firstWait consumes the one-time wait for a client. A client that is already
@@ -234,13 +298,14 @@ func (b *BusBridge) session(wait time.Duration) (net.Conn, *bufio.Reader, error)
 }
 
 func (b *BusBridge) writeLine(conn net.Conn, line string) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(b.timeout()))
-	_, err := fmt.Fprintf(conn, "%s\n", line)
+	_, err := writeNet(conn, []byte(line+"\n"), b.timeout())
 	return err
 }
 
 func (b *BusBridge) readLine(conn net.Conn, r *bufio.Reader) (string, error) {
-	_ = conn.SetReadDeadline(time.Now().Add(b.timeout()))
+	if err := conn.SetReadDeadline(time.Now().Add(b.timeout())); err != nil {
+		return "", err
+	}
 	raw, err := r.ReadSlice('\n')
 	if err != nil {
 		return "", err
@@ -327,23 +392,35 @@ func (b *BusBridge) Status() (listen, connect, client string, connected bool) {
 
 // Close stops the listener, disconnects the client and unblocks waiters.
 func (b *BusBridge) Close() {
-	b.closeOnce.Do(func() {
-		b.mu.Lock()
-		b.closed = true
-		ln := b.ln
-		conn := b.conn
-		b.ln = nil
-		b.conn = nil
-		b.reader = nil
+	b.lifecycle.Lock()
+	defer b.lifecycle.Unlock()
+	b.mu.Lock()
+	if b.closed {
 		b.mu.Unlock()
-		close(b.done)
-		if ln != nil {
-			_ = ln.Close()
-		}
-		if conn != nil {
-			_ = conn.Close()
-		}
-	})
+		b.wg.Wait()
+		return
+	}
+	b.closed = true
+	b.started = false
+	ln, conn, done := b.ln, b.conn, b.done
+	b.ln = nil
+	b.conn = nil
+	b.reader = nil
+	b.client = ""
+	b.mu.Unlock()
+	if b.cancel != nil {
+		b.cancel()
+	}
+	if done != nil {
+		close(done)
+	}
+	if ln != nil {
+		_ = ln.Close()
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+	b.wg.Wait()
 }
 
 // responseToken returns the last whitespace-separated token, upper-cased.
