@@ -66,13 +66,14 @@ pincheck -pin 25 -freq 2 -min-edges 4 blink.txt
 
 PWM is a GPIO with a hardware duty cycle: `task run:blinky` checks the LED,
 and the pinned pico-examples PWM test uses the same `pincheck` mechanism for
-frequency and duty cycle. ADC channels are read by firmware normally; on the
-Touch-LCD-2 the battery divider is on GP28/ADC2.
+frequency and duty cycle. ADC inputs are GP26–GP29 on RP2350A and GP40–GP47 on
+RP2350B, with temperature on channel 4 or 8 respectively. On the Touch-LCD-2 the
+battery divider is on GP28/ADC2.
 
 **UI.** The **Board** tab shows the live GPIO view (function, direction,
-level) as uniform fixed-width Cards. Click header pins in the **Scope** to add
-or remove traces: GP0–GP15 and GP26–GP29, 1 MHz sampling, up to eight
-channels. The
+level) as uniform fixed-width Cards. The **Scope** pin picker offers every GPIO
+(GP0–GP47; RP2350A packages bond GP0–29), uses width-aware rows so all pins fit
+inside the window, and supports 1 MHz sampling with up to eight channels. The
 `pico2-analog` board drives a 1 kHz sine on GP26 so the scope and the ADC have
 a known signal.
 
@@ -236,8 +237,9 @@ rp2350sim -fw build/pico-examples/build/dvi_out_hstx_encoder/dvi_out_hstx_encode
 The reference firmware is the stock pico-examples `hstx/dvi_out_hstx_encoder`
 (640×480 RGB332 on GP12–19); `task picoexamples:build` builds it. Frames are
 captured at the active width; the height is inferred from the common DVI modes
-(640×480, 320×240, 800×600, 1280×720). Serial TMDS timing is not modelled, and
-multi-word RAW / TMDS_REPEAT recirculation are fidelity gaps.
+(640×480, 320×240, 800×600, 1280×720). RAW/RAW_REPEAT and TMDS/TMDS_REPEAT
+commands, including multi-word counts and repeat rotation, are expanded. Serial
+TMDS output timing is not modelled.
 
 **UI.** The `pico2-dvi` board enables the **DVI** tab, which shows the last
 frame and offers **Save PNG**. `task ui:dvi` opens it; `task ui:dvi:png`

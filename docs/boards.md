@@ -222,9 +222,9 @@ output or bit timing.
   renders it headlessly.
 - Frame height is inferred from the active width (640→480, 320→240, 800→600,
   1280→720); HSTX itself carries no vertical timing.
-- The model consumes the single-word RAW_REPEAT blanking used by the example.
-  RAW with a count above one and TMDS_REPEAT's shift-register recirculation are
-  not expanded; they are noted as fidelity gaps, not used by the DVI demo.
+- The command expander expands RAW/RAW_REPEAT and TMDS/TMDS_REPEAT commands,
+  including multi-word counts and repeat rotations. Serial TMDS output and bit
+  timing remain unmodelled; the DVI tab consumes assembled frames.
 
 ![DVI tab with the stock HSTX example](images/dvi.png)
 
@@ -279,9 +279,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   replicated to both cores.
 - **Exceptions and nesting:** preemptive priority nesting, 4 priority bits,
   tail-chaining, PendSV, SysTick (CPU clock and 1 MHz reference), SVC (with
-  HardFault escalation when masked), NMI, PRIMASK/FAULTMASK/BASEPRI and
-  MSPLIM/PSPLIM are supported. A Zephyr/FreeRTOS-style supervisor kernel
-  (PSP tasks, SVC first-task launch, PendSV switching) runs; see
+  HardFault escalation when masked), NMI, PRIMASK/FAULTMASK/BASEPRI and the
+  MSPLIM/PSPLIM register model are supported. A Zephyr/FreeRTOS-style
+  supervisor kernel (PSP tasks, SVC first-task launch, PendSV switching) runs; see
   `firmware/c/rtosctx` and the [Zephyr guide](zephyr.md). Zephyr v4.5.0
   `rpi_pico2/rp2350a/m33` builds boot, and the context, scheduler, threads and
   FPU-sharing tests pass.
@@ -294,9 +294,10 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   TrustZone/ACCESSCTRL/security isolation and the full interrupt matrix are
   outside the model. Fault escalation beyond masked SVC (bus/usage/mem faults)
   is not generated.
-- **Peripheral interrupts:** NVIC lines are wired for DMA, both timers, UART RX,
-  USB, PIO, POWMAN, SIO FIFO (25) and SIO doorbell (26). SPI, I2C, ADC,
-  GPIO-edge and PWM wrap interrupts are not delivered yet.
+- **Peripheral interrupts:** NVIC lines are wired for DMA (10-13), both timers
+  (0-7), UART RX (33/34), USB (14), PIO (15-20), TRNG (39), POWMAN (45), SIO
+  FIFO (25) and doorbell (26). SPI, I2C, ADC, GPIO-edge, PWM-wrap and UART TX
+  interrupt lines are not delivered yet.
 - **BOOTSEL:** the Board tab's BOOTSEL control (and a YAML `bootsel` input)
   pulls the QSPI chip-select line low. It latches so it can stay held through a
   Reset; the board diagram button is momentary. Firmware reads the line through
@@ -317,10 +318,16 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   descriptor, follows the DPRAM buffer addresses in `EP_CONTROL`, and pumps
   CDC (TinyGo and TinyUSB) and USB-MIDI; arbitrary USB classes and isochronous
   endpoints are not supported.
-- **DMA:** paced transfers, AL1/AL2/AL3 aliases and completion interrupts, but
-  no DREQ pacing.
-- **Timers:** the 64-bit read pair is latched, but writes to TIMEHW/TIMELW are
-  ignored; firmware cannot set the timer.
+- **DMA:** round-robin one-transfer-per-cycle scheduling, live/reload counts,
+  pause/abort, chaining, AL1/AL2/AL3 aliases, ring/reverse/BSWAP addressing and
+  completion interrupts. General DREQ pacing is not modelled; HSTX FIFO-full
+  backpressure is the exception.
+- **Timers:** the 64-bit read pair is latched and PAUSE/SOURCE/LOCKED/DBGPAUSE
+  are honoured, but writes to TIMEHW/TIMELW are ignored; firmware cannot set
+  the timer.
+- **ADC:** conversions complete immediately in a one-shot model. Free-running
+  pacing, the sample FIFO, overrun/error flags, DREQ and ADC interrupt delivery
+  are not modelled.
 - **Package/pins:** SYSINFO reports the selected package: RP2350A QFN-60 by
   default, RP2350B QFN-80 with `-rp2350b` or `package: qfn80`. The GPIO model
   always covers 48 pins and the coprocessor can touch GP32-47; the board and
