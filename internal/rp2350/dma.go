@@ -4,8 +4,8 @@ import "math/bits"
 
 // dmaBlock models the RP2350 DMA controller. Transfers are paced at one
 // element per cycle so BUSY has a real duration and a channel raises its
-// completion interrupt when it drains. DREQ pacing is not modelled, so a
-// transfer runs as fast as the engine allows.
+// completion interrupt when it drains. General DREQ pacing is not modelled;
+// HSTX FIFO writes do stall while the eight-entry FIFO is full.
 type dmaBlock struct {
 	block *regBlock
 	chip  *Chip
@@ -396,6 +396,12 @@ func (d *dmaBlock) tick() {
 }
 
 func (d *dmaBlock) step(n int, ch *dmaChannel) {
+	// The DVI encoder relies on HSTX DREQ backpressure while RAW_REPEAT or
+	// TMDS_REPEAT expands a word without popping the FIFO. Without this stall,
+	// queued command/pixel words are dropped and the stream loses sync.
+	if ch.write == hstxFIFOBase+hstxFIFOData && d.chip.hstx != nil && d.chip.hstx.fifoLevel == hstxFIFODepth {
+		return
+	}
 	size := int((ch.ctrl >> 2) & 3)
 	var value uint32
 	switch size {

@@ -140,6 +140,36 @@ func TestHSTXRawBypass(t *testing.T) {
 	}
 }
 
+func TestHSTXDMAStallsOnFullFIFO(t *testing.T) {
+	c := New()
+	h := c.hstx
+	for i := range hstxFIFODepth {
+		h.push(uint32(i))
+	}
+	const src = uint32(0x20000000)
+	c.Write32(src, 0x12345678)
+	d := c.dma
+	d.block.regs[0] = src
+	d.block.regs[1] = hstxFIFOBase + hstxFIFOData
+	d.block.regs[2] = 1
+	d.begin(0, dmaCtrlEN|2<<2)
+	c.Write32(hstxCtrlBase+hstxCSR, 1)
+
+	ch := &d.ch[0]
+	d.step(0, ch)
+	if ch.count != 1 || ch.read != src || h.fifoLevel != hstxFIFODepth {
+		t.Fatal("DMA advanced while the HSTX FIFO was full")
+	}
+	h.tick() // one slot becomes available
+	d.step(0, ch)
+	if ch.count != 0 || h.fifoLevel != hstxFIFODepth {
+		t.Fatal("DMA did not resume after HSTX popped a FIFO word")
+	}
+	if got := h.fifoData[(h.fifoHead+hstxFIFODepth-1)%hstxFIFODepth]; got != 0x12345678 {
+		t.Fatalf("DMA FIFO payload = %#x", got)
+	}
+}
+
 func TestHSTXInfiniteCommandCount(t *testing.T) {
 	c := New()
 	h := c.hstx
