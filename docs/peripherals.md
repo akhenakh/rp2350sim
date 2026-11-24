@@ -70,9 +70,9 @@ frequency and duty cycle. ADC channels are read by firmware normally; on the
 Touch-LCD-2 the battery divider is on GP28/ADC2.
 
 **UI.** The **Board** tab shows the live GPIO view (function, direction,
-level) as uniform Cards, a two-column List or a dense Table; the header switch
-changes it live. Click header pins in the **Scope** to add or remove traces:
-GP0–GP15 and GP26–GP29, 1 MHz sampling, up to eight channels. The
+level) as uniform fixed-width Cards. Click header pins in the **Scope** to add
+or remove traces: GP0–GP15 and GP26–GP29, 1 MHz sampling, up to eight
+channels. The
 `pico2-analog` board drives a 1 kHz sine on GP26 so the scope and the ADC have
 a known signal.
 

@@ -34,7 +34,6 @@ var (
 	selectedBoard      *BoardDef
 	pendingBoardPicker bool
 	inputArgs          []string
-	gpioLayout         = "cards"
 	activeTab          = tabBoard
 	scopePins          []int
 	scopeZoom          = 1.0
@@ -1044,45 +1043,13 @@ func pinsPanel(snap MachineState) {
 			Label("GPIO", FontSize(16), FontWeight(700))
 			Label("function · direction · level", FontSize(12))
 			Filler(1)
-			gpioLayoutPicker()
 			Label(fmt.Sprintf("%d pins · %d active", n, countActive(snap)), FontSize(12))
 		})
-		switch gpioLayout {
-		case "list":
-			pinsListBody(snap, n)
-		case "table":
-			pinsTableBody(snap, n)
-		default:
-			pinsCardsBody(snap, n)
-		}
+		pinsCardsBody(snap, n)
 	})
 }
 
-// gpioLayoutPicker switches the GPIO panel between the three presentations.
-func gpioLayoutPicker() {
-	layouts := [][2]string{{"cards", "Cards"}, {"list", "List"}, {"table", "Table"}}
-	Container(Attrs(Row, CrossMid, Gap(2), Pad2(1, 2), Corners(4), Background(220, 10, 16, 1)), func() {
-		for _, l := range layouts {
-			key, label := l[0], l[1]
-			Container(Attrs(Row, CrossMid, Pad2(2, 8), Corners(3)), func() {
-				st := ProcessButtonEvents(false)
-				if st.Clicked {
-					gpioLayout = key
-					RequestNextFrame()
-				}
-				switch {
-				case gpioLayout == key:
-					ModAttrs(Background(220, 14, 28, 1))
-				case st.Hovered:
-					ModAttrs(Background(220, 12, 21, 1))
-				}
-				Label(label, FontSize(10), FontWeight(600))
-			})
-		}
-	})
-}
-
-// pinCardHSLA is the card/row background for a pin's electrical state.
+// pinCardHSLA is the card background for a pin's electrical state.
 func pinCardHSLA(in PinInfo) (h, s, l float32) {
 	switch {
 	case in.OE && in.Level:
@@ -1158,87 +1125,6 @@ func pinCardUniform(p int, in PinInfo) {
 		})
 		Filler(1)
 		Label(levelName(in.Level), FontSize(11), FontWeight(600), TextColor(dh, ds, dl, 1))
-	})
-}
-
-// pinsListBody is a two-column list with generous rows and column headings.
-func pinsListBody(snap MachineState, n int) {
-	pinsBodyColumns(snap, n, 2, 26, 12, 42, 70, 32)
-}
-
-// pinsTableBody is a denser three-column table with column headings.
-func pinsTableBody(snap MachineState, n int) {
-	pinsBodyColumns(snap, n, 3, 21, 11, 34, 48, 26)
-}
-
-func pinsBodyColumns(snap MachineState, n, cols int, rowH, fontSize, pinW, fnW, dirW float32) {
-	if n > 30 && cols < 3 {
-		cols = 3
-	}
-	rows := (n + cols - 1) / cols
-	Container(Attrs(Row, Grow(1), Expand, Gap(16)), func() {
-		for col := range cols {
-			Container(Attrs(Grow(1), Gap(0)), func() {
-				pinListHeader(pinW, fnW, dirW, fontSize)
-				for row := range rows {
-					p := col*rows + row
-					if p >= n {
-						break
-					}
-					in := snap.Pins[p]
-					if pinView == 1 && !pinActive(in) {
-						continue
-					}
-					pinRow(p, in, rowH, fontSize, pinW, fnW, dirW, row%2 == 1)
-				}
-			})
-		}
-	})
-}
-
-func pinListHeader(pinW, fnW, dirW, fontSize float32) {
-	fnTitle := "FUNCTION"
-	if fnW < 60 {
-		fnTitle = "FUNC"
-	}
-	Container(Attrs(Row, CrossMid, FixHeight(18), Gap(6), Pad2(0, 6), Expand,
-		Background(220, 10, 15, 1)), func() {
-		Container(Attrs(FixSize(7, 7)), func() {})
-		Container(Attrs(FixWidth(pinW)), func() {
-			Label("PIN", FontSize(fontSize-1), FontWeight(700), TextColor(220, 6, 60, 1))
-		})
-		Container(Attrs(FixWidth(fnW)), func() {
-			Label(fnTitle, FontSize(fontSize-1), FontWeight(700), TextColor(220, 6, 60, 1))
-		})
-		Container(Attrs(FixWidth(dirW)), func() {
-			Label("DIR", FontSize(fontSize-1), FontWeight(700), TextColor(220, 6, 60, 1))
-		})
-		Filler(1)
-		Label("LEVEL", FontSize(fontSize-1), FontWeight(700), TextColor(220, 6, 60, 1))
-	})
-}
-
-func pinRow(p int, in PinInfo, height, fontSize, pinW, fnW, dirW float32, zebra bool) {
-	h, s, l := pinCardHSLA(in)
-	if zebra && h == 220 && s == 8 && l == 18 {
-		l = 14
-	}
-	dh, ds, dl := pinLevelHSLA(in)
-	ContainerWithKey(p, Attrs(Row, CrossMid, FixHeight(height), Gap(6), Pad2(1, 6), Expand,
-		Background(h, s, l, 1)), func() {
-		Container(Attrs(FixSize(7, 7), Corners(4), Background(dh, ds, dl, 1)), func() {})
-		Container(Attrs(FixWidth(pinW)), func() {
-			Label(fmt.Sprintf("GP%-2d", p), FontSize(fontSize), FontWeight(700))
-		})
-		Container(Attrs(FixWidth(fnW)), func() {
-			Label(funcName(in.Func), FontSize(fontSize))
-		})
-		Container(Attrs(FixWidth(dirW)), func() {
-			Label(pinDirLabel(in), FontSize(fontSize-1), TextColor(220, 6, 68, 1))
-		})
-		Filler(1)
-		Label(levelName(in.Level), FontSize(fontSize-1), FontWeight(600),
-			TextColor(dh, ds, dl, 1))
 	})
 }
 
@@ -3129,7 +3015,6 @@ func main() {
 		inputArgs = append(inputArgs, v)
 		return nil
 	})
-	gpioLayoutFlag := flag.String("gpio-layout", "cards", "GPIO panel layout: cards, list or table")
 	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, console")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
@@ -3154,17 +3039,6 @@ func main() {
 		debugInspectorTab = 2
 	}
 	viewW, viewH = *winW, *winH
-	switch strings.ToLower(*gpioLayoutFlag) {
-	case "cards", "card", "grid":
-		gpioLayout = "cards"
-	case "list":
-		gpioLayout = "list"
-	case "table":
-		gpioLayout = "table"
-	default:
-		fmt.Fprintf(os.Stderr, "unknown --gpio-layout %q (cards, list or table)\n", *gpioLayoutFlag)
-		os.Exit(2)
-	}
 
 	var err error
 	boards, err = LoadBoards()

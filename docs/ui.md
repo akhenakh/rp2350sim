@@ -39,7 +39,6 @@ Startup flags:
 |---|---|
 | `--board ID` | skip the picker and select a board (see `--list-boards`) |
 | `--input ID=VALUE` | set a board input before the first frame (`on`/`off`, volts, `+N`/`-N`); repeatable |
-| `--gpio-layout CARDS\|LIST\|TABLE` | initial GPIO view (the header switch overrides it live) |
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
 | `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `audio`, `midi`, `otp`, `bus`, `debug`, `console` |
@@ -198,12 +197,10 @@ its headless flags and demo firmware.
 ### Board
 
 The Pico 2 header diagram and the live GPIO view (function, direction, level).
-The GPIO header has a **Cards | List | Table** switch: Cards uses uniform
-fixed-width cards (the default, four across at 1280px, so a function name can
-never resize a card), List is a two-column list with row headings, and Table is
-a denser three-column table. Panels size themselves to the window. Click a GPIO
-chip in the scope to add it. A board with `psram` shows its size and per-access
-stall in the status line.
+GPIO pins are shown as uniform fixed-width cards (four across at 1280px), so a
+function name can never resize the grid. Panels size themselves to the window.
+Click a GPIO chip in the scope to add it. A board with `psram` shows its size
+and per-access stall in the status line.
 
 ![Board tab](images/board.png)
 
