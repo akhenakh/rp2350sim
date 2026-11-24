@@ -516,9 +516,17 @@ func Source(file string, line, context int) ([]string, int, error) {
 	if line < 1 {
 		line = 1
 	}
+	if line > len(lines) {
+		// A stale or malformed line table can point past the current source.
+		// Show the file path without inventing context rather than panicking.
+		return nil, 0, nil
+	}
+	if context < 0 {
+		context = 0
+	}
 	start := max(1, line-context)
 	end := min(len(lines), line+context)
-	out := make([]string, 0, end-start+1)
+	out := make([]string, 0, max(end-start+1, 0))
 	for n := start; n <= end; n++ {
 		out = append(out, lines[n-1])
 	}
