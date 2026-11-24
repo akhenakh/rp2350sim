@@ -42,6 +42,16 @@ directory:
 binaries are pure Go, so no CGO toolchain is needed. Tags matching `v*` publish
 these archives; [docs/release.md](docs/release.md) covers the pipeline.
 
+### Verifying a release
+
+Release archives and the checksum file carry [build provenance](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds)
+signed by this repository's release workflow. Check a downloaded archive with:
+
+```sh
+gh attestation verify rp2350sim_<version>_linux_amd64.tar.gz \
+  --repo akhenakh/rp2350sim
+```
+
 ## Use of AI
 This project was created using AI, cross checked against existing implementations, unit tested and smoke tested , CI guards.  
 Your best bet is to try and see if it's running your code properly, send bug reports if you want the tool to improve.

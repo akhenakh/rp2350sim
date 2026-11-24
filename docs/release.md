@@ -20,6 +20,18 @@ version with `-version`.
 The binaries are pure Go (`CGO_ENABLED=0`), including the UI's Shirei/purego
 backend, so a single Linux runner cross-compiles every target.
 
+## Verifying a release
+
+The release workflow attests every archive and the checksum file with GitHub
+build provenance. After downloading an archive, verify it with the GitHub CLI:
+
+```sh
+gh attestation verify rp2350sim_<version>_linux_amd64.tar.gz \
+  --repo akhenakh/rp2350sim
+```
+
+The `.zip` Windows archives work the same way.
+
 ## Homebrew tap
 
 Every `v*` release also updates
