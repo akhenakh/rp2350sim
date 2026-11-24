@@ -389,6 +389,7 @@ func LoadBoards() ([]BoardDef, error) {
 			b.Name = b.ID
 		}
 		spi := map[spiPin]string{}
+		spiCS := map[int]spiPin{}
 		var uartOwner [2]string
 		claimUART := func(uart int, who string) error {
 			if uartOwner[uart] != "" {
@@ -419,7 +420,7 @@ func LoadBoards() ([]BoardDef, error) {
 			return nil
 		}
 		if d := b.LCD; d != nil {
-			if err := validSPI(spi, d.SPI, d.CS, "lcd"); err != nil {
+			if err := validSPI(spi, spiCS, d.SPI, d.CS, "lcd"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 			if d.Width <= 0 || d.Height <= 0 {
@@ -485,7 +486,7 @@ func LoadBoards() ([]BoardDef, error) {
 			case "":
 				d.Kind = "w5500"
 			case "w5500", "w6300":
-				if err := validSPI(spi, d.SPI, d.CS, "ethernet"); err != nil {
+				if err := validSPI(spi, spiCS, d.SPI, d.CS, "ethernet"); err != nil {
 					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 				}
 			case "ch9120":
@@ -500,7 +501,7 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 		}
 		if d := b.SD; d != nil {
-			if err := validSPI(spi, d.SPI, d.CS, "sd"); err != nil {
+			if err := validSPI(spi, spiCS, d.SPI, d.CS, "sd"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 			if d.Image != "" && d.Dir != "" {
@@ -600,7 +601,7 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 		}
 		for _, br := range b.SPITCP {
-			if err := validSPI(spi, br.Bus, br.CS, "spi_tcp"); err != nil {
+			if err := validSPI(spi, spiCS, br.Bus, br.CS, "spi_tcp"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 			if br.Listen != "" && br.Connect != "" {
@@ -647,7 +648,7 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: preset %q is not an SPI device", b.ID, p.Preset)
 			}
 			p.Preset = info.Name
-			if err := validSPI(spi, p.Bus, p.CS, "spi preset "+p.Preset); err != nil {
+			if err := validSPI(spi, spiCS, p.Bus, p.CS, "spi preset "+p.Preset); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
@@ -749,6 +750,19 @@ func LoadBoards() ([]BoardDef, error) {
 				}
 				return
 			}
+			if prev, ok := devicePins[pin]; ok {
+				// The Touch-LCD-2 wires the panel and the touch controller to
+				// one reset line; both resets legitimately share that GPIO.
+				if (prev == "lcd rst" && who == "touch rst") ||
+					(prev == "touch rst" && who == "lcd rst") {
+					devicePins[pin] = prev + " / " + who
+					return
+				}
+				if devicePinErr == "" {
+					devicePinErr = fmt.Sprintf("%s conflicts with %s on GP%d", who, prev, pin)
+				}
+				return
+			}
 			devicePins[pin] = who
 		}
 		if d := b.LCD; d != nil {
@@ -813,11 +827,17 @@ func LoadBoards() ([]BoardDef, error) {
 					return nil, fmt.Errorf("boards: %s: audio pin GP%d conflicts with %s", b.ID, pin, owner)
 				}
 			}
-			addDevicePin("audio bclk", d.BCLK)
-			addDevicePin("audio lrclk", d.LRCLK)
-			addDevicePin("audio data", d.Data)
-			addDevicePin("audio clock", d.Clock)
-			addDevicePin("audio pwm", d.Pin)
+			switch d.Kind {
+			case "i2s":
+				addDevicePin("audio bclk", d.BCLK)
+				addDevicePin("audio lrclk", d.LRCLK)
+				addDevicePin("audio data", d.Data)
+			case "pdm":
+				addDevicePin("audio data", d.Data)
+				addDevicePin("audio clock", d.Clock)
+			case "pwm":
+				addDevicePin("audio pwm", d.Pin)
+			}
 		}
 		if devicePinErr != "" {
 			return nil, fmt.Errorf("boards: %s: %s", b.ID, devicePinErr)
@@ -944,7 +964,7 @@ type spiPin struct {
 	bus, cs int
 }
 
-func validSPI(used map[spiPin]string, spi, cs int, device string) error {
+func validSPI(used map[spiPin]string, csOwners map[int]spiPin, spi, cs int, device string) error {
 	if spi != 0 && spi != 1 {
 		return fmt.Errorf("%s: spi must be 0 or 1", device)
 	}
@@ -955,6 +975,14 @@ func validSPI(used map[spiPin]string, spi, cs int, device string) error {
 	if prev, ok := used[key]; ok {
 		return fmt.Errorf("%s and %s both use SPI%d CS GP%d", prev, device, spi, cs)
 	}
+	// A GPIO cannot select a device on two controllers: the pin would be
+	// driven by both SPI blocks. Devices sharing a controller keep distinct
+	// chip selects and are rejected by the spiPin check above.
+	if prev, ok := csOwners[cs]; ok && prev.bus != spi {
+		return fmt.Errorf("%s and %s both use GP%d as an SPI chip select (SPI%d and SPI%d)",
+			used[prev], device, cs, prev.bus, spi)
+	}
 	used[key] = device
+	csOwners[cs] = key
 	return nil
 }

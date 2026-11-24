@@ -88,11 +88,51 @@ func writeBoards(t *testing.T, yaml string) {
 func TestBoardsAllowSharedSPI(t *testing.T) {
 	writeBoards(t, `boards:
   - id: shared
-    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 21, width: 240, height: 320 }
     ethernet: { kind: w5500, spi: 0, cs: 20 }
 `)
 	if _, err := LoadBoards(); err != nil {
 		t.Fatalf("shared bus rejected: %v", err)
+	}
+}
+
+// TestBoardsAllowSharedLCDTouchReset checks that the panel and touch resets may
+// share one GPIO, as on the Touch-LCD-2.
+func TestBoardsAllowSharedLCDTouchReset(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: panel
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    touch: { bus: 0, addr: 0x15, int: 29, rst: 20, width: 240, height: 320 }
+`)
+	if _, err := LoadBoards(); err != nil {
+		t.Fatalf("shared LCD/touch reset rejected: %v", err)
+	}
+}
+
+// TestBoardsRejectCrossDevicePinReuse checks that two devices may not silently
+// claim the same GPIO: the old owner map kept only the last writer.
+func TestBoardsRejectCrossDevicePinReuse(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: clash
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    ethernet: { kind: w5500, spi: 0, cs: 20 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("LCD reset and Ethernet chip select shared GP20")
+	}
+}
+
+// TestBoardsRejectChipSelectOnTwoControllers checks that a GPIO used as a chip
+// select cannot select a device on both SPI0 and SPI1.
+func TestBoardsRejectChipSelectOnTwoControllers(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: clash
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+    spi_tcp:
+      - { bus: 1, cs: 17 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("GP17 accepted as a chip select on both SPI controllers")
 	}
 }
 
