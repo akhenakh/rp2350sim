@@ -1289,10 +1289,7 @@ func (c *Chip) SendUART(idx int, data []byte) {
 	if idx < 0 || idx >= len(c.uart) || c.uart[idx] == nil {
 		return
 	}
-	c.uart[idx].rxMu.Lock()
-	c.uart[idx].rx = append(c.uart[idx].rx, data...)
-	c.uart[idx].rxMu.Unlock()
-	c.uart[idx].irqPending.Store(true)
+	c.uart[idx].send(data)
 }
 
 // NowMicros returns the current virtual time in microseconds.

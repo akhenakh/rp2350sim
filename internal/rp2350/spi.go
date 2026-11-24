@@ -51,6 +51,9 @@ func newSPI(c *Chip, base uint32, id int) *spiBlock {
 			if len(s.rx) > 0 {
 				sr |= spiSRRNE
 			}
+			if len(s.rx) == spiRXDepth {
+				sr |= 1 << 3 // RFF
+			}
 			return sr, true
 		case 0x08: // SSPDR
 			if len(s.rx) == 0 {
@@ -59,17 +62,28 @@ func newSPI(c *Chip, base uint32, id int) *spiBlock {
 			v := s.rx[0]
 			s.rx = s.rx[1:]
 			return v, true
-		case 0x14: // SSPRIS
-			ris := uint32(1 << 3) // TX FIFO not full
-			if s.ror {
-				ris |= 1
-			}
-			if len(s.rx) > 0 {
-				ris |= 1 << 2
-			}
-			return ris, true
+		case 0x18: // SSPRIS
+			return s.rawInterruptStatus(), true
+		case 0x1c: // SSPMIS
+			return s.rawInterruptStatus() & s.block.regs[0x14/4], true
 		case 0x20: // SSPICR
 			return 0, true
+		case 0xfe0:
+			return 0x22, true
+		case 0xfe4:
+			return 0x10, true
+		case 0xfe8:
+			return 0x34, true
+		case 0xfec:
+			return 0, true
+		case 0xff0:
+			return 0x0d, true
+		case 0xff4:
+			return 0xf0, true
+		case 0xff8:
+			return 0x05, true
+		case 0xffc:
+			return 0xb1, true
 		}
 		return 0, false
 	}
@@ -109,6 +123,17 @@ func newSPI(c *Chip, base uint32, id int) *spiBlock {
 		}
 	}
 	return s
+}
+
+func (s *spiBlock) rawInterruptStatus() uint32 {
+	ris := uint32(1 << 3) // TXRIS: the instantaneous TX FIFO is half empty or less
+	if s.ror {
+		ris |= 1
+	}
+	if len(s.rx) >= spiRXDepth/2 {
+		ris |= 1 << 2
+	}
+	return ris
 }
 
 // AddSPI attaches a PL022 SPI controller.

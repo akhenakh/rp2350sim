@@ -227,14 +227,14 @@ func TestSPI16BitAndOverrun(t *testing.T) {
 	for i := range 9 {
 		c.Write32(0x40080008, uint32(i))
 	}
-	if v := c.Read32(0x40080014); v&1 == 0 {
+	if v := c.Read32(0x40080018); v&1 == 0 {
 		t.Fatal("RX overrun did not set ROR")
 	}
 	if v := c.Read32(0x40080008); v != 0xCD {
 		t.Fatalf("overrun kept the newest byte: first RX = %#x, want the first frame 0xCD", v)
 	}
 	c.Write32(0x40080020, 1) // SSPICR RORIC
-	if v := c.Read32(0x40080014); v&1 != 0 {
+	if v := c.Read32(0x40080018); v&1 != 0 {
 		t.Fatal("RORIC did not clear the overrun")
 	}
 }
