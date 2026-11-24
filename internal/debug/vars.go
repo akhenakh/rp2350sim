@@ -21,10 +21,6 @@ type localVar struct {
 func (i *Info) VariablesAt(pc uint32, regs [16]uint32, read MemoryReader) []Variable {
 	var out []Variable
 	fn, ok := i.FunctionAt(pc)
-	file := ""
-	if ok {
-		file = fn.File
-	}
 	var cfa uint64
 	if ok {
 		cfa = i.cfaAt(fn.Addr, pc, regs)
@@ -37,12 +33,6 @@ func (i *Info) VariablesAt(pc uint32, regs [16]uint32, read MemoryReader) []Vari
 		}
 	}
 	for _, g := range i.globals {
-		if g.Type == "" || g.Type == "object" {
-			continue
-		}
-		if file != "" && g.File != "" && baseName(g.File) != baseName(file) {
-			continue
-		}
 		if g.Const != nil {
 			out = append(out, Variable{
 				Name: g.Name, Type: g.Type, Scope: "global",
@@ -535,13 +525,4 @@ func (i *Info) cfaAt(low, pc uint32, regs [16]uint32) uint64 {
 		}
 	}
 	return uint64(regs[13])
-}
-
-func baseName(p string) string {
-	for n := len(p) - 1; n >= 0; n-- {
-		if p[n] == '/' || p[n] == '\\' {
-			return p[n+1:]
-		}
-	}
-	return p
 }

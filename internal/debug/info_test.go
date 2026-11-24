@@ -2,6 +2,8 @@ package debug_test
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/akhenakh/rp2350sim/internal/debug"
@@ -52,6 +54,48 @@ func findVariable(vars []debug.Variable, name string) (debug.Variable, bool) {
 		}
 	}
 	return debug.Variable{}, false
+}
+
+func TestLineAtUsesWinningCompDir(t *testing.T) {
+	if _, err := exec.LookPath("cc"); err != nil {
+		t.Skip("C compiler not available")
+	}
+	dir := t.TempDir()
+	aDir, bDir := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	for _, d := range []string{aDir, bDir} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aSrc, bSrc := filepath.Join(aDir, "a.c"), filepath.Join(bDir, "b.c")
+	if err := os.WriteFile(aSrc, []byte("int alpha(void) { return 1; }\nint main(void) { return alpha(); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bSrc, []byte("int beta(void) { return 2; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	elfPath := filepath.Join(dir, "fixture.elf")
+	cmd := exec.Command("cc", "-gdwarf-4", "-g", "-O0", aSrc, bSrc, "-o", elfPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build DWARF fixture: %v\n%s", err, output)
+	}
+	info, err := debug.Load(elfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, ok := info.Resolve("beta")
+	if !ok {
+		t.Fatal("beta symbol not found")
+	}
+	// readSymbols clears the Thumb bit for ARM firmware; this host-native
+	// fixture has an even address, so query the original symbol address.
+	file, line, ok := info.LineAt(addr + 1)
+	if !ok || line == 0 {
+		t.Fatalf("LineAt(%#x) = %q:%d, %v", addr, file, line, ok)
+	}
+	if want := filepath.Join(bDir, "b.c"); file != want {
+		t.Fatalf("LineAt file = %q, want winning CU path %q", file, want)
+	}
 }
 
 func TestCDebugVariables(t *testing.T) {

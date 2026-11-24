@@ -67,14 +67,14 @@ func (e *Emu) resolveLocked(spec string) (uint32, error) {
 	if spec == "" {
 		return 0, fmt.Errorf("empty address")
 	}
-	raw := strings.TrimPrefix(strings.TrimPrefix(spec, "0x"), "0X")
-	if v, err := strconv.ParseUint(raw, 16, 32); err == nil {
-		return uint32(v), nil
-	}
 	if e.debugInfo != nil {
 		if addr, ok := e.debugInfo.Resolve(spec); ok {
 			return addr, nil
 		}
+	}
+	raw := strings.TrimPrefix(strings.TrimPrefix(spec, "0x"), "0X")
+	if v, err := strconv.ParseUint(raw, 16, 32); err == nil {
+		return uint32(v), nil
 	}
 	return 0, fmt.Errorf("%q is neither a hex address nor a known symbol", spec)
 }

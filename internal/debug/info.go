@@ -461,6 +461,7 @@ func (i *Info) FunctionAt(pc uint32) (Function, bool) {
 func (i *Info) LineAt(pc uint32) (string, int, bool) {
 	var bestAddr uint64
 	var bestFile string
+	var bestCompDir string
 	var bestLine int
 	found := false
 	for _, l := range i.lines {
@@ -479,6 +480,7 @@ func (i *Info) LineAt(pc uint32) (string, int, bool) {
 			if !found || e.Address >= bestAddr {
 				bestAddr = e.Address
 				bestFile = e.File.Name
+				bestCompDir = l.compDir
 				bestLine = e.Line
 				found = true
 			}
@@ -486,11 +488,8 @@ func (i *Info) LineAt(pc uint32) (string, int, bool) {
 	}
 	if found {
 		name := bestFile
-		for _, l := range i.lines {
-			if l.compDir != "" && !filepath.IsAbs(name) {
-				name = filepath.Join(l.compDir, name)
-				break
-			}
+		if bestCompDir != "" && !filepath.IsAbs(name) {
+			name = filepath.Join(bestCompDir, name)
 		}
 		line := bestLine
 		if line == 0 {

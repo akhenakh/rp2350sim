@@ -3,7 +3,40 @@ package main
 import (
 	"os"
 	"testing"
+
+	"github.com/akhenakh/rp2350sim/internal/debug"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
+
+func TestBreakpointResolutionPrefersExactSymbol(t *testing.T) {
+	e := &Emu{debugInfo: &debug.Info{Functions: []debug.Function{{Name: "face", Addr: 0x2000}}}}
+	addr, err := e.resolveLocked("face")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != 0x2000 {
+		t.Fatalf("face resolved to %#x, want symbol address 0x2000", addr)
+	}
+}
+
+func TestStartupBreakpointStopsBeforeFirstInstruction(t *testing.T) {
+	path := writeLoopFirmware(t)
+	e := &Emu{debugger: rp2350.NewDebugger(), chip: rp2350.New()}
+	if err := e.LoadPaused(path); err != nil {
+		t.Fatal(err)
+	}
+	const reset = rp2350.FlashBase + 8
+	if addr, err := e.AddBreakpoint("0x10000008"); err != nil || addr != reset {
+		t.Fatalf("AddBreakpoint = %#x, %v", addr, err)
+	}
+	e.RunFor(100)
+	if !e.debugger.Stopped || e.debugger.StopPC != reset {
+		t.Fatalf("startup breakpoint: stopped=%v pc=%#x", e.debugger.Stopped, e.debugger.StopPC)
+	}
+	if e.chip.Cycles > 1 {
+		t.Fatalf("execution advanced before startup breakpoint: cycles=%d", e.chip.Cycles)
+	}
+}
 
 func TestDebugPanelSnapshot(t *testing.T) {
 	const path = "../../firmware/c/build/debug.elf"
