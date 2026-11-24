@@ -332,3 +332,181 @@ func TestSIOFIFOAndDoorbellIRQs(t *testing.T) {
 		t.Fatal("doorbell clear left the IRQ pending")
 	}
 }
+
+// TestSIODoorbellStatusAndZeroWrite covers the register map: OUT_* reads the
+// peer's input status, IN_* reads own, and SET with zero is a no-op.
+func TestSIODoorbellStatusAndZeroWrite(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.core = 0
+	c.Write32(SIOBase+0x180, 0) // no doorbell
+	if c.ppb[1].pending[0]&(1<<sioIRQBell) != 0 {
+		t.Fatal("zero OUT_SET pended a doorbell")
+	}
+	c.Write32(SIOBase+0x180, 0x2)
+	if got := c.Read32(SIOBase + 0x180); got != 0x2 {
+		t.Fatalf("OUT_SET status = %#x, want 2", got)
+	}
+	if got := c.Read32(SIOBase + 0x188); got != 0 {
+		t.Fatalf("own IN_SET status = %#x, want 0", got)
+	}
+	c.core = 1
+	if got := c.Read32(SIOBase + 0x188); got != 0x2 {
+		t.Fatalf("peer IN_SET status = %#x, want 2", got)
+	}
+	if got := c.Read32(SIOBase + 0x180); got != 0 {
+		t.Fatalf("peer OUT_SET status = %#x, want 0", got)
+	}
+	c.Write32(SIOBase+0x18C, 0x2) // acknowledge own
+	if got := c.Read32(SIOBase + 0x188); got != 0 {
+		t.Fatalf("IN_SET after clear = %#x", got)
+	}
+	if c.ppb[1].pending[0]&(1<<sioIRQBell) != 0 {
+		t.Fatal("doorbell IRQ stayed pending after IN_CLR")
+	}
+}
+
+// TestCore1LaunchInitialisesMSP checks the launch sequence primes MSP as well
+// as R13, so an immediate MRS MSP or a pre-first-step exception sees the new
+// stack.
+func TestCore1LaunchInitialisesMSP(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.core = 0
+	words := []uint32{0, 0, 1, 0x20000000, 0x20008000, 0x20000101}
+	for _, w := range words {
+		c.Write32(SIOBase+0x54, w)
+	}
+	if c.CPU1.Parked {
+		t.Fatal("core 1 is still parked")
+	}
+	if c.CPU1.MSP != 0x20008000 || c.CPU1.R[13] != 0x20008000 {
+		t.Fatalf("MSP=%#x R13=%#x, want 0x20008000", c.CPU1.MSP, c.CPU1.R[13])
+	}
+}
+
+// TestFPCCRResetAndFPCARWindow checks the PPB view of the per-core FP context
+// registers.
+func TestFPCCRResetAndFPCARWindow(t *testing.T) {
+	c := New()
+	c.core = 0
+	if got := c.Read32(SCSBase + 0xF34); got != 0xC0000000 {
+		t.Fatalf("FPCCR reset = %#x, want 0xc0000000", got)
+	}
+	c.Write32(SCSBase+0xF38, 0x20001003) // FPCAR is 8-byte aligned
+	if got := c.Read32(SCSBase + 0xF38); got != 0x20001000 {
+		t.Fatalf("FPCAR = %#x, want 0x20001000", got)
+	}
+	if c.CPU0.FPCAR != 0x20001000 {
+		t.Fatalf("CPU FPCAR = %#x", c.CPU0.FPCAR)
+	}
+}
+
+// TestSysTickRVRZeroStops covers the ARMv8-M rule that RVR==0 raises
+// COUNTFLAG once and stops, rather than wrapping forever.
+func TestSysTickRVRZeroStops(t *testing.T) {
+	c := New()
+	n := c.ppb[0]
+	n.write(0x014, 0)
+	n.write(0x010, 7) // ENABLE | TICKINT | CPU clock
+	c.Cycles = 1
+	n.tickSysTick(c.Cycles)
+	if got := n.read(0x010); got&sysTickCountFlag == 0 {
+		t.Fatal("RVR=0 did not set COUNTFLAG")
+	}
+	if !n.pendST {
+		t.Fatal("RVR=0 did not pend SysTick")
+	}
+	n.pendST = false
+	c.Cycles = 10
+	n.tickSysTick(c.Cycles)
+	if n.pendST {
+		t.Fatal("RVR=0 timer kept wrapping after it stopped")
+	}
+	if got := n.read(0x010); got&sysTickCountFlag != 0 {
+		t.Fatal("RVR=0 timer set COUNTFLAG after it stopped")
+	}
+
+	// A CVR write with RVR=0 also stops and leaves CVR at zero.
+	n.write(0x018, 0)
+	if got := n.read(0x018); got != 0 {
+		t.Fatalf("CVR after write with RVR=0 = %d", got)
+	}
+}
+
+// TestSysTickCVRReadback checks that CVR reads zero until the next clock edge
+// reloads RVR.
+func TestSysTickCVRReadback(t *testing.T) {
+	c := New()
+	n := c.ppb[0]
+	n.write(0x014, 99)
+	n.write(0x010, 7)
+	n.write(0x018, 0)
+	if got := n.read(0x018); got != 0 {
+		t.Fatalf("CVR immediately after write = %d, want 0", got)
+	}
+	c.Cycles++
+	if got := n.read(0x018); got != 99 {
+		t.Fatalf("CVR after one tick = %d, want 99", got)
+	}
+}
+
+// TestSysTickCSRWriteCatchesStall checks that a CSR write after a PSRAM-style
+// mid-instruction stall observes a wrap crossed before the write.
+func TestSysTickCSRWriteCatchesStall(t *testing.T) {
+	c := New()
+	n := c.ppb[0]
+	n.write(0x014, 99)
+	n.write(0x010, 7)
+	c.Cycles = 100 // a wrap happened at 100
+	n.write(0x010, 7)
+	if got := n.read(0x010); got&sysTickCountFlag == 0 {
+		t.Fatal("CSR rewrite dropped the stalled wrap")
+	}
+	if !n.pendST {
+		t.Fatal("stalled wrap did not pend SysTick")
+	}
+}
+
+// TestNVICImplements52IRQs checks that writes to the unimplemented NVIC bits
+// (52..63) and priority bytes are ignored, like the RP2350.
+func TestNVICImplements52IRQs(t *testing.T) {
+	c := New()
+	c.NVIC.write(0x104, 1<<20) // ISER word 1, IRQ 52: not implemented
+	if c.NVIC.enabled[1] != 0 {
+		t.Fatalf("ISER1 enabled unimplemented IRQs: %#x", c.NVIC.enabled[1])
+	}
+	c.NVIC.write(0x104, 1<<19) // IRQ 51: implemented
+	if c.NVIC.enabled[1] != 1<<19 {
+		t.Fatalf("IRQ 51 not enabled: %#x", c.NVIC.enabled[1])
+	}
+	c.NVIC.write(0x204, 1<<20) // ISPR IRQ52
+	if c.NVIC.pending[1] != 0 {
+		t.Fatalf("ISPR pending unimplemented IRQ: %#x", c.NVIC.pending[1])
+	}
+	c.NVIC.Pend(60)
+	if c.NVIC.pending[1] != 0 {
+		t.Fatalf("Pend(60) accepted: %#x", c.NVIC.pending[1])
+	}
+	c.NVIC.write(0x4D0, 0x80) // IPR for IRQ 52
+	if c.NVIC.prio[52] != 0 {
+		t.Fatalf("IPR for unimplemented IRQ = %#x", c.NVIC.prio[52])
+	}
+}
+
+// TestSysTickNarrowCSRWriteKeepsCountFlag checks the byte/halfword
+// read-modify-write path does not clear COUNTFLAG through a helper read.
+func TestSysTickNarrowCSRWriteKeepsCountFlag(t *testing.T) {
+	c := New()
+	n := c.ppb[0]
+	n.write(0x014, 9)
+	n.write(0x010, 7)
+	c.Cycles = 10 // wrap
+	n.tickSysTick(c.Cycles)
+	c.Write8(SCSBase+0x010, 7) // byte RMW of SYST_CSR
+	if got := c.Read32(SCSBase + 0x010); got&sysTickCountFlag == 0 {
+		t.Fatal("narrow SYST_CSR write cleared COUNTFLAG")
+	}
+}

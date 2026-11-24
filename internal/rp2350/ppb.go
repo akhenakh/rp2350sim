@@ -13,7 +13,13 @@ const (
 	// mpuRegions is the Cortex-M33 MPU region count reported through MPU_TYPE
 	// (the RP2350 exposes eight regions).
 	mpuRegions = 8
+
+	// nvicIRQs is the number of implemented RP2350 interrupt lines.
+	nvicIRQs = 52
 )
+
+// irqMask has the implemented IRQ bits for each enabled/pending word.
+var irqMask = [2]uint32{0xFFFFFFFF, (1 << (nvicIRQs - 32)) - 1}
 
 // NVIC models one core's private System Control Space: the NVIC, the System
 // Control Block and the SysTick timer. On the RP2350 the whole 0xE000E000 page
@@ -42,7 +48,6 @@ type NVIC struct {
 	bfar  uint32
 
 	cpacr  uint32
-	fpcar  uint32
 	fpdscr uint32
 
 	mpuCtrl uint32
@@ -84,7 +89,6 @@ func (n *NVIC) reset() {
 	n.mmfar = 0
 	n.bfar = 0
 	n.cpacr = 0
-	n.fpcar = 0
 	n.fpdscr = 0
 	n.mpuCtrl = 0
 	n.mpuRnr = 0
@@ -114,14 +118,18 @@ func (n *NVIC) cpu() *m33.CPU {
 	return n.chip.CPU1
 }
 
+// hasPending reports an enabled external IRQ or a pending system exception.
+func (n *NVIC) hasPending() bool {
+	return (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 ||
+		n.pendNMI || n.pendSV || n.pendST
+}
+
 // syncActive mirrors the pending-and-enabled state into the core so the
 // instruction loop can test a plain bool instead of calling the controller
 // every cycle.
 func (n *NVIC) syncActive() {
-	any := (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 ||
-		n.pendNMI || n.pendSV || n.pendST
 	if cpu := n.cpu(); cpu != nil {
-		cpu.IRQPending = any
+		cpu.IRQPending = n.hasPending()
 	}
 }
 
@@ -131,8 +139,7 @@ func (n *NVIC) wake() {
 	if cpu == nil {
 		return
 	}
-	if (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 ||
-		n.pendNMI || n.pendSV || n.pendST {
+	if n.hasPending() {
 		cpu.Sleeping = false
 		cpu.SleepOnEvent = false
 	}
@@ -157,7 +164,7 @@ func (n *NVIC) noteEvent() {
 
 // Pend marks an external IRQ pending on this core.
 func (n *NVIC) Pend(irq int) {
-	if irq < 0 || irq >= 64 {
+	if irq < 0 || irq >= nvicIRQs {
 		return
 	}
 	if n.pending[irq/32]&(1<<uint(irq%32)) != 0 {
@@ -171,7 +178,7 @@ func (n *NVIC) Pend(irq int) {
 
 // ClearPending clears a pending external IRQ.
 func (n *NVIC) ClearPending(irq int) {
-	if irq < 0 || irq >= 64 {
+	if irq < 0 || irq >= nvicIRQs {
 		return
 	}
 	n.pending[irq/32] &^= 1 << uint(irq%32)
@@ -280,7 +287,7 @@ func (n *NVIC) bestPending() uint32 {
 	if n.pendST {
 		consider(excSysTick, n.exceptionPriority(excSysTick))
 	}
-	for i := range 64 {
+	for i := range nvicIRQs {
 		if n.pending[i/32]&n.enabled[i/32]&(1<<uint(i%32)) == 0 {
 			continue
 		}
@@ -384,6 +391,16 @@ func (n *NVIC) icsr(cpu *m33.CPU) uint32 {
 	return v
 }
 
+// peek returns a register value without read side effects, for byte/halfword
+// read-modify-write accesses. In particular a narrow write to SYST_CSR must
+// not clear COUNTFLAG through a helper read.
+func (n *NVIC) peek(off uint32) uint32 {
+	if off == 0x010 {
+		return n.tick.ctrl
+	}
+	return n.read(off)
+}
+
 func (n *NVIC) read(off uint32) uint32 {
 	cpu := n.cpu()
 	switch {
@@ -402,21 +419,25 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off == 0x01C: // SYST_CALIB: no reference clock, no skew
 		return 0x40000000
 	case off >= 0x100 && off < 0x108:
-		return n.enabled[(off-0x100)/4]
+		i := (off - 0x100) / 4
+		return n.enabled[i] & irqMask[i]
 	case off >= 0x180 && off < 0x188:
-		return n.enabled[(off-0x180)/4]
+		i := (off - 0x180) / 4
+		return n.enabled[i] & irqMask[i]
 	case off >= 0x200 && off < 0x208:
-		return n.pending[(off-0x200)/4]
+		i := (off - 0x200) / 4
+		return n.pending[i] & irqMask[i]
 	case off >= 0x280 && off < 0x288:
-		return n.pending[(off-0x280)/4]
+		i := (off - 0x280) / 4
+		return n.pending[i] & irqMask[i]
 	case off >= 0x300 && off < 0x308:
 		return n.activeIRQ[(off-0x300)/4]
 	case off >= 0x400 && off < 0x400+64:
 		i := (off - 0x400) / 4
 		var v uint32
 		for k := range 4 {
-			if int(i)*4+k < len(n.prio) {
-				v |= uint32(n.prio[int(i)*4+k]) << (8 * uint(k))
+			if irq := int(i)*4 + k; irq < nvicIRQs && irq < len(n.prio) {
+				v |= uint32(n.prio[irq]) << (8 * uint(k))
 			}
 		}
 		return v
@@ -501,7 +522,10 @@ func (n *NVIC) read(off uint32) uint32 {
 		}
 		return cpu.FPCCR
 	case off == 0xF38: // FPCAR
-		return n.fpcar
+		if cpu == nil {
+			return 0
+		}
+		return cpu.FPCAR
 	case off == 0xF3C: // FPDSCR
 		return n.fpdscr
 	}
@@ -515,24 +539,25 @@ func (n *NVIC) write(off, v uint32) {
 	case off == 0x008:
 		n.actlr = v
 	case off == 0x010: // SYST_CSR
-		n.tick.writeCSR(v, now)
+		n.tick.writeCSR(v, now, n)
 		n.syncActive()
 		n.wake()
 	case off == 0x014: // SYST_RVR
 		n.tick.writeRVR(v)
 	case off == 0x018: // SYST_CVR
-		n.tick.writeCVR(now)
+		n.tick.writeCVR(now, n)
 	case off >= 0x100 && off < 0x108: // ISER
 		i := (off - 0x100) / 4
-		n.enabled[i] |= v
+		n.enabled[i] |= v & irqMask[i]
 		n.syncActive()
 		n.wake()
 	case off >= 0x180 && off < 0x188: // ICER
 		i := (off - 0x180) / 4
-		n.enabled[i] &^= v
+		n.enabled[i] &^= v & irqMask[i]
 		n.syncActive()
 	case off >= 0x200 && off < 0x208: // ISPR
 		i := (off - 0x200) / 4
+		v &= irqMask[i]
 		newbits := v &^ n.pending[i]
 		n.pending[i] |= v
 		if newbits != 0 {
@@ -542,14 +567,14 @@ func (n *NVIC) write(off, v uint32) {
 		n.wake()
 	case off >= 0x280 && off < 0x288: // ICPR
 		i := (off - 0x280) / 4
-		n.pending[i] &^= v
+		n.pending[i] &^= v & irqMask[i]
 		n.syncActive()
 	case off >= 0x400 && off < 0x400+64: // IPR
 		i := (off - 0x400) / 4
 		for k := range 4 {
-			if int(i)*4+k < len(n.prio) {
+			if irq := int(i)*4 + k; irq < nvicIRQs && irq < len(n.prio) {
 				// Only the four top priority bits are implemented.
-				n.prio[int(i)*4+k] = byte(v>>(8*uint(k))) & 0xF0
+				n.prio[irq] = byte(v>>(8*uint(k))) & 0xF0
 			}
 		}
 	case off == 0xD04: // ICSR
@@ -635,7 +660,9 @@ func (n *NVIC) write(off, v uint32) {
 			cpu.SetFPCCR(v)
 		}
 	case off == 0xF38: // FPCAR: location for lazy stacking
-		n.fpcar = v &^ 7
+		if cpu != nil {
+			cpu.SetFPCAR(v)
+		}
 	case off == 0xF3C: // FPDSCR
 		n.fpdscr = v & 0x0700_0000
 	}

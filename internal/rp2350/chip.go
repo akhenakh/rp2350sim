@@ -1179,7 +1179,7 @@ func (c *Chip) writeMMIO8(addr uint32, v uint8) {
 		off := (addr - SCSBase) &^ 3
 		shift := (addr & 3) * 8
 		n := c.ppbForCore()
-		old := n.read(off)
+		old := n.peek(off)
 		n.write(off, old&^(0xFF<<shift)|uint32(v)<<shift)
 		return
 	}
@@ -1210,7 +1210,7 @@ func (c *Chip) writeMMIO16(addr uint32, v uint16) {
 		off := (addr - SCSBase) &^ 3
 		shift := (addr & 2) * 8
 		n := c.ppbForCore()
-		old := n.read(off)
+		old := n.peek(off)
 		n.write(off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
 		return
 	}

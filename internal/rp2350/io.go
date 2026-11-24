@@ -300,7 +300,9 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 		return v
 	case 0x5C: // SPINLOCK_ST
 		return s.spinlock
-	case 0x180, 0x184, 0x188, 0x18C: // DOORBELL_*: the input bits for this core
+	case 0x180, 0x184: // DOORBELL_OUT_*: status on the opposite core
+		return s.doorbellIn[1-c.core]
+	case 0x188, 0x18C: // DOORBELL_IN_*: status on this core
 		return s.doorbellIn[c.core]
 	}
 	if off >= 0x100 && off < 0x180 { // SPINLOCK0..31
@@ -360,19 +362,27 @@ func (s *sioBlock) write(c *Chip, off, v uint32) {
 	case 0x54: // FIFO_WR
 		s.push(c, c.core, v)
 	case 0x180: // DOORBELL_OUT_SET: set the peer's input bits
+		if v &= 0xFF; v == 0 {
+			break
+		}
 		peer := 1 - c.core
 		s.doorbellIn[peer] |= v
 		c.pendCoreIRQ(peer, sioIRQBell)
 	case 0x184: // DOORBELL_OUT_CLR
+		v &= 0xFF
 		peer := 1 - c.core
 		s.doorbellIn[peer] &^= v
 		if s.doorbellIn[peer] == 0 {
 			c.clearCorePendingIRQ(peer, sioIRQBell)
 		}
 	case 0x188: // DOORBELL_IN_SET: set this core's input bits
+		if v &= 0xFF; v == 0 {
+			break
+		}
 		s.doorbellIn[c.core] |= v
 		c.pendCoreIRQ(c.core, sioIRQBell)
 	case 0x18C: // DOORBELL_IN_CLR
+		v &= 0xFF
 		s.doorbellIn[c.core] &^= v
 		if s.doorbellIn[c.core] == 0 {
 			c.clearCorePendingIRQ(c.core, sioIRQBell)
@@ -408,6 +418,7 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 			s.Launches++
 			c.CPU1.Parked = false
 			c.CPU1.VTOR = vt &^ 0x7F
+			c.CPU1.MSP = sp
 			c.CPU1.R[13] = sp
 			c.CPU1.R[15] = entry &^ 1
 			c.CPU1.R[14] = 0
