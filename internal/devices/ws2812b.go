@@ -24,12 +24,14 @@ type WS2812B struct {
 	// Logger, when non-nil, records every latched frame.
 	Logger *slog.Logger
 
-	lastLevel bool
-	riseCycle uint64
-	lowStart  uint64
-	bits      []byte
-	colors    []color.RGBA
-	frames    uint64
+	lastLevel   bool
+	riseCycle   uint64
+	lowStart    uint64
+	lastCycle   uint64
+	initialized bool
+	bits        []byte
+	colors      []color.RGBA
+	frames      uint64
 }
 
 const (
@@ -46,6 +48,16 @@ func NewWS2812B(chip *rp2350.Chip, pin int) *WS2812B {
 func (w *WS2812B) Tick() {
 	level := w.Chip.Pins.Level(w.Pin)
 	now := w.Chip.Cycles
+	if !w.initialized || now < w.lastCycle {
+		w.bits = w.bits[:0]
+		w.lastLevel = level
+		w.riseCycle = now
+		w.lowStart = now
+		w.lastCycle = now
+		w.initialized = true
+		return
+	}
+	w.lastCycle = now
 	if level != w.lastLevel {
 		if level {
 			w.riseCycle = now

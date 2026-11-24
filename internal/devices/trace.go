@@ -38,11 +38,13 @@ type Trace struct {
 	Chip     *rp2350.Chip
 	Interval uint64
 
-	pins    []int
-	samples []TraceSample
-	head    int
-	count   int
-	next    uint64
+	pins        []int
+	samples     []TraceSample
+	head        int
+	count       int
+	next        uint64
+	lastTick    uint64
+	initialized bool
 }
 
 // NewTrace allocates a trace for the given pins. Depth is rounded up to at
@@ -73,6 +75,8 @@ func (t *Trace) SetPins(pins []int) {
 	t.pins = append([]int(nil), pins...)
 	t.head, t.count = 0, 0
 	t.next = t.Chip.Cycles
+	t.lastTick = t.Chip.Cycles
+	t.initialized = true
 }
 
 // Pins returns the channel-to-pin mapping.
@@ -88,18 +92,24 @@ func (t *Trace) LatestT() uint64 {
 	return t.samples[(t.head-1+len(t.samples))%len(t.samples)].T
 }
 
-// Tick samples every Interval cycles.
+// Tick samples at most once per call. Missed slots are skipped while the
+// future sampling phase is retained; a virtual-clock rewind clears history.
 func (t *Trace) Tick() {
 	now := t.Chip.Cycles
+	if t.initialized && now < t.lastTick {
+		t.head, t.count = 0, 0
+		t.next = now
+	}
+	t.lastTick = now
+	t.initialized = true
 	if now < t.next {
 		return
 	}
-	// Keep the phase when a long step overshoots so the effective sample
-	// rate does not drift.
-	t.next += t.Interval
-	if now > t.next+t.Interval*8 {
-		t.next = now + t.Interval
+	if t.Interval == 0 {
+		t.Interval = ScopeInterval
 	}
+	steps := (now-t.next)/t.Interval + 1
+	t.next += steps * t.Interval
 	var s TraceSample
 	s.T = now
 	for i, pin := range t.pins {

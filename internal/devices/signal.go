@@ -27,7 +27,9 @@ type SignalSource struct {
 	Offset    float32
 	Interval  uint64
 
-	next uint64
+	next        uint64
+	lastTick    uint64
+	initialized bool
 }
 
 // NewSignalSource creates a generator with a 1 MHz update rate.
@@ -56,16 +58,27 @@ func (w SignalWave) String() string {
 	}
 }
 
-// Tick updates the pin's analog voltage.
+// Tick updates the pin's analog voltage. Missed slots produce one update, and
+// a virtual-clock rewind restarts the schedule and reapplies the waveform.
 func (s *SignalSource) Tick() {
 	now := s.Chip.Cycles
+	if s.initialized && now < s.lastTick {
+		s.next = now
+	}
+	s.lastTick = now
+	s.initialized = true
 	if now < s.next {
 		return
 	}
-	s.next += s.Interval
-	if now > s.next+s.Interval*8 {
-		s.next = now + s.Interval
+	if s.Interval == 0 {
+		s.Interval = ScopeInterval
 	}
+	steps := (now-s.next)/s.Interval + 1
+	s.next += steps * s.Interval
+	s.apply(now)
+}
+
+func (s *SignalSource) apply(now uint64) {
 	t := float64(now) / 150e6
 	phase := math.Mod(t*s.Hz, 1)
 	var wave float32

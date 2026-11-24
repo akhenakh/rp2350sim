@@ -198,3 +198,71 @@ func TestSignalSourceSine(t *testing.T) {
 		t.Fatalf("driven voltage = %v, want 3.3", v)
 	}
 }
+
+func TestTraceLateTickSkipsMissedSamples(t *testing.T) {
+	c := rp2350.New()
+	tr := NewTrace(c, []int{0}, 10, 4)
+	c.Cycles = 35
+	tr.Tick()
+	_, samples := tr.Snapshot()
+	if len(samples) != 1 || samples[0].T != 35 {
+		t.Fatalf("late tick samples = %+v, want only T=35", samples)
+	}
+	c.Cycles = 39
+	tr.Tick()
+	_, samples = tr.Snapshot()
+	if len(samples) != 1 {
+		t.Fatalf("missed slot produced a catch-up sample: %+v", samples)
+	}
+	c.Cycles = 40
+	tr.Tick()
+	_, samples = tr.Snapshot()
+	if len(samples) != 2 || samples[0].T != 35 || samples[1].T != 40 {
+		t.Fatalf("phase samples = %+v, want T=35,40", samples)
+	}
+	c.Cycles = 45
+	tr.Tick()
+	_, samples = tr.Snapshot()
+	if len(samples) != 2 {
+		t.Fatalf("future phase drifted: %+v", samples)
+	}
+}
+
+func TestTraceRewindClearsRing(t *testing.T) {
+	c := rp2350.New()
+	tr := NewTrace(c, []int{0}, 10, 4)
+	for _, cycle := range []uint64{10, 20} {
+		c.Cycles = cycle
+		tr.Tick()
+	}
+	c.Cycles = 5
+	tr.Tick()
+	_, samples := tr.Snapshot()
+	if len(samples) != 1 || samples[0].T != 5 {
+		t.Fatalf("rewind samples = %+v, want only T=5", samples)
+	}
+}
+
+func TestSignalSourceRewindReappliesWaveform(t *testing.T) {
+	c := rp2350.New()
+	src := NewSignalSource(c, 26, WaveSquare, 15e6, 1, 1.5)
+	src.Interval = 10
+	c.Cycles = 35
+	src.Tick()
+	if got := c.Pins.Voltage(26); got != 0.5 {
+		t.Fatalf("pre-rewind voltage = %v, want 0.5", got)
+	}
+	c.Cycles = 4
+	src.Tick()
+	if got := c.Pins.Voltage(26); got != 2.5 {
+		t.Fatalf("post-rewind voltage = %v, want 2.5", got)
+	}
+	if src.next != 14 {
+		t.Fatalf("post-rewind next = %d, want 14", src.next)
+	}
+	c.Cycles = 13
+	src.Tick()
+	if src.next != 14 {
+		t.Fatalf("next before slot = %d, want 14", src.next)
+	}
+}
