@@ -201,6 +201,7 @@ func RootView() {
 			}
 		})
 	})
+	firmwareBrowserModal()
 }
 
 // boardPicker is the startup screen: one card per YAML board definition.

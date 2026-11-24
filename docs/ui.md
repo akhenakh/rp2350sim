@@ -69,11 +69,12 @@ so labels are present.
 
 ## Toolbar and machine lifecycle
 
-The toolbar shows the CPU/board identity, the firmware path, **Open…** (OS file
-dialog), **Load**, **Run**/**Pause**, **Reset**, **GDB**, **Board…**,
-**Build** (Source/Build drawer) and the scope controls. The status line under
-it reports the image name, virtual time, PC and SP, or `(flash)` after a
-self-update.
+The toolbar shows the CPU/board identity, the firmware path, **Open…** (an
+in-window file browser with path entry, breadcrumbs, sorting and filters for
+`.uf2`/`.elf`/`.bin`), **Load**, **Run**/**Pause**, **Reset**, **GDB**,
+**Board…**, **Build** (Source/Build drawer) and the scope controls. The status
+line under it reports the image name, virtual time, PC and SP, or `(flash)`
+after a self-update.
 
 - **Load** restarts the selected image, useful after a rebuild.
 - **Reset** restarts the current image, preserving a self-updated flash.

@@ -1,74 +1,60 @@
 package main
 
 import (
-	"errors"
-	"fmt"
+	"path/filepath"
 	"strings"
-	"sync/atomic"
 
-	"github.com/ncruces/zenity"
 	"go.hasen.dev/shirei"
+	"go.hasen.dev/shirei/widgets"
 )
 
-// dialogOpen guards against opening a second file dialog while one is showing.
-var dialogOpen atomic.Bool
+var (
+	firmwareBrowserOpen      bool
+	firmwareBrowserSelection string
+)
 
-// openFirmwareDialog asks the OS for a firmware image and loads it. It runs the
-// dialog on a goroutine: the frame loop must not block on a modal window.
+// openFirmwareDialog opens the in-window Shirei file browser. The modal is
+// rendered by RootView on the UI thread, so no native dialog or goroutine is
+// involved.
 func openFirmwareDialog() {
-	if !dialogOpen.CompareAndSwap(false, true) {
+	firmwareBrowserSelection = strings.TrimSpace(fwPath)
+	firmwareBrowserOpen = true
+	shirei.RequestNextFrame()
+}
+
+func firmwareBrowserAttrs() widgets.FileBrowserAttrs {
+	start := ""
+	if p := strings.TrimSpace(fwPath); p != "" {
+		start = filepath.Dir(p)
+	}
+	return widgets.FileBrowserAttrs{
+		Title: "Load firmware",
+		Width: 760,
+		Files: true,
+		Exts:  []string{".uf2", ".elf", ".bin"},
+		Start: start,
+	}
+}
+
+// firmwareBrowserModal renders the firmware picker and loads an accepted file.
+// Load errors are published through Emu.Snapshot().Err and shown by the toolbar.
+func firmwareBrowserModal() {
+	if !firmwareBrowserOpen {
 		return
 	}
-	go func() {
-		defer dialogOpen.Store(false)
-
-		if !zenity.IsAvailable() {
-			// No native dialog backend: fall back to the path in the toolbar.
-			if p := strings.TrimSpace(fwPath); p != "" {
-				_ = emu.Load(p)
-				shirei.WithFrameLock(func() {
-					flashMode = false
-					watchFile(p, "firmware")
-				})
-			}
-			shirei.RequestNextFrame()
-			return
-		}
-
-		options := []zenity.Option{
-			zenity.Title("Load TinyGo firmware"),
-			zenity.FileFilter{
-				Name:     "Firmware images",
-				Patterns: []string{"*.uf2", "*.elf", "*.bin"},
-				CaseFold: true,
-			},
-			zenity.FileFilter{Name: "All files", Patterns: []string{"*"}},
-		}
-		if p := strings.TrimSpace(fwPath); p != "" {
-			options = append(options, zenity.Filename(p))
-		}
-
-		path, err := zenity.SelectFile(options...)
-		if err != nil {
-			if errors.Is(err, zenity.ErrCanceled) {
-				return
-			}
-			_ = zenity.Error(fmt.Sprintf("Could not open the file dialog:\n%v", err),
-				zenity.Title("rp2350sim"))
-			return
-		}
-		if path == "" {
-			return
-		}
-		if err := emu.Load(path); err != nil {
-			_ = zenity.Error(err.Error(), zenity.Title("rp2350sim"))
-			return
-		}
-		shirei.WithFrameLock(func() {
-			fwPath = path
-			flashMode = false
-			watchFile(path, "firmware")
-		})
+	if !widgets.FileBrowserModal(&firmwareBrowserOpen, &firmwareBrowserSelection, firmwareBrowserAttrs()) {
+		return
+	}
+	path := strings.TrimSpace(firmwareBrowserSelection)
+	if path == "" {
+		return
+	}
+	if err := emu.Load(path); err != nil {
 		shirei.RequestNextFrame()
-	}()
+		return
+	}
+	fwPath = path
+	flashMode = false
+	watchFile(path, "firmware")
+	shirei.RequestNextFrame()
 }
