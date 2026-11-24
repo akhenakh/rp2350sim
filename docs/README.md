@@ -31,6 +31,7 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 
 | Document | Contents |
 |---|---|
+| [videos.md](videos.md) | AI-generated video tours of the simulator |
 | [cli.md](cli.md) | every command-line flag, output contract, exit codes, examples |
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
 | [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
