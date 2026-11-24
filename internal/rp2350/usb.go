@@ -334,6 +334,7 @@ func newUSB(c *Chip) *usbBlock {
 	u := &usbBlock{chip: c}
 	u.dpram = newRegBlock(usbDPRAMBase, 0x1000)
 	u.dpram.noAliases = true
+	u.dpram.byteAddressed = true
 	u.dpram.writeFn = u.writeDPRAM
 	u.regs = newRegBlock(usbRegsBase, 0x1000)
 	u.regs.readFn = u.read

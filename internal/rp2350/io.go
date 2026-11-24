@@ -302,7 +302,9 @@ func (s *sioBlock) reset() {
 	s.doorbellIn = [2]uint32{}
 }
 
-func (s *sioBlock) read(c *Chip, off uint32) uint32 {
+// peek returns SIO state without FIFO-pop or spinlock-acquire side effects.
+// Narrow writes use it for their lane merge so a write cannot consume data.
+func (s *sioBlock) peek(c *Chip, off uint32) uint32 {
 	switch off {
 	case 0x00: // CPUID
 		return uint32(c.core)
@@ -342,16 +344,10 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 	case 0x54: // FIFO_WR
 		return 0
 	case 0x58: // FIFO_RD
-		src := c.core
-		if len(s.fifo[src]) == 0 {
-			s.fifoROE[src] = true
-			s.syncFIFOIRQ(c, src)
+		if len(s.fifo[c.core]) == 0 {
 			return 0
 		}
-		v := s.fifo[src][0]
-		s.fifo[src] = s.fifo[src][1:]
-		s.syncFIFOIRQ(c, src)
-		return v
+		return s.fifo[c.core][0]
 	case 0x5C: // SPINLOCK_ST
 		return s.spinlock
 	case 0x180, 0x184: // DOORBELL_OUT_*: status on the opposite core
@@ -363,12 +359,30 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 		n := (off - 0x100) / 4
 		bit := uint32(1) << n
 		if s.spinlock&bit == 0 {
-			s.spinlock |= bit
 			return bit
 		}
-		return 0
 	}
 	return 0
+}
+
+func (s *sioBlock) read(c *Chip, off uint32) uint32 {
+	v := s.peek(c, off)
+	if off == 0x58 { // FIFO_RD
+		src := c.core
+		if len(s.fifo[src]) == 0 {
+			s.fifoROE[src] = true
+			s.syncFIFOIRQ(c, src)
+			return 0
+		}
+		v = s.fifo[src][0]
+		s.fifo[src] = s.fifo[src][1:]
+		s.syncFIFOIRQ(c, src)
+		return v
+	}
+	if off >= 0x100 && off < 0x180 && v != 0 { // SPINLOCK0..31
+		s.spinlock |= v
+	}
+	return v
 }
 
 func (s *sioBlock) write(c *Chip, off, v uint32) {

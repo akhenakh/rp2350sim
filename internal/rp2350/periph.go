@@ -5,11 +5,15 @@ type regBlock struct {
 	base uint32
 	size uint32
 	regs []uint32
+	// byteAddressed marks true memory (USB DPRAM or boot RAM), where sub-word
+	// writes change only the selected lanes. Peripheral registers instead
+	// replicate a byte/halfword write across the containing 32-bit register.
+	byteAddressed bool
 	// readFn, when set, may override a read. ok=false falls through to regs.
 	readFn func(c *Chip, off uint32) (uint32, bool)
 	// writeFn is called after the register file has been updated.
 	writeFn func(c *Chip, off uint32, v uint32)
-	// writeSizeFn handles a sub-word write before the usual read-merge-write.
+	// writeSizeFn handles a sub-word write before the normal size policy.
 	// It receives the absolute address and the raw value; returning true
 	// consumes the access. Used by write-only registers whose byte order
 	// depends on the transfer size (SHA-256 WDATA).
@@ -42,17 +46,21 @@ func (b *regBlock) reset(c *Chip) {
 	}
 }
 
+func (b *regBlock) peek(off uint32) uint32 {
+	i := off / 4
+	if int(i) < len(b.regs) {
+		return b.regs[i]
+	}
+	return 0
+}
+
 func (b *regBlock) read(c *Chip, off uint32) uint32 {
 	if b.readFn != nil {
 		if v, ok := b.readFn(c, off); ok {
 			return v
 		}
 	}
-	i := off / 4
-	if int(i) < len(b.regs) {
-		return b.regs[i]
-	}
-	return 0
+	return b.peek(off)
 }
 
 func (b *regBlock) write(c *Chip, off, v uint32) {
@@ -223,6 +231,7 @@ const (
 
 func newBootRAM(c *Chip) *regBlock {
 	b := newRegBlock(bootramBase, 0x1000)
+	b.byteAddressed = true
 	// The bootrom stages a boot2 stub at the base of boot RAM. The SDK copies
 	// it to SRAM and calls it from flash_start_xip(); a bare bx lr is enough
 	// because XIP is always usable in this model.

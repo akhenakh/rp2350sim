@@ -1272,18 +1272,18 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 	if off, b, ok := c.aliasTarget(addr); ok {
 		switch {
 		case addr >= b.base+0x1000 && addr < b.base+0x2000: // XOR
-			b.write(c, off, b.read(c, off)^v)
+			b.write(c, off, b.peek(off)^v)
 		case addr >= b.base+0x2000 && addr < b.base+0x3000: // SET
 			if b.setFn != nil {
 				b.setFn(c, off, v)
 			} else {
-				b.write(c, off, b.read(c, off)|v)
+				b.write(c, off, b.peek(off)|v)
 			}
 		default: // CLR
 			if b.clearFn != nil {
 				b.clearFn(c, off, v)
 			} else {
-				b.write(c, off, b.read(c, off)&^v)
+				b.write(c, off, b.peek(off)&^v)
 			}
 		}
 		return
@@ -1320,71 +1320,86 @@ func (c *Chip) writeBootRAMAlias(addr, v uint32, size int) bool {
 }
 
 func (c *Chip) writeMMIO8(addr uint32, v uint8) {
-	if addr >= SIOBase && addr < SIOBase+0x1000 {
-		off := (addr - SIOBase) &^ 3
-		shift := (addr & 3) * 8
-		old := c.sio.read(c, off)
-		c.sio.write(c, off, old&^(0xFF<<shift)|uint32(v)<<shift)
-		return
-	}
-	if addr >= SCSBase && addr < SCSBase+0x1000 {
-		off := (addr - SCSBase) &^ 3
-		shift := (addr & 3) * 8
-		n := c.ppbForCore()
-		old := n.peek(off)
-		n.write(off, old&^(0xFF<<shift)|uint32(v)<<shift)
-		return
-	}
-	if c.writeBootRAMAlias(addr, uint32(v), 1) {
-		return
-	}
-	for _, b := range c.regs {
-		if addr >= b.base && addr < b.base+b.size {
-			if b.writeSizeFn != nil && b.writeSizeFn(c, addr, uint32(v), 1) {
-				return
-			}
-			off := (addr - b.base) &^ 3
-			shift := (addr & 3) * 8
-			old := b.read(c, off)
-			b.write(c, off, old&^(0xFF<<shift)|uint32(v)<<shift)
-			return
-		}
-	}
-	c.unhandledWrite(addr, uint32(v))
+	c.writeMMIONarrow(addr, uint32(v), 1)
 }
 
 func (c *Chip) writeMMIO16(addr uint32, v uint16) {
+	c.writeMMIONarrow(addr, uint32(v), 2)
+}
+
+// replicatedMMIO implements the RP2350 sub-word register-write rule: a byte
+// write is replicated into all four byte lanes, and a halfword write into both
+// halfword lanes of the containing 32-bit register.
+func replicatedMMIO(v uint32, size int) uint32 {
+	if size == 1 {
+		return v * 0x01010101
+	}
+	return v * 0x00010001
+}
+
+func (c *Chip) writeMMIONarrow(addr uint32, v uint32, size int) {
+	shift := (addr & 3) * 8
+	if size == 2 {
+		shift = (addr & 2) * 8
+	}
+	mask := uint32(0xFF) << shift
+	if size == 2 {
+		mask = uint32(0xFFFF) << shift
+	}
+
+	// SIO and SCS registers retain lane-oriented sub-word writes. In
+	// particular CMSIS programs NVIC priority bytes individually. Their merge
+	// reads are side-effect-free so FIFO/spinlock state cannot be consumed.
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
 		off := (addr - SIOBase) &^ 3
-		shift := (addr & 2) * 8
-		old := c.sio.read(c, off)
-		c.sio.write(c, off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+		old := c.sio.peek(c, off)
+		c.sio.write(c, off, old&^mask|v<<shift)
 		return
 	}
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
 		off := (addr - SCSBase) &^ 3
-		shift := (addr & 2) * 8
 		n := c.ppbForCore()
 		old := n.peek(off)
-		n.write(off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+		n.write(off, old&^mask|v<<shift)
 		return
 	}
-	if c.writeBootRAMAlias(addr, uint32(v), 2) {
+	if c.writeBootRAMAlias(addr, v, size) {
 		return
 	}
-	for _, b := range c.regs {
-		if addr >= b.base && addr < b.base+b.size {
-			if b.writeSizeFn != nil && b.writeSizeFn(c, addr, uint32(v), 2) {
-				return
-			}
-			off := (addr - b.base) &^ 3
-			shift := (addr & 2) * 8
-			old := b.read(c, off)
-			b.write(c, off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+	if b := c.regBlockFor(addr); b != nil {
+		if b.writeSizeFn != nil && b.writeSizeFn(c, addr, v, size) {
 			return
 		}
+		off := (addr - b.base) &^ 3
+		if b.byteAddressed {
+			old := b.peek(off)
+			b.write(c, off, old&^mask|v<<shift)
+			return
+		}
+		b.write(c, off, replicatedMMIO(v, size))
+		return
 	}
-	c.unhandledWrite(addr, uint32(v))
+	if off, b, ok := c.aliasTarget(addr); ok {
+		word := replicatedMMIO(v, size)
+		switch {
+		case addr >= b.base+0x1000 && addr < b.base+0x2000: // XOR
+			b.write(c, off, b.peek(off)^word)
+		case addr >= b.base+0x2000 && addr < b.base+0x3000: // SET
+			if b.setFn != nil {
+				b.setFn(c, off, word)
+			} else {
+				b.write(c, off, b.peek(off)|word)
+			}
+		default: // CLR
+			if b.clearFn != nil {
+				b.clearFn(c, off, word)
+			} else {
+				b.write(c, off, b.peek(off)&^word)
+			}
+		}
+		return
+	}
+	c.unhandledWrite(addr, v)
 }
 
 // DescribeUnhandled returns a sorted summary of unmapped accesses.
