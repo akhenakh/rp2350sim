@@ -18,6 +18,11 @@ const (
 	uartDROE      = 1 << 11
 	uartFRRXFF    = 1 << 6
 	uartFIFODepth = 32
+
+	// Host transports deliver bursts, while the PL011 FIFO can be disabled.
+	// Keep bytes waiting for FIFO space outside the architectural RX FIFO so a
+	// TCP read does not manufacture an overrun before firmware can drain it.
+	uartHostQueueLimit = 64 << 10
 )
 
 type uartBlock struct {
@@ -27,6 +32,9 @@ type uartBlock struct {
 	irq   int
 	rx    []byte
 	rxMu  sync.Mutex
+	// hostRx holds bytes delivered by host transports while the hardware FIFO
+	// is full. It is protected by rxMu and drained as firmware reads UARTDR.
+	hostRx []byte
 	// rxDepth is atomic because host input reads it concurrently. Receive data
 	// and error status are protected by rxMu; imsc/raw stay on the emulator thread.
 	rxDepth   atomic.Int32
@@ -56,6 +64,7 @@ const (
 func (u *uartBlock) reset() {
 	u.rxMu.Lock()
 	u.rx = u.rx[:0]
+	u.hostRx = u.hostRx[:0]
 	u.rxDepth.Store(1)
 	u.rsr = 0
 	u.drOE = false
@@ -102,6 +111,7 @@ func newUART(c *Chip, base uint32, id int) *uartBlock {
 					v |= uartDROE
 				}
 			}
+			u.fillRXLocked()
 			u.updateInterruptsLocked(c)
 			u.rxMu.Unlock()
 			return v, true
@@ -181,6 +191,7 @@ func newUART(c *Chip, base uint32, id int) *uartBlock {
 				u.markOverrunLocked()
 				u.rx = u.rx[:depth]
 			}
+			u.fillRXLocked()
 			u.updateInterruptsLocked(c)
 			u.rxMu.Unlock()
 		case 0x38: // UARTIMSC
@@ -206,17 +217,35 @@ func (u *uartBlock) send(data []byte) {
 		return
 	}
 	u.rxMu.Lock()
-	depth := int(u.rxDepth.Load())
-	for _, b := range data {
-		if len(u.rx) < depth {
-			u.rx = append(u.rx, b)
-			u.drOE = false
-		} else {
+	room := uartHostQueueLimit - len(u.hostRx)
+	if room <= 0 {
+		u.markOverrunLocked()
+	} else {
+		if len(data) > room {
+			data = data[:room]
 			u.markOverrunLocked()
 		}
+		u.hostRx = append(u.hostRx, data...)
 	}
+	u.fillRXLocked()
 	u.irqPending.Store(true)
 	u.rxMu.Unlock()
+}
+
+// fillRXLocked moves queued host bytes into the architectural FIFO. Keeping the
+// two queues separate preserves FEN capacity and RXFF while allowing interrupt
+// driven firmware to drain a host burst without dropping its tail.
+func (u *uartBlock) fillRXLocked() {
+	depth := int(u.rxDepth.Load())
+	if len(u.hostRx) == 0 || len(u.rx) >= depth {
+		return
+	}
+	n := min(depth-len(u.rx), len(u.hostRx))
+	u.rx = append(u.rx, u.hostRx[:n]...)
+	u.hostRx = u.hostRx[n:]
+	if len(u.hostRx) == 0 {
+		u.hostRx = nil
+	}
 }
 
 func (u *uartBlock) markOverrunLocked() {
@@ -226,6 +255,7 @@ func (u *uartBlock) markOverrunLocked() {
 }
 
 func (u *uartBlock) pollNextRxLocked() {
+	u.fillRXLocked()
 	if u.NextRx == nil || len(u.rx) >= int(u.rxDepth.Load()) {
 		return
 	}
@@ -277,6 +307,7 @@ func (u *uartBlock) tick() {
 		return
 	}
 	u.rxMu.Lock()
+	u.fillRXLocked()
 	u.updateInterruptsLocked(u.chip)
 	u.rxMu.Unlock()
 }

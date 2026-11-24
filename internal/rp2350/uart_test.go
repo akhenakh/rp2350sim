@@ -1,6 +1,7 @@
 package rp2350
 
 import (
+	"bytes"
 	"runtime"
 	"sync"
 	"testing"
@@ -33,37 +34,37 @@ func TestUARTResetAndIdentification(t *testing.T) {
 	}
 }
 
-func TestUARTSingleEntryOverrun(t *testing.T) {
+func TestUARTHostBurstPreservesSingleEntryFIFO(t *testing.T) {
 	c := New()
 	const base = 0x40070000
 	c.SendUART(0, []byte{0x11, 0x22})
 	if fr := c.Read32(base + 0x18); fr&(1<<6|1<<4) != 1<<6 {
 		t.Fatalf("UARTFR = %#x, want full and non-empty single-entry FIFO", fr)
 	}
-	if got := c.Read32(base); got != 0x811 {
-		t.Fatalf("UARTDR = %#x, want data with OE", got)
+	for _, want := range []uint32{0x11, 0x22} {
+		if got := c.Read32(base); got != want {
+			t.Fatalf("UARTDR = %#x, want %#x", got, want)
+		}
 	}
-	if got := c.Read32(base + 0x04); got&(1<<3) == 0 {
-		t.Fatalf("UARTRSR.OE not set: %#x", got)
+	if got := c.Read32(base + 0x04); got&(1<<3) != 0 {
+		t.Fatalf("host burst set UARTRSR.OE: %#x", got)
 	}
-	c.uart[0].tick()
-	if got := c.Read32(base + 0x3c); got&(1<<10) == 0 {
-		t.Fatalf("UARTRIS.OERIS not set: %#x", got)
-	}
-	c.Write32(base+0x04, 1<<3) // UARTECR
-	if got := c.Read32(base + 0x04); got != 0 {
-		t.Fatalf("UARTECR did not clear UARTRSR: %#x", got)
-	}
-	c.Write32(base+0x44, 1<<10) // UARTICR.OEIC
-	if got := c.Read32(base + 0x3c); got&(1<<10) != 0 {
-		t.Fatalf("UARTICR did not clear OERIS: %#x", got)
+}
+
+func TestUARTResetClearsHostQueue(t *testing.T) {
+	c := New()
+	c.Write32(0x4007002c, 1<<4)
+	c.SendUART(0, bytes.Repeat([]byte{0x5a}, uartFIFODepth+8))
+	c.Reset()
+	if len(c.uart[0].rx) != 0 || len(c.uart[0].hostRx) != 0 {
+		t.Fatalf("reset retained RX data: fifo=%d host=%d", len(c.uart[0].rx), len(c.uart[0].hostRx))
 	}
 }
 
 func TestUARTECRPreservesOverrunInterrupt(t *testing.T) {
 	c := New()
 	const base = 0x40070000
-	c.SendUART(0, []byte{0x11, 0x22})
+	c.SendUART(0, make([]byte, uartHostQueueLimit+1))
 	c.Write32(base+0x04, 1<<3) // UARTECR before the emulator polls the event
 	if got := c.Read32(base + 0x04); got != 0 {
 		t.Fatalf("UARTECR did not clear UARTRSR: %#x", got)
@@ -87,6 +88,9 @@ func TestUARTFIFOCapacityAndRXInterrupt(t *testing.T) {
 	if got := len(c.uart[0].rx); got != 32 {
 		t.Fatalf("RX FIFO depth = %d, want 32", got)
 	}
+	if got := len(c.uart[0].hostRx); got != 1 {
+		t.Fatalf("host queue depth = %d, want 1", got)
+	}
 	if fr := c.Read32(base + 0x18); fr&(1<<6|1<<4) != 1<<6 {
 		t.Fatalf("UARTFR = %#x, want full and non-empty FIFO", fr)
 	}
@@ -101,6 +105,13 @@ func TestUARTFIFOCapacityAndRXInterrupt(t *testing.T) {
 	}
 	if ris := c.Read32(base + 0x3c); ris&(1<<4) == 0 {
 		t.Fatalf("RXRIS cleared at 16 bytes: %#x", ris)
+	}
+	// The 33rd byte was queued behind the FIFO and refills it as it drains.
+	// RXRIS therefore stays asserted until the queue is empty and only 15
+	// architectural FIFO entries remain.
+	c.Read32(base)
+	if ris := c.Read32(base + 0x3c); ris&(1<<4) == 0 {
+		t.Fatalf("RXRIS cleared while the queued byte kept the FIFO at threshold: %#x", ris)
 	}
 	c.Read32(base)
 	if ris := c.Read32(base + 0x3c); ris&(1<<4) != 0 {
