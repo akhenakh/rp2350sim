@@ -1,18 +1,14 @@
 # rp2350sim
 
-An emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodified
-Pico C SDK and `tinygo build -target=pico2` firmware, with a desktop UI showing the board state.
+An emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodified Pico C SDK and `tinygo build -target=pico2` firmware, with a desktop UI showing the board state.
 
 Status: runs real programs end to end, package initialisation, the task
-scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with
-DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a
-CST816D touch controller, a QMI8658 IMU, a microSD card model that can be
-backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, and the OTP array (fuses, Hamming ECC, page locks, bootrom access). Stock **Pico SDK C**
-firmware boots through the same vector table and runs its runtime, UART stdio,
-GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33
-interpreter is checked against QEMU instruction by instruction.
+scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a CST816D touch controller, a QMI8658 IMU, a microSD card model that can be backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, the OTP array (fuses, Hamming ECC, page locks, bootrom access), and optional QSPI PSRAM (1-16 MiB on QMI CS1, with configurable access latency).
+Stock **Pico SDK C**
+firmware boots through the same vector table and runs its runtime, UART stdio, GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33 interpreter is checked against QEMU instruction by instruction.
 
-Fully tested on Linux & Mac OSX.
+Fully tested on Linux & Mac OSX. Windows binaries are built and the network
+models use portable Go net, but the bash smoke suite is not run on Windows.
 
 ## Download
 
@@ -107,7 +103,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
 | `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
 | `task picoexamples:build` | build the pinned pico-examples subset (needs `PICO_SDK_PATH`) |
-| `task c:hello`, `c:blinky`, `c:float`, `c:multicore` | run the C examples |
+| `task c:hello`, `c:blinky`, `c:float`, `c:dcp`, `c:multicore` | run the C examples |
 | `task c:otp` | run the C OTP demo and dump the programmed array |
 | `task c:psram` | run the Pico SDK PSRAM demo with an 8 MiB device |
 | `task c:debug` | run the C debugger fixture and stop at `debug_marker` |
@@ -279,7 +275,7 @@ the tabs accordingly:
 - **Logic** (always): UART/I2C/SPI/USB decoding, triggers and **Save trace**.
 - **OTP**: pages, rows, ECC status and locks.
 - **Debug**: breakpoints, cycle stepping, registers, memory, source lines and
-  DWARF variables.
+  DWARF variables, plus a GDB remote server (`--gdb` / toolbar **GDB**).
 - **Bus**: I2C/SPI Bus Pirate TCP terminals and built-in device presets.
 - **Console** (always): USB CDC + UART, click to type into the firmware.
 
@@ -322,7 +318,7 @@ The user guide lives in [`docs/`](docs/README.md):
 - [`docs/peripherals.md`](docs/peripherals.md) — each peripheral from the CLI and the UI
 - [`docs/bus-pirate.md`](docs/bus-pirate.md) — Bus Pirate tokens, built-in presets and fake I2C/SPI peripherals
 - [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer
-- [`docs/debug.md`](docs/debug.md) — Debug tab, breakpoints, watchpoints, memory and DWARF variables
+- [`docs/debug.md`](docs/debug.md) — Debug tab, breakpoints, watchpoints, memory, DWARF variables and GDB remote
 - [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, signal checks, artifacts
 - [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
 - [`docs/boards.md`](docs/boards.md) — supported boards, wiring and limitations
