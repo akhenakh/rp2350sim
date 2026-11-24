@@ -1,6 +1,10 @@
 package rp2350
 
-import "testing"
+import (
+	"encoding/binary"
+	"slices"
+	"testing"
+)
 
 // TestOTPECCRoundTrip checks that every 16-bit value survives the Hamming
 // encode/decode path, including a single flipped data bit and a single
@@ -84,6 +88,14 @@ func TestOTPWindows(t *testing.T) {
 	}
 	if got := c.Read32(OTPDataRawBase + 0x1000); got != 0xffffffff {
 		t.Fatalf("raw alias with DCTRL=0 = %#08x, want all-ones", got)
+	}
+	// PD independently disables reads even while DCTRL remains set.
+	c.Write32(OTPBase+otpUSR, 1|otpUSRPD)
+	if got := c.Read32(OTPDataBase + 0x800); got != 0xffffffff {
+		t.Fatalf("ECC alias with PD=1 = %#08x, want all-ones", got)
+	}
+	if got := c.Read32(OTPDataRawBase + 0x1000); got != 0xffffffff {
+		t.Fatalf("raw alias with PD=1 = %#08x, want all-ones", got)
 	}
 	c.Write32(OTPBase+otpUSR, 1)
 	if got := c.Read32(OTPDataBase + 0x800); got != 0x00004845 {
@@ -174,5 +186,111 @@ func TestOTPChipID(t *testing.T) {
 	}
 	if id != 0x8f3a91c45d27be60 {
 		t.Fatalf("chip ID = %#016x", id)
+	}
+}
+
+func TestOTPECCWriteAppliesBRPBeforeFuseCheck(t *testing.T) {
+	c := New()
+	const row = 0x410
+	const data = 0x1234
+	target := otpEncodeRow(data)
+	var preset uint32
+	for bit := range 22 {
+		if target&(1<<bit) == 0 {
+			preset = 1 << bit
+			break
+		}
+	}
+	if preset == 0 {
+		t.Fatal("ECC target has no clear bit for BRP test")
+	}
+	c.SetOTPRow(row, preset)
+	c.Write16(SRAMBase+0x100, data)
+	cpu := c.CPU0
+	cpu.R[0] = SRAMBase + 0x100
+	cpu.R[1] = 2
+	cpu.R[2] = row | otpCmdWrite | otpCmdECC
+	c.rom.stubOTPAccess(c, cpu)
+	if cpu.R[0] != bootromOK {
+		t.Fatalf("BRP ECC write = %d, want OK", cpu.R[0])
+	}
+	if got, want := c.OTPRow(row), target^0xffffff; got != want {
+		t.Fatalf("BRP row = %#06x, want %#06x", got, want)
+	}
+	if got, ok := otpDecodeRow(c.OTPRow(row)); !ok || got != data {
+		t.Fatalf("decoded BRP row = %#04x ok=%v", got, ok)
+	}
+}
+
+func TestOTPAccessBufferAlignment(t *testing.T) {
+	tests := []struct {
+		name    string
+		ecc     bool
+		write   bool
+		addrOff uint32
+		wantErr uint32
+	}{
+		{name: "aligned ECC read", ecc: true, addrOff: 0x100},
+		{name: "misaligned ECC read", ecc: true, addrOff: 0x101, wantErr: bootromErrBadAlignment},
+		{name: "aligned raw read", addrOff: 0x100},
+		{name: "misaligned raw read", addrOff: 0x102, wantErr: bootromErrBadAlignment},
+		{name: "aligned ECC write", ecc: true, write: true, addrOff: 0x100},
+		{name: "misaligned ECC write", ecc: true, write: true, addrOff: 0x101, wantErr: bootromErrBadAlignment},
+		{name: "aligned raw write", write: true, addrOff: 0x100},
+		{name: "misaligned raw write", write: true, addrOff: 0x102, wantErr: bootromErrBadAlignment},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New()
+			const row = 0x410
+			unit := uint32(4)
+			flags := uint32(row)
+			if tt.ecc {
+				unit = 2
+				flags |= otpCmdECC
+			}
+			if tt.write {
+				flags |= otpCmdWrite
+			} else {
+				c.SetOTPRow(row, otpEncodeRow(0x1234))
+			}
+			addr := SRAMBase + tt.addrOff
+			for i := range unit {
+				c.SRAM[tt.addrOff+uint32(i)] = byte(0x34 + i*0x11)
+			}
+			before := append([]byte(nil), c.SRAM[tt.addrOff:tt.addrOff+unit]...)
+			cpu := c.CPU0
+			cpu.R[0], cpu.R[1], cpu.R[2] = addr, unit, flags
+			c.rom.stubOTPAccess(c, cpu)
+			if cpu.R[0] != tt.wantErr {
+				t.Fatalf("otp_access = %d, want %d", cpu.R[0], tt.wantErr)
+			}
+			if tt.wantErr != 0 {
+				if !slices.Equal(c.SRAM[tt.addrOff:tt.addrOff+unit], before) {
+					t.Fatal("misaligned access modified its buffer")
+				}
+				if tt.write && c.OTPRow(row) != 0 {
+					t.Fatal("misaligned write modified OTP")
+				}
+				return
+			}
+			if tt.write {
+				want := uint32(0x00564534)
+				if tt.ecc {
+					want = otpEncodeRow(0x4534)
+				}
+				if got := c.OTPRow(row); got != want {
+					t.Fatalf("programmed row = %#06x, want %#06x", got, want)
+				}
+				return
+			}
+			if tt.ecc {
+				if got := binary.LittleEndian.Uint16(c.SRAM[tt.addrOff:]); got != 0x1234 {
+					t.Fatalf("ECC read = %#04x", got)
+				}
+			} else if got := binary.LittleEndian.Uint32(c.SRAM[tt.addrOff:]) & 0xffffff; got != otpEncodeRow(0x1234) {
+				t.Fatalf("raw read = %#06x", got)
+			}
+		})
 	}
 }

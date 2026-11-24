@@ -34,6 +34,7 @@ const (
 	bootromErrNotPermitted   = ^uint32(3)  // -4
 	bootromErrInvalidArg     = ^uint32(4)  // -5
 	bootromErrInvalidAddr    = ^uint32(9)  // -10
+	bootromErrBadAlignment   = ^uint32(10) // -11
 	bootromErrInvalidState   = ^uint32(11) // -12
 	bootromErrUnsupportedMod = ^uint32(17) // -18
 	bootromRebootReason      = "bootrom reboot requested"
@@ -341,6 +342,10 @@ func (b *bootROM) stubOTPAccess(c *Chip, cpu *m33.CPU) {
 	if ecc {
 		unit = 2
 	}
+	if buf%unit != 0 {
+		cpu.R[0] = bootromErrBadAlignment
+		return
+	}
 	count := int(bufLen / unit)
 	for i := range count {
 		r := row + i
@@ -352,7 +357,8 @@ func (b *bootROM) stubOTPAccess(c *Chip, cpu *m33.CPU) {
 		if write {
 			var raw uint32
 			if ecc {
-				raw = otpEncodeRow(uint16(c.Read8(off)) | uint16(c.Read8(off+1))<<8)
+				data := uint16(c.Read8(off)) | uint16(c.Read8(off+1))<<8
+				raw = c.otp.eccWriteTarget(r, otpEncodeRow(data))
 			} else {
 				raw = uint32(c.Read8(off)) | uint32(c.Read8(off+1))<<8 | uint32(c.Read8(off+2))<<16
 			}

@@ -75,6 +75,7 @@ const (
 	otpSBPIInstrEx  = 1 << 30
 	otpSBPIOutDone  = 1 << 4
 	otpSBPIRDataVld = 1 << 0
+	otpUSRPD        = 1 << 4
 )
 
 // otpECCParity is the RP2350 bootrom's modified-Hamming parity table, from
@@ -221,12 +222,16 @@ func (o *otpBlock) effectiveLock(page int) uint8 {
 }
 
 func (o *otpBlock) dataBridgeEnabled() bool {
-	return o.block.regs[otpUSR/4]&1 != 0
+	usr := o.block.regs[otpUSR/4]
+	return usr&1 != 0 && usr&otpUSRPD == 0
 }
 
 func (o *otpBlock) failDataRead(addr uint32, guarded bool) uint32 {
 	what := "locked"
-	if !o.dataBridgeEnabled() {
+	switch usr := o.block.regs[otpUSR/4]; {
+	case usr&otpUSRPD != 0:
+		what = "OTP powered down (USR.PD=1)"
+	case usr&1 == 0:
 		what = "data bridge disabled (USR.DCTRL=0)"
 	}
 	if guarded {
@@ -383,6 +388,18 @@ func (o *otpBlock) writeReg(c *Chip, off uint32, v uint32) {
 	case off >= otpCRTKeyW0 && off <= otpCRTKeyW3:
 		c.Logger.Debug("otp crt key write ignored", slog.String("value", fmtHex(v)))
 	}
+}
+
+// eccWriteTarget applies bit repair by polarity before fuse validation. A
+// single pre-set bit that conflicts with the ECC target inverts the target and
+// sets both BRP bits, allowing the resulting row to program successfully.
+func (o *otpBlock) eccWriteTarget(row int, target uint32) uint32 {
+	target &= 0xffffff
+	conflict := o.rows[row] &^ target & 0x3fffff
+	if bits.OnesCount32(conflict) == 1 {
+		return target ^ 0xffffff
+	}
+	return target
 }
 
 // programRow writes a 24-bit value with fuse semantics: bits may only be set.
