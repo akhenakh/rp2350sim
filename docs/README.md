@@ -21,7 +21,7 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
   Zephyr 4.5 is validated on `rpi_pico2/rp2350a/m33` (hello world,
   synchronization, philosophers, blinky, kernel context, scheduler API and FPU
   sharing); the C `rtosctx` fixture covers context switching and critical
-  sections. See [zephyr.md](zephyr.md).
+  sections. See the [Zephyr guide](zephyr.md).
 - **Interactive board controls**: buttons, switches, rotary encoders, ADC pots
   and BOOTSEL declared in `boards.yaml` and scriptable with `--input`.
 - **Debug variables**: every application global and local is shown in a
@@ -120,7 +120,7 @@ See [ci.md](ci.md) for the full recipe.
   See [c.md](c.md) for the C path and its current limits.
 - **RTOS kernels**: Zephyr 4.5 (`rpi_pico2/rp2350a/m33`) and FreeRTOS-style
   preemptive kernels with SVC/PendSV/SysTick, per-core NVIC and floating-point
-  context switching. See [zephyr.md](zephyr.md).
+  context switching. See the [Zephyr guide](zephyr.md).
 - **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
   CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).
 - **Pico 2 + PSRAM**: optional 1–16 MiB QSPI device on QMI CS1, with a

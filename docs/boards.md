@@ -273,7 +273,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   HardFault escalation when masked), NMI, PRIMASK/FAULTMASK/BASEPRI and
   MSPLIM/PSPLIM are supported. A Zephyr/FreeRTOS-style supervisor kernel
   (PSP tasks, SVC first-task launch, PendSV switching) runs; see
-  `firmware/c/rtosctx` and [zephyr.md](zephyr.md). Zephyr v4.5.0
+  `firmware/c/rtosctx` and the [Zephyr guide](zephyr.md). Zephyr v4.5.0
   `rpi_pico2/rp2350a/m33` builds boot, and the context, scheduler, threads and
   FPU-sharing tests pass.
 - **Floating point exceptions:** extended frames, eager and lazy (ASPEN/LSPEN,

@@ -30,6 +30,7 @@ PAGES = [
     ("boards.md", "Boards and peripherals", 50),
     ("tinygo.md", "TinyGo", 60),
     ("c.md", "Pico SDK C", 70),
+    ("zephyr.md", "Zephyr", 75),
     ("ci.md", "CI", 80),
     ("release.md", "Releases", 90),
 ]
