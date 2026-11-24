@@ -231,8 +231,26 @@ func (t *uiGDBTarget) Halt(core int) error {
 func (t *uiGDBTarget) AddBreakpoint(addr uint32) error {
 	t.emu.mu.Lock()
 	defer t.emu.mu.Unlock()
-	if t.emu.chip != nil && t.emu.chip.Debug != nil {
-		t.emu.chip.Debug.AddBreakpoint(addr)
+	if err := t.emu.ensureDebuggerLocked(); err != nil {
+		return err
+	}
+	t.emu.chip.Debug.AddBreakpoint(addr)
+	return nil
+}
+
+// ensureDebuggerLocked arms the machine for debugger control. It creates the
+// canonical Emu debugger when none exists so a live reload, which attaches
+// e.debugger to every fresh chip, keeps breakpoints and watches. Callers hold
+// e.mu.
+func (e *Emu) ensureDebuggerLocked() error {
+	if e.chip == nil {
+		return errors.New("no machine")
+	}
+	if e.chip.Debug == nil {
+		if e.debugger == nil {
+			e.debugger = rp2350.NewDebugger()
+		}
+		e.chip.Debug = e.debugger
 	}
 	return nil
 }

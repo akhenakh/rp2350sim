@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/akhenakh/rp2350sim/internal/gdb"
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 func TestUIGDBTargetBasics(t *testing.T) {
@@ -43,6 +44,33 @@ func TestUIGDBTargetBasics(t *testing.T) {
 	}
 	if !e.running {
 		t.Fatal("continue did not start the UI machine")
+	}
+}
+
+func TestUIGDBAddBreakpointCreatesDebugger(t *testing.T) {
+	e := &Emu{chip: rp2350.New()}
+	tgt := &uiGDBTarget{emu: e}
+	if err := tgt.AddBreakpoint(0x10000008); err != nil {
+		t.Fatal(err)
+	}
+	if e.debugger == nil || e.chip.Debug != e.debugger {
+		t.Fatal("AddBreakpoint did not install the canonical debugger")
+	}
+	if !e.chip.Debug.Breakpoints[0x10000008] {
+		t.Fatal("breakpoint missing after lazy debugger creation")
+	}
+	// A live reload builds a fresh chip and reattaches e.debugger; the
+	// breakpoint must survive that swap.
+	e.resetChip()
+	if e.chip.Debug != e.debugger || !e.chip.Debug.Breakpoints[0x10000008] {
+		t.Fatal("breakpoint lost across a machine reload")
+	}
+}
+
+func TestUIGDBAddBreakpointWithoutMachine(t *testing.T) {
+	e := &Emu{}
+	if err := (&uiGDBTarget{emu: e}).AddBreakpoint(0x10000008); err == nil {
+		t.Fatal("AddBreakpoint without a machine returned nil")
 	}
 }
 
