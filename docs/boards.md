@@ -283,7 +283,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 - **Exceptions and nesting:** preemptive priority nesting, 4 priority bits,
   tail-chaining, PendSV, SysTick (CPU clock and 1 MHz reference), SVC (with
   HardFault escalation when masked), NMI, PRIMASK/FAULTMASK/BASEPRI and the
-  MSPLIM/PSPLIM register model are supported. A Zephyr/FreeRTOS-style
+  MSPLIM/PSPLIM register model are supported. Software pends set through
+  NVIC_ISPR/STIR survive a peripheral line deassert and are cleared by ICPR or
+  exception entry. A Zephyr/FreeRTOS-style
   supervisor kernel (PSP tasks, SVC first-task launch, PendSV switching) runs; see
   `firmware/c/rtosctx` and the [Zephyr guide](zephyr.md). Zephyr v4.5.0
   `rpi_pico2/rp2350a/m33` builds boot, and the context, scheduler, threads and

@@ -30,7 +30,10 @@ type NVIC struct {
 	core int
 
 	enabled [2]uint32
-	pending [2]uint32
+	// pending is the peripheral line state. Software pends through ISPR/STIR
+	// live in swPending so a peripheral line deassert cannot drop them.
+	pending   [2]uint32
+	swPending [2]uint32
 	// activeIRQ is the IABR view: external exceptions that entered and have
 	// not returned yet.
 	activeIRQ [2]uint32
@@ -77,6 +80,7 @@ type NVIC struct {
 func (n *NVIC) reset() {
 	n.enabled = [2]uint32{}
 	n.pending = [2]uint32{}
+	n.swPending = [2]uint32{}
 	n.activeIRQ = [2]uint32{}
 	n.prio = [64]byte{}
 	n.actlr = 0
@@ -125,7 +129,8 @@ func (n *NVIC) cpu() *m33.CPU {
 
 // hasPending reports an enabled external IRQ or a pending system exception.
 func (n *NVIC) hasPending() bool {
-	return (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 ||
+	return ((n.pending[0]|n.swPending[0])&n.enabled[0])|
+		((n.pending[1]|n.swPending[1])&n.enabled[1]) != 0 ||
 		n.pendNMI || n.pendSV || n.pendST
 }
 
@@ -181,13 +186,31 @@ func (n *NVIC) Pend(irq int) {
 	n.wake()
 }
 
-// ClearPending clears a pending external IRQ.
+// ClearPending clears the peripheral line state of an IRQ. Software-set
+// pending bits survive, exactly like a level-sensitive line that deasserts
+// while an ISPR write keeps the exception pending.
 func (n *NVIC) ClearPending(irq int) {
 	if irq < 0 || irq >= nvicIRQs {
 		return
 	}
 	n.pending[irq/32] &^= 1 << uint(irq%32)
 	n.syncActive()
+}
+
+// pendSoftware sets an IRQ pending from an ISPR or STIR write. It is not tied
+// to a peripheral line, so it must survive a hardware deassert.
+func (n *NVIC) pendSoftware(irq int) {
+	if irq < 0 || irq >= nvicIRQs {
+		return
+	}
+	bit := uint32(1) << uint(irq%32)
+	if n.swPending[irq/32]&bit != 0 {
+		return
+	}
+	n.swPending[irq/32] |= bit
+	n.noteEvent()
+	n.syncActive()
+	n.wake()
 }
 
 // pendSystem pends a system exception (NMI, PendSV or SysTick).
@@ -300,7 +323,7 @@ func (n *NVIC) bestPending() uint32 {
 		consider(excSysTick, n.exceptionPriority(excSysTick))
 	}
 	for i := range nvicIRQs {
-		if n.pending[i/32]&n.enabled[i/32]&(1<<uint(i%32)) == 0 {
+		if (n.pending[i/32]|n.swPending[i/32])&n.enabled[i/32]&(1<<uint(i%32)) == 0 {
 			continue
 		}
 		consider(uint32(16+i), n.exceptionPriority(uint32(16+i)))
@@ -319,6 +342,7 @@ func (n *NVIC) clearPendingExc(exc uint32) {
 	default:
 		if irq := int(exc) - 16; irq >= 0 && irq < 64 {
 			n.pending[irq/32] &^= 1 << uint(irq%32)
+			n.swPending[irq/32] &^= 1 << uint(irq%32)
 		}
 	}
 	n.syncActive()
@@ -394,7 +418,7 @@ func (n *NVIC) icsr(cpu *m33.CPU) uint32 {
 	if best := n.bestPending(); best != 0 {
 		v |= (best & 0x1FF) << 12
 	}
-	if (n.pending[0]&n.enabled[0])|(n.pending[1]&n.enabled[1]) != 0 {
+	if (n.pending[0]|n.swPending[0])&n.enabled[0]|(n.pending[1]|n.swPending[1])&n.enabled[1] != 0 {
 		v |= 1 << 22 // ISRPENDING
 	}
 	if cpu.IPSR != 0 && n.activeCount <= 1 {
@@ -438,10 +462,10 @@ func (n *NVIC) read(off uint32) uint32 {
 		return n.enabled[i] & irqMask[i]
 	case off >= 0x200 && off < 0x208:
 		i := (off - 0x200) / 4
-		return n.pending[i] & irqMask[i]
+		return (n.pending[i] | n.swPending[i]) & irqMask[i]
 	case off >= 0x280 && off < 0x288:
 		i := (off - 0x280) / 4
-		return n.pending[i] & irqMask[i]
+		return (n.pending[i] | n.swPending[i]) & irqMask[i]
 	case off >= 0x300 && off < 0x308:
 		return n.activeIRQ[(off-0x300)/4]
 	case off >= 0x400 && off < 0x400+64:
@@ -575,19 +599,21 @@ func (n *NVIC) write(off, v uint32) {
 		i := (off - 0x180) / 4
 		n.enabled[i] &^= v & irqMask[i]
 		n.syncActive()
-	case off >= 0x200 && off < 0x208: // ISPR
+	case off >= 0x200 && off < 0x208: // ISPR: software pend only
 		i := (off - 0x200) / 4
 		v &= irqMask[i]
-		newbits := v &^ n.pending[i]
-		n.pending[i] |= v
+		newbits := v &^ (n.pending[i] | n.swPending[i])
+		n.swPending[i] |= v
 		if newbits != 0 {
 			n.noteEvent()
 		}
 		n.syncActive()
 		n.wake()
-	case off >= 0x280 && off < 0x288: // ICPR
+	case off >= 0x280 && off < 0x288: // ICPR: clears hardware and software pends
 		i := (off - 0x280) / 4
-		n.pending[i] &^= v & irqMask[i]
+		v &= irqMask[i]
+		n.pending[i] &^= v
+		n.swPending[i] &^= v
 		n.syncActive()
 	case off >= 0x400 && off < 0x400+64: // IPR
 		i := (off - 0x400) / 4
@@ -686,7 +712,7 @@ func (n *NVIC) write(off, v uint32) {
 	case off == 0xDE0:
 		n.sauRlar[n.sauRnr%mpuRegions] = v & 0xFFFFFFE3
 	case off == 0xF00: // STIR: v is an interrupt number
-		n.Pend(int(v & 0x1FF))
+		n.pendSoftware(int(v & 0x1FF))
 	case off == 0xF34: // FPCCR
 		if cpu != nil {
 			cpu.SetFPCCR(v)

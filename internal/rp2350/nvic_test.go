@@ -36,6 +36,36 @@ func TestExternalIRQDelivery(t *testing.T) {
 	}
 }
 
+// TestSoftwarePendingSurvivesPeripheralDeassert models the NVIC rule that an
+// ISPR-pended interrupt stays pending when the peripheral line drops: only
+// ICPR or exception entry clears a software pend.
+func TestSoftwarePendingSurvivesPeripheralDeassert(t *testing.T) {
+	c := New()
+	irq := usbIRQ
+	bit := uint32(1) << uint(irq%32)
+	c.Write32(SCSBase+0x200, bit) // ISPR: software pend
+	c.ClearPendingIRQ(irq)        // the USB line deasserts
+	if got := c.Read32(SCSBase + 0x200); got&bit == 0 {
+		t.Fatal("peripheral deassert dropped the software-pended IRQ")
+	}
+
+	// Exception entry consumes it.
+	c.Write32(SCSBase+0x100, bit) // ISER
+	if exc := c.NVIC.NextPending(c.CPU0); exc != 16+irq {
+		t.Fatalf("NextPending = %d, want %d", exc, 16+irq)
+	}
+	if got := c.Read32(SCSBase + 0x200); got&bit != 0 {
+		t.Fatal("exception entry left the software pend set")
+	}
+
+	// ICPR clears a software pend too.
+	c.Write32(SCSBase+0x200, bit)
+	c.Write32(SCSBase+0x280, bit)
+	if got := c.Read32(SCSBase + 0x200); got&bit != 0 {
+		t.Fatal("ICPR did not clear the software pend")
+	}
+}
+
 func TestNVICByteAndHalfwordPriorityWrites(t *testing.T) {
 	c := New()
 	c.Write8(SCSBase+0x402, 0x80)
