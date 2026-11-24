@@ -640,6 +640,30 @@ func (c *Chip) Reset() {
 	c.resetPSRAM()
 }
 
+// resetCore performs the core-local reset requested by SYSRESETREQ. It must not
+// use Chip.Reset: virtual time, shared peripherals and the other core survive.
+func (c *Chip) resetCore(core int) {
+	if core < 0 || core > 1 {
+		return
+	}
+	cpu := c.CPU0
+	n := c.ppb[0]
+	if core == 1 {
+		cpu = c.CPU1
+		n = c.ppb[1]
+	}
+	cpu.Reset()
+	n.reset()
+	if core == 0 {
+		cpu.Parked = false
+		cpu.SetVectorTable(FlashBase)
+	} else {
+		cpu.Parked = true
+		c.sio.core1Parked = true
+	}
+	c.Halted = c.CPU0.Halted || c.CPU1.Halted
+}
+
 // requestReset schedules a chip reset. reason is reported to the UI and CLI;
 // delayCycles lets the bootrom's reboot(delay_ms) behave like hardware.
 func (c *Chip) requestReset(reason string, delayCycles uint64) {

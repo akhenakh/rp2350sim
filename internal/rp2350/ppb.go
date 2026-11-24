@@ -235,17 +235,27 @@ func (n *NVIC) exceptionPriority(exc uint32) int {
 	return 0
 }
 
-// groupPriority applies AIRCR.PRIGROUP. Only the four top priority bits are
-// implemented on the RP2350.
+// groupPriority applies AIRCR.PRIGROUP to the four implemented priority bits.
+// Values above 3 cannot be represented by four priority bits and are treated as
+// 3, the deterministic no-preemption configuration.
 func (n *NVIC) groupPriority(p int) int {
 	if p < 0 {
 		return p
 	}
-	sub := uint((n.aircr>>8)&7) + 1
-	if sub >= 8 {
-		return 0
+	group := (n.aircr >> 8) & 7
+	if group > 3 {
+		group = 3
 	}
-	return p &^ ((1 << sub) - 1)
+	switch group {
+	case 0:
+		return p & 0xF0
+	case 1:
+		return p & 0xE0
+	case 2:
+		return p & 0xC0
+	default:
+		return p & 0x80
+	}
 }
 
 // executionPriority is the group priority against which a pending exception
@@ -603,10 +613,13 @@ func (n *NVIC) write(off, v uint32) {
 		if v>>16 != 0x05FA {
 			return
 		}
-		n.aircr = v & 0x0000_0700
+		n.aircr = v & 0x0000_6F08
+		if group := (n.aircr >> 8) & 7; group > 3 {
+			n.aircr &^= 0x0000_0700
+			n.aircr |= 3 << 8
+		}
 		if v&(1<<2) != 0 {
-			// SYSRESETREQ
-			n.chip.requestReset("software", 0)
+			n.chip.resetCore(n.core)
 		}
 	case off == 0xD10:
 		n.scr = v

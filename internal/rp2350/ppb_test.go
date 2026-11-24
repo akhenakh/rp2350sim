@@ -288,14 +288,108 @@ func TestAIRCRRequiresVectKey(t *testing.T) {
 	if c.NVIC.aircr != 0 {
 		t.Fatalf("AIRCR write without key accepted (%#x)", c.NVIC.aircr)
 	}
-	c.Write32(SCSBase+0xD0C, 0x05FA_0500)
-	if got := c.Read32(SCSBase + 0xD0C); got != 0xFA05_0500 {
-		t.Fatalf("AIRCR = %#x, want 0xfa050500", got)
+	c.Write32(SCSBase+0xD0C, 0x05FA_0300)
+	if got := c.Read32(SCSBase + 0xD0C); got != 0xFA05_0300 {
+		t.Fatalf("AIRCR = %#x, want 0xfa050300", got)
 	}
 	// SHPR keeps only the four implemented priority bits.
 	c.Write8(SCSBase+0xD23, 0xFF)
 	if got := c.NVIC.shpr[11]; got != 0xF0 {
 		t.Fatalf("SysTick SHPR = %#x, want 0xf0", got)
+	}
+}
+
+func TestPriorityGrouping(t *testing.T) {
+	cases := []struct {
+		name  string
+		group uint32
+		raw   int
+		want  int
+	}{
+		{"group0_all_preemption", 0, 0xB0, 0xB0},
+		{"group1_one_subpriority_bit", 1, 0xB0, 0xA0},
+		{"group2_two_subpriority_bits", 2, 0xB0, 0x80},
+		{"group3_three_subpriority_bits", 3, 0xB0, 0x80},
+		{"group3_lower_priority", 3, 0x40, 0x00},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n := &NVIC{aircr: tc.group << 8}
+			if got := n.groupPriority(tc.raw); got != tc.want {
+				t.Fatalf("groupPriority(%#x) with PRIGROUP=%d = %#x, want %#x", tc.raw, tc.group, got, tc.want)
+			}
+		})
+	}
+
+	c := New()
+	for group := uint32(4); group <= 7; group++ {
+		c.Write32(SCSBase+0xD0C, 0x05FA0000|group<<8)
+		if got := c.NVIC.aircr >> 8; got != 3 {
+			t.Fatalf("unsupported PRIGROUP %d stored as %d, want clamped to 3", group, got)
+		}
+	}
+}
+
+func TestEqualPriorityGroupDoesNotPreempt(t *testing.T) {
+	c := New()
+	cpu := c.CPU0
+	cpu.IPSR = 16
+	c.NVIC.prio[0] = 0xB0
+	c.NVIC.prio[1] = 0xA0
+	c.NVIC.write(0x100, 1<<1)
+	c.NVIC.Pend(1)
+	for _, group := range []uint32{1, 2, 3} {
+		c.NVIC.aircr = group << 8
+		if exc := c.NVIC.NextPending(cpu); exc != 0 {
+			t.Fatalf("PRIGROUP=%d preempted equal-group IRQ with exception %d", group, exc)
+		}
+	}
+}
+
+func TestCoreLocalSYSRESETREQ(t *testing.T) {
+	c := New()
+	c.Cycles = 1234
+	c.CPU0.R[0] = 0x12345678
+	c.CPU0.R[13] = 0x20040000
+	c.CPU0.MSP = 0x20040000
+	c.CPU0.VTOR = 0x20000000
+	c.NVIC.aircr = 0x100
+	c.NVIC.Pend(3)
+	c.CPU1.Parked = false
+	c.CPU1.R[0] = 0xDEADBEEF
+	c.CPU1.R[13] = 0x20050000
+	c.CPU1.MSP = 0x20050000
+	c.CPU1.VTOR = 0x20001000
+	c.ppb[1].aircr = 0x200
+	c.ppb[1].Pend(4)
+	c.tmr[0].intR = 1
+	c.uart[0].raw = uartRXIM
+	c.Pins.Out = 1 << 25
+
+	c.core = 1
+	c.Write32(SCSBase+0xD0C, 0x05FA0004)
+
+	if c.CPU1.R[0] != 0 || c.CPU1.R[13] != 0 || c.CPU1.MSP != 0 || c.CPU1.R[15] != 0 || c.CPU1.VTOR != 0 {
+		t.Fatalf("core 1 architectural state survived reset: r0=%#x sp=%#x msp=%#x pc=%#x vtor=%#x",
+			c.CPU1.R[0], c.CPU1.R[13], c.CPU1.MSP, c.CPU1.R[15], c.CPU1.VTOR)
+	}
+	if !c.CPU1.Parked || !c.sio.core1Parked {
+		t.Fatal("reset core 1 is not parked for a new launch")
+	}
+	if c.ppb[1].aircr != 0 || c.ppb[1].pending != [2]uint32{} {
+		t.Fatalf("core 1 private SCS survived reset: AIRCR=%#x pending=%#x", c.ppb[1].aircr, c.ppb[1].pending)
+	}
+	if c.CPU0.R[0] != 0x12345678 || c.CPU0.R[13] != 0x20040000 || c.CPU0.VTOR != 0x20000000 {
+		t.Fatal("core-local reset changed core 0 architectural state")
+	}
+	if c.NVIC.aircr != 0x100 || c.NVIC.pending[0]&(1<<3) == 0 {
+		t.Fatal("core-local reset changed core 0 private SCS")
+	}
+	if c.tmr[0].intR != 1 || c.uart[0].raw != uartRXIM || c.Pins.Out != 1<<25 {
+		t.Fatal("core-local reset changed unrelated peripheral state")
+	}
+	if c.Cycles != 1234 {
+		t.Fatalf("core-local reset rewound virtual time to %d", c.Cycles)
 	}
 }
 

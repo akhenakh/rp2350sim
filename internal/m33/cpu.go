@@ -192,6 +192,7 @@ func (c *CPU) Reset() {
 	c.Sleeping = false
 	c.SleepOnEvent = false
 	c.Halted = false
+	c.HaltReason = ""
 	c.Cycles = 0
 	c.VTOR = 0
 	c.monitorValid = false
