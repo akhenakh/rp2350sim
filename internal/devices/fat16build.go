@@ -3,6 +3,8 @@ package devices
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +25,8 @@ type fatNode struct {
 	parentCluster int
 	clusters      []int
 }
+
+const maxFAT16HostBytes int64 = 16 << 20
 
 const (
 	fatAttrReadOnly  = 0x01
@@ -61,7 +65,12 @@ func BuildFAT16FromDir(root string, size int) ([]byte, map[string]bool, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	info, err := os.Stat(abs)
+	hostRoot, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sd dir: %w", err)
+	}
+	defer hostRoot.Close()
+	info, err := hostRoot.Stat(".")
 	if err != nil {
 		return nil, nil, fmt.Errorf("sd dir: %w", err)
 	}
@@ -80,7 +89,8 @@ func BuildFAT16FromDir(root string, size int) ([]byte, map[string]bool, error) {
 	}
 
 	rootNode := &fatNode{name: "", root: true, dir: true}
-	if err := scanHostDir(abs, rootNode, 0); err != nil {
+	var hostBytes int64
+	if err := scanHostDir(hostRoot, ".", rootNode, 0, &hostBytes); err != nil {
 		return nil, nil, err
 	}
 	generateNames(rootNode)
@@ -142,40 +152,76 @@ func BuildFAT16FromDir(root string, size int) ([]byte, map[string]bool, error) {
 	return img, manifest, nil
 }
 
-func scanHostDir(path string, node *fatNode, depth int) error {
+func scanHostDir(root *os.Root, path string, node *fatNode, depth int, hostBytes *int64) error {
 	if depth > 32 {
 		return fmt.Errorf("sd dir: nesting deeper than 32 levels")
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(path))
 	if err != nil {
 		return fmt.Errorf("sd dir: %w", err)
 	}
 	for _, entry := range entries {
-		t := entry.Type()
-		if t&os.ModeSymlink != 0 {
-			continue // do not follow links out of the card directory
-		}
-		full := filepath.Join(path, entry.Name())
-		info, err := entry.Info()
+		rel := filepath.Join(path, entry.Name())
+		info, err := root.Lstat(rel)
 		if err != nil {
 			return fmt.Errorf("sd dir: %w", err)
 		}
-		child := &fatNode{name: entry.Name(), dir: entry.IsDir(), mtime: info.ModTime()}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue // do not follow links out of the card directory
+		}
+		child := &fatNode{name: entry.Name(), dir: info.IsDir(), mtime: info.ModTime()}
 		if child.dir {
-			if err := scanHostDir(full, child, depth+1); err != nil {
+			if err := scanHostDir(root, rel, child, depth+1, hostBytes); err != nil {
 				return err
 			}
-		} else if t.IsRegular() {
-			child.data, err = os.ReadFile(full)
-			if err != nil {
-				return fmt.Errorf("sd dir: %w", err)
+		} else if info.Mode().IsRegular() {
+			remaining := maxFAT16HostBytes - *hostBytes
+			if info.Size() < 0 || info.Size() > remaining {
+				return fatHostBudgetError(rel)
 			}
+			child.data, err = readHostFile(root, rel, remaining)
+			if err != nil {
+				return err
+			}
+			*hostBytes += int64(len(child.data))
 		} else {
 			continue // sockets, devices and other special files
 		}
 		node.children = append(node.children, child)
 	}
 	return nil
+}
+
+func readHostFile(root *os.Root, rel string, remaining int64) ([]byte, error) {
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, fmt.Errorf("sd dir: %w", err)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("sd dir: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > remaining {
+		_ = f.Close()
+		return nil, fatHostBudgetError(rel)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, remaining+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("sd dir: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("sd dir: %w", closeErr)
+	}
+	if int64(len(data)) > remaining {
+		return nil, fatHostBudgetError(rel)
+	}
+	return data, nil
+}
+
+func fatHostBudgetError(path string) error {
+	return fmt.Errorf("sd dir: host file %q exceeds the 16 MiB cumulative budget", path)
 }
 
 // generateNames assigns a unique 8.3 name and an optional VFAT long name to

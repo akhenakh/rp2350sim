@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -178,6 +179,104 @@ func TestSyncFAT16ToDir(t *testing.T) {
 		t.Fatal("unrelated host file was removed")
 	}
 	_ = manifestC
+}
+
+func TestSyncFAT16RejectsEscapingSymlinkParent(t *testing.T) {
+	t.Run("stale deletion", func(t *testing.T) {
+		src := t.TempDir()
+		img, _, err := BuildFAT16FromDir(src, 16<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := t.TempDir()
+		external := t.TempDir()
+		writeTestFile(t, external, "victim.txt", []byte("host data"))
+		if err := os.Mkdir(filepath.Join(dst, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(filepath.Join(dst, "sub")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(external, filepath.Join(dst, "sub")); err != nil {
+			t.Fatal(err)
+		}
+
+		card, err := NewSDCard(rp2350.New(), -1, "", dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		card.image = img
+		card.manifest = map[string]bool{"sub": true, "sub/victim.txt": true}
+		if err := card.Sync(); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(external, "victim.txt"))
+		if err != nil {
+			t.Fatalf("external target was removed: %v", err)
+		}
+		if string(got) != "host data" {
+			t.Fatalf("external target = %q", got)
+		}
+	})
+
+	t.Run("directory creation and file write", func(t *testing.T) {
+		src := t.TempDir()
+		writeTestFile(t, src, "sub/new.txt", []byte("card data"))
+		img, _, err := BuildFAT16FromDir(src, 16<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := t.TempDir()
+		external := t.TempDir()
+		if err := os.Symlink(external, filepath.Join(dst, "sub")); err != nil {
+			t.Fatal(err)
+		}
+
+		card, err := NewSDCard(rp2350.New(), -1, "", dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		card.image = img
+		if err := card.Sync(); err == nil {
+			t.Fatal("sync followed a symlink outside the backing directory")
+		}
+		if _, err := os.Stat(filepath.Join(external, "new.txt")); !os.IsNotExist(err) {
+			t.Fatalf("external file was created: %v", err)
+		}
+	})
+}
+
+func TestBuildFAT16FromDirHostBudget(t *testing.T) {
+	tests := []struct {
+		name  string
+		sizes []int64
+	}{
+		{name: "sparse file", sizes: []int64{(16 << 20) + 1}},
+		{name: "cumulative overflow", sizes: []int64{9 << 20, 9 << 20}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := t.TempDir()
+			for i, size := range tt.sizes {
+				name := filepath.Join(src, fmt.Sprintf("sparse-%d.bin", i))
+				f, err := os.Create(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Truncate(size); err != nil {
+					_ = f.Close()
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _, err := BuildFAT16FromDir(src, 16<<20)
+			if err == nil || !strings.Contains(err.Error(), "budget") {
+				t.Fatalf("BuildFAT16FromDir() error = %v, want budget error", err)
+			}
+		})
+	}
 }
 
 // TestSDCardDirTick checks a dirty directory-backed card syncs on its timer.

@@ -1,6 +1,7 @@
 package devices
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -30,11 +31,17 @@ func (s *SDCard) Sync() error {
 	if err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(s.Dir)
+	if err != nil {
+		return fmt.Errorf("sd sync: %w", err)
+	}
+	defer root.Close()
+
 	manifest := map[string]bool{}
-	if err := s.syncLevel("", 0, true, l, manifest); err != nil {
+	if err := s.syncLevel(root, "", 0, true, l, manifest); err != nil {
 		return err
 	}
-	if err := s.removeStale(manifest); err != nil {
+	if err := s.removeStale(root, manifest); err != nil {
 		return err
 	}
 	s.manifest = manifest
@@ -42,15 +49,11 @@ func (s *SDCard) Sync() error {
 	return nil
 }
 
-func (s *SDCard) syncLevel(rel string, cluster int, root bool, l *fat16Layout, manifest map[string]bool) error {
-	full, err := s.safePath(rel)
-	if err != nil {
+func (s *SDCard) syncLevel(root *os.Root, rel string, cluster int, rootLevel bool, l *fat16Layout, manifest map[string]bool) error {
+	if err := ensureHostDir(root, rel); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(full, 0o755); err != nil {
-		return fmt.Errorf("sd sync: %w", err)
-	}
-	entries, err := readDirEntries(s.image, l, cluster, root)
+	entries, err := readDirEntries(s.image, l, cluster, rootLevel)
 	if err != nil {
 		return err
 	}
@@ -65,7 +68,7 @@ func (s *SDCard) syncLevel(rel string, cluster int, root bool, l *fat16Layout, m
 		childRel := filepath.Join(rel, name)
 		if e.attr&fatAttrDirectory != 0 {
 			manifest[childRel] = true
-			if err := s.syncLevel(childRel, e.cluster, false, l, manifest); err != nil {
+			if err := s.syncLevel(root, childRel, e.cluster, false, l, manifest); err != nil {
 				return err
 			}
 			continue
@@ -74,7 +77,7 @@ func (s *SDCard) syncLevel(rel string, cluster int, root bool, l *fat16Layout, m
 		if err != nil {
 			return fmt.Errorf("sd sync: %s: %w", childRel, err)
 		}
-		if err := s.writeHostFile(childRel, data); err != nil {
+		if err := s.writeHostFile(root, childRel, data); err != nil {
 			return err
 		}
 		manifest[childRel] = true
@@ -85,7 +88,7 @@ func (s *SDCard) syncLevel(rel string, cluster int, root bool, l *fat16Layout, m
 // removeStale deletes files that disappeared from the card, but never touches
 // paths that were not present at the previous sync. Directories are removed
 // only when empty, so files the user added in the meantime survive.
-func (s *SDCard) removeStale(manifest map[string]bool) error {
+func (s *SDCard) removeStale(root *os.Root, manifest map[string]bool) error {
 	type stale struct {
 		rel   string
 		depth int
@@ -103,76 +106,73 @@ func (s *SDCard) removeStale(manifest map[string]bool) error {
 		return gone[i].rel > gone[j].rel
 	})
 	for _, g := range gone {
-		full, err := s.safePath(g.rel)
-		if err != nil {
+		if !filepath.IsLocal(g.rel) || g.rel == "." {
 			continue
 		}
-		fi, err := os.Lstat(full)
-		if err != nil {
+		if _, err := root.Lstat(g.rel); err != nil {
 			continue
 		}
-		if fi.IsDir() {
-			_ = os.Remove(full) // only when empty
-		} else {
-			_ = os.Remove(full)
-		}
+		_ = root.Remove(g.rel) // directories are removed only when empty
 	}
 	return nil
 }
 
-func (s *SDCard) writeHostFile(rel string, data []byte) error {
-	full, err := s.safePath(rel)
-	if err != nil {
+func (s *SDCard) writeHostFile(root *os.Root, rel string, data []byte) error {
+	if !filepath.IsLocal(rel) || rel == "." {
+		return fmt.Errorf("sd sync: unsafe path %q", rel)
+	}
+	dir := filepath.Dir(rel)
+	if err := ensureHostDir(root, dir); err != nil {
 		return err
 	}
-	if err := s.ensureParent(rel); err != nil {
-		return err
-	}
-	dir := filepath.Dir(full)
-	tmp, err := os.CreateTemp(dir, ".rp2350sim-*")
+	tmpRel := filepath.Join(dir, ".rp2350sim-"+rand.Text())
+	tmp, err := root.OpenFile(tmpRel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("sd sync: %w", err)
 	}
-	name := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		_ = os.Remove(name)
+		_ = root.Remove(tmpRel)
+		return fmt.Errorf("sd sync: %w", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		_ = root.Remove(tmpRel)
 		return fmt.Errorf("sd sync: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
+		_ = root.Remove(tmpRel)
 		return fmt.Errorf("sd sync: %w", err)
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("sd sync: %w", err)
-	}
-	if err := os.Rename(name, full); err != nil {
-		_ = os.Remove(name)
+	if err := root.Rename(tmpRel, rel); err != nil {
+		_ = root.Remove(tmpRel)
 		return fmt.Errorf("sd sync: %w", err)
 	}
 	return nil
 }
 
-// ensureParent creates the directory chain for rel without following an
-// existing symlink, so card names cannot escape the backing directory.
-func (s *SDCard) ensureParent(rel string) error {
-	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
-	if len(parts) <= 1 {
+// ensureHostDir creates rel one component at a time and rejects symlinks,
+// while os.Root prevents a concurrent component replacement from escaping.
+func ensureHostDir(root *os.Root, rel string) error {
+	clean := filepath.Clean(rel)
+	if clean == "." {
 		return nil
 	}
-	cur := s.Dir
-	for _, p := range parts[:len(parts)-1] {
-		if p == "" || p == "." {
+	if !filepath.IsLocal(clean) {
+		return fmt.Errorf("sd sync: unsafe path %q", rel)
+	}
+	cur := ""
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		if part == "" || part == "." {
 			continue
 		}
-		cur = filepath.Join(cur, p)
-		fi, err := os.Lstat(cur)
+		cur = filepath.Join(cur, part)
+		info, err := root.Lstat(cur)
 		if err == nil {
-			if fi.Mode()&os.ModeSymlink != 0 {
+			if info.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("sd sync: %s is a symlink", cur)
 			}
-			if !fi.IsDir() {
+			if !info.IsDir() {
 				return fmt.Errorf("sd sync: %s is not a directory", cur)
 			}
 			continue
@@ -180,27 +180,11 @@ func (s *SDCard) ensureParent(rel string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("sd sync: %w", err)
 		}
-		if err := os.Mkdir(cur, 0o755); err != nil {
+		if err := root.Mkdir(cur, 0o755); err != nil {
 			return fmt.Errorf("sd sync: %w", err)
 		}
 	}
 	return nil
-}
-
-func (s *SDCard) safePath(rel string) (string, error) {
-	if rel == "" {
-		return s.Dir, nil
-	}
-	clean := filepath.Clean(rel)
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("sd sync: unsafe path %q", rel)
-	}
-	full := filepath.Join(s.Dir, clean)
-	r, err := filepath.Rel(s.Dir, full)
-	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("sd sync: path %q escapes the card directory", rel)
-	}
-	return full, nil
 }
 
 // safeHostName strips path separators and NUL from a FAT name.

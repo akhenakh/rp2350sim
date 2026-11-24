@@ -102,8 +102,10 @@ and the image is mirrored back after firmware writes settle (about 50 ms of
 virtual time). Drop files into the directory before starting, or read files
 the firmware creates while it runs; files deleted on the card are removed
 from the directory too. Host files that were not part of the card are never
-deleted, and symlinks are skipped. Host edits made while the emulator is
-running are picked up on the next start, not live.
+deleted, and symlinks are skipped. Startup rejects host trees whose regular
+files total more than 16 MiB. Synchronization stays inside the backing
+directory even if a parent directory is replaced by a symlink. Host edits made
+while the emulator is running are picked up on the next start, not live.
 
 The UI uses `sdcards/<board>` relative to its working directory by default.
 `-sd-image PATH` uses a raw FAT image instead; `image` and `dir` are mutually
