@@ -83,7 +83,8 @@ self-update.
   [debug.md](debug.md).
 - **Board…** returns to the picker, stops firmware and file watching, flushes
   MIDI Note-Off messages to the old transport, and closes host sockets. Choosing
-  another board reloads the current firmware onto the new hardware.
+  another board reloads the current firmware onto the new hardware and restores
+  its previous run/pause state.
 - After an OTA reset the **Board** tab shows a banner naming the flash image,
   its boot number and entry point.
 
