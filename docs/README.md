@@ -29,6 +29,13 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 
 ## Install
 
+On macOS Apple Silicon or Intel, install both programs with
+[Homebrew](https://brew.sh):
+
+```sh
+brew install akhenakh/tap/rp2350sim
+```
+
 Prebuilt archives are attached to
 [GitHub Releases](https://github.com/akhenakh/rp2350sim/releases). Each archive
 contains `rp2350sim` and `rp2350sim-ui` (`.exe` on Windows), `LICENSE`,

@@ -20,6 +20,33 @@ version with `-version`.
 The binaries are pure Go (`CGO_ENABLED=0`), including the UI's Shirei/purego
 backend, so a single Linux runner cross-compiles every target.
 
+## Homebrew tap
+
+Every `v*` release also updates
+[`akhenakh/homebrew-tap`](https://github.com/akhenakh/homebrew-tap). Install
+both programs on macOS (Apple Silicon or Intel) with:
+
+```sh
+brew install akhenakh/tap/rp2350sim
+```
+
+The release workflow runs `scripts/brew-bump.sh <tag>` after the GitHub
+release and artifact attestations. The script downloads the release checksums,
+generates `Formula/rp2350sim.rb` with the two macOS platform URLs and
+SHA-256 digests, and pushes it to the tap. It uses the repository secret
+`TAP_GITHUB_TOKEN`, a token with `contents: write` on the tap. Without the
+token it falls back to an SSH clone.
+
+To check the generated formula locally without touching the tap:
+
+```sh
+DRY_RUN=1 CHECKSUMS_FILE=dist/rp2350sim_<version>_checksums.txt \
+  scripts/brew-bump.sh v<version>
+```
+
+The formula installs `rp2350sim` and `rp2350sim-ui` and tests both version
+commands.
+
 ## Local checks
 
 ```sh

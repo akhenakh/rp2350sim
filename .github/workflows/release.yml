@@ -66,3 +66,9 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*_checksums.txt
+
+      - name: Publish Homebrew formula
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          scripts/brew-bump.sh "${{ steps.tag.outputs.tag }}"

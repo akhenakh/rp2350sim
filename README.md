@@ -12,6 +12,13 @@ models use portable Go net, but the bash smoke suite is not run on Windows.
 
 ## Download
 
+On macOS Apple Silicon or Intel, install both programs with
+[Homebrew](https://brew.sh):
+
+```sh
+brew install akhenakh/tap/rp2350sim
+```
+
 Prebuilt binaries are attached to [GitHub Releases](https://github.com/akhenakh/rp2350sim/releases).
 Every archive contains both programs, `LICENSE`, `README.md` and the `docs/`
 directory:
