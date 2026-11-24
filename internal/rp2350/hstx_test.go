@@ -151,8 +151,9 @@ func TestHSTXDMAStallsOnFullFIFO(t *testing.T) {
 	d := c.dma
 	d.block.regs[0] = src
 	d.block.regs[1] = hstxFIFOBase + hstxFIFOData
-	d.block.regs[2] = 1
-	d.begin(0, dmaCtrlEN|2<<2)
+	d.setCount(0, 1)
+	d.setCtrl(0, dmaCtrlEN|2<<2)
+	d.start(0)
 	c.Write32(hstxCtrlBase+hstxCSR, 1)
 
 	ch := &d.ch[0]
