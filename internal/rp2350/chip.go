@@ -357,6 +357,11 @@ func (c *Chip) canIdleSkip() bool {
 	if c.usb != nil && !c.usb.idleForSkip() {
 		return false
 	}
+	for _, t := range c.tmr {
+		if t.source&1 != 0 {
+			return false
+		}
+	}
 	for _, u := range c.uart {
 		if u != nil && u.irqPending.Load() {
 			return false
@@ -452,17 +457,16 @@ func (c *Chip) tickPeripherals() {
 	// every cycle, and a WFI wake must happen before the cores are stepped.
 	c.ppb[0].tickSysTick(c.Cycles)
 	c.ppb[1].tickSysTick(c.Cycles)
-	// Timers and PWM counters only need microsecond resolution; running them
-	// once per microsecond instead of once per cycle leaves the per-cycle
-	// budget to the CPU. Tick every boundary crossed since the last call: a
-	// PSRAM latency charge can advance Cycles mid-instruction, and skipping a
-	// boundary would delay an alarm by a whole microsecond.
+	for i := range c.tmr {
+		c.tmr[i].tick(c.Cycles)
+	}
+	// Slow peripherals run once per microsecond. Tick every boundary crossed
+	// since the last call: a PSRAM latency charge can advance Cycles
+	// mid-instruction, and skipping a boundary would delay an alarm by a whole
+	// microsecond.
 	for c.Cycles >= c.nextMicros {
 		c.lastMicros++
 		t := c.lastMicros
-		for i := range c.tmr {
-			c.tmr[i].tick(t)
-		}
 		if c.pwm != nil {
 			c.pwm.tick(t)
 		}

@@ -6,6 +6,9 @@ type timerBlock struct {
 	chip  *Chip
 	idx   int
 
+	count      uint64
+	lastCycles uint64
+
 	alarm      [4]uint32
 	armed      uint32
 	latchHigh  uint32
@@ -32,8 +35,9 @@ func (t *timerBlock) init(c *Chip, idx int) {
 	t.block.writeFn = t.write
 	t.block.clearFn = func(c *Chip, off, v uint32) {
 		if off == 0x3C { // INTR is write-1-to-clear; the alias must clear bits
-			t.intR &^= v
+			t.intR &^= v & 0xF
 			t.block.regs[off/4] = t.intR
+			t.pend()
 			return
 		}
 		t.block.write(c, off, t.block.read(c, off)&^v)
@@ -41,6 +45,8 @@ func (t *timerBlock) init(c *Chip, idx int) {
 }
 
 func (t *timerBlock) reset() {
+	t.count = 0
+	t.lastCycles = 0
 	t.alarm = [4]uint32{}
 	t.armed = 0
 	t.latchHigh = 0
@@ -49,34 +55,58 @@ func (t *timerBlock) reset() {
 	t.intE = 0
 	t.intF = 0
 	t.pause = 0
-	t.dbgPause = 0
+	t.dbgPause = 0x6
 	t.locked = 0
 	t.source = 0
+	t.block.regs[0x2C/4] = t.dbgPause
+	t.pend()
+}
+
+func (t *timerBlock) paused() bool {
+	if t.pause&1 != 0 {
+		return true
+	}
+	if t.chip.Debug == nil || !t.chip.Debug.Stopped {
+		return false
+	}
+	core := t.chip.Debug.StopCore
+	if core < 0 || core > 1 {
+		return false
+	}
+	return t.dbgPause&(uint32(2)<<uint(core)) != 0
 }
 
 func (t *timerBlock) read(c *Chip, off uint32) (uint32, bool) {
-	now := c.NowMicros()
+	t.tick(c.Cycles)
 	switch off {
 	case 0x00: // TIMEHW
-		return uint32(now >> 32), true
+		return uint32(t.count >> 32), true
 	case 0x04: // TIMELW
-		// A write to TIMELW latches the high word; reads return the latched value.
 		return t.block.regs[1], true
 	case 0x08: // TIMEHR
-		// Software reads TIMELR then TIMEHR; TIMELR latches the high word so
-		// the pair cannot straddle a 32-bit microsecond wrap.
 		if t.latchValid {
+			t.latchValid = false
 			return t.latchHigh, true
 		}
-		return uint32(now >> 32), true
+		return uint32(t.count >> 32), true
 	case 0x0C: // TIMELR
-		t.latchHigh = uint32(now >> 32)
+		t.latchHigh = uint32(t.count >> 32)
 		t.latchValid = true
-		return uint32(now), true
+		return uint32(t.count), true
+	case 0x20: // ARMED
+		return t.armed, true
 	case 0x24: // TIMERAWH
-		return uint32(now >> 32), true
-	case 0x28: // TIMERAWH? TIMERAWL
-		return uint32(now), true
+		return uint32(t.count >> 32), true
+	case 0x28: // TIMERAWL
+		return uint32(t.count), true
+	case 0x2C: // DBGPAUSE
+		return t.dbgPause, true
+	case 0x30: // PAUSE
+		return t.pause, true
+	case 0x34: // LOCKED
+		return t.locked, true
+	case 0x38: // SOURCE
+		return t.source, true
 	case 0x3C: // INTR
 		return t.intR, true
 	case 0x40: // INTE
@@ -93,8 +123,17 @@ func (t *timerBlock) read(c *Chip, off uint32) (uint32, bool) {
 }
 
 func (t *timerBlock) write(c *Chip, off, v uint32) {
+	if off == 0x34 { // LOCKED is sticky until reset.
+		t.locked |= v & 1
+		t.block.regs[off/4] = t.locked
+		return
+	}
+	if t.locked != 0 {
+		return
+	}
+	t.tick(c.Cycles)
 	switch {
-	case off == 0x04, off == 0x08: // TIMELW / TIMEHR: ignore time writes
+	case off == 0x00, off == 0x04, off == 0x08: // time writes are not modelled
 	case off == 0x0C: // TIMELR read alias
 	case off >= 0x10 && off < 0x20:
 		// Writing an alarm value arms it.
@@ -107,46 +146,48 @@ func (t *timerBlock) write(c *Chip, off, v uint32) {
 		t.armed &^= v & 0xF
 		t.block.regs[off/4] = t.armed
 	case off == 0x2C:
-		t.dbgPause = v
+		t.dbgPause = v & 0x6
+		t.block.regs[off/4] = t.dbgPause
 	case off == 0x30:
-		t.pause = v
-	case off == 0x34:
-		t.locked = v
+		t.pause = v & 1
+		t.block.regs[off/4] = t.pause
 	case off == 0x38:
-		t.source = v
+		t.source = v & 1
+		t.block.regs[off/4] = t.source
 	case off == 0x3C: // INTR write-1-to-clear
-		t.intR &^= v
+		t.intR &^= v & 0xF
 		t.block.regs[off/4] = t.intR
-	case off == 0x40:
-		t.intE = v
 		t.pend()
-	case off == 0x44: // INTF: write 1 to force, write 0 to clear
-		t.intF = v
+	case off == 0x40:
+		t.intE = v & 0xF
+		t.block.regs[off/4] = t.intE
+		t.pend()
+	case off == 0x44: // INTF is read/write force state
+		t.intF = v & 0xF
+		t.block.regs[off/4] = t.intF
 		t.pend()
 	}
 }
 
-// pend raises the NVIC line for every enabled raw/forced interrupt. The alarm
-// pool relies on INTF to run its handler, which then programs the hardware
-// alarm; without this the default alarm pool never arms.
-func (t *timerBlock) pend() {
-	active := (t.intR | t.intF) & t.intE
-	if active == 0 {
+// tick advances the counter from the selected source and checks alarms. The
+// tick source keeps running while the counter is paused, so resuming does not
+// replay ticks that occurred during the pause.
+func (t *timerBlock) tick(cycles uint64) {
+	if cycles < t.lastCycles {
+		t.lastCycles = cycles
 		return
 	}
-	for i := range 4 {
-		if active&(1<<uint(i)) != 0 {
-			t.chip.PendIRQ(t.idx*4 + i)
-		}
+	previous := t.lastCycles
+	elapsed := cycles - previous
+	t.lastCycles = cycles
+	if t.paused() {
+		return
 	}
-	t.chip.CPU0.Sleeping = false
-	t.chip.CPU0.SleepOnEvent = false
-	t.chip.CPU1.Sleeping = false
-	t.chip.CPU1.SleepOnEvent = false
-}
-
-// tick checks alarms against the current microsecond time.
-func (t *timerBlock) tick(now uint64) {
+	if t.source&1 != 0 {
+		t.count += elapsed
+	} else {
+		t.count += cycles/cyclesPerMicrosecond - previous/cyclesPerMicrosecond
+	}
 	if t.armed == 0 {
 		return
 	}
@@ -155,15 +196,23 @@ func (t *timerBlock) tick(now uint64) {
 		if t.armed&bit == 0 {
 			continue
 		}
-		if int32(uint32(now)-t.alarm[i]) >= 0 {
+		if int32(uint32(t.count)-t.alarm[i]) >= 0 {
 			t.armed &^= bit
 			t.intR |= bit
-			t.chip.PendIRQ(t.idx*4 + i)
-			t.chip.CPU0.Sleeping = false
-			t.chip.CPU0.SleepOnEvent = false
-			t.chip.CPU1.Sleeping = false
-			t.chip.CPU1.SleepOnEvent = false
 		}
 	}
 	t.block.regs[0x20/4] = t.armed
+	t.pend()
+}
+
+// pend resynchronizes every timer IRQ from the masked raw/forced state.
+func (t *timerBlock) pend() {
+	active := (t.intR | t.intF) & t.intE
+	for i := range 4 {
+		if active&(1<<uint(i)) != 0 {
+			t.chip.PendIRQ(t.idx*4 + i)
+		} else {
+			t.chip.ClearPendingIRQ(t.idx*4 + i)
+		}
+	}
 }

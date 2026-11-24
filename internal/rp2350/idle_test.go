@@ -18,18 +18,20 @@ func TestIdleSkipAdvancesExactCycles(t *testing.T) {
 }
 
 // TestIdleSkipWakesOnAlarm checks that a timer alarm still ends the skip: the
-// core must leave WFI and the timer IRQ must be pending at the alarm time.
+// core must leave WFI and the raw alarm interrupt must remain latched.
 func TestIdleSkipWakesOnAlarm(t *testing.T) {
 	c := New()
 	c.CPU0.Sleeping = true
 	c.CPU1.Parked = true
 	// TIMER0 ALARM0 at 100 us; writing the alarm value arms it.
+	c.Write32(0x400b0040, 1) // timer INTE0
+	c.Write32(0xE000E100, 1) // NVIC ISER0
 	c.Write32(0x400b0010, 100)
 	c.Run(1000 * cyclesPerMicrosecond)
 	if c.CPU0.Sleeping {
 		t.Fatal("alarm did not wake the core")
 	}
-	if c.NVIC.pending[0]&1 == 0 {
-		t.Fatal("alarm IRQ is not pending")
+	if got := c.Read32(0x400b003c); got&1 == 0 {
+		t.Fatal("alarm interrupt is not latched")
 	}
 }
