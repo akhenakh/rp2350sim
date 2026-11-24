@@ -302,8 +302,8 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	e.initInputsLocked()
 	if e.img != nil || e.fwPath != "" {
 		e.rebootLocked()
-	} else {
-		e.loadLocked()
+	} else if err := e.loadLocked(); err != nil {
+		e.errText = err.Error()
 	}
 }
 
@@ -1501,14 +1501,21 @@ func (e *Emu) flushMIDILocked() {
 	}
 }
 
-func (e *Emu) loadLocked() {
+func (e *Emu) loadLocked() error {
 	e.resetChip()
 	if e.img == nil {
 		e.applyInputsLocked()
-		return
+		return nil
 	}
 	for _, seg := range e.img.Segments {
-		e.chip.LoadSegment(seg.Addr, seg.Data)
+		if err := e.chip.ValidateSegment(seg.Addr, seg.Data); err != nil {
+			return err
+		}
+	}
+	for _, seg := range e.img.Segments {
+		if err := e.chip.LoadSegment(seg.Addr, seg.Data); err != nil {
+			return err
+		}
 	}
 	// Apply before Boot so a held BOOTSEL is sampled by the boot path, then
 	// again because Boot resets the pin model.
@@ -1521,6 +1528,7 @@ func (e *Emu) loadLocked() {
 	e.lastChipFW = e.chip.FlashWrites()
 	e.console = e.console[:0]
 	e.consolePos = 0
+	return nil
 }
 
 // rebootLocked restarts the current flash image, preserving any self-update.
@@ -1656,7 +1664,10 @@ func (e *Emu) Load(path string) error {
 	}
 	e.fwPath = path
 	e.errText = ""
-	e.loadLocked()
+	if err := e.loadLocked(); err != nil {
+		e.errText = err.Error()
+		return err
+	}
 	e.running = true
 	return nil
 }

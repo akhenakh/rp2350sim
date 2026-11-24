@@ -1,6 +1,9 @@
 package rp2350
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestFlashIs16MiB guards the board flash size and the top of the XIP window,
 // which is where picotool's RP2350-E10 absolute block points.
@@ -33,5 +36,30 @@ func TestXIPAliases(t *testing.T) {
 	}
 	if len(c.Unhandled) != 0 {
 		t.Fatalf("alias access was reported unhandled: %v", c.Unhandled)
+	}
+}
+
+func TestLoadSegmentRejectsWholeRangeBeforeCopy(t *testing.T) {
+	tests := []struct {
+		name string
+		addr uint32
+		data []byte
+	}{
+		{name: "flash end", addr: FlashBase + FlashSize - 1, data: []byte{1, 2}},
+		{name: "SRAM end", addr: SRAMBase + SRAMSize - 2, data: []byte{1, 2, 3, 4}},
+		{name: "unmapped", addr: 0x30000000, data: []byte{1}},
+		{name: "missing PSRAM", addr: PSRAMBase, data: []byte{1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New()
+			beforeFlash, beforeSRAM := c.FlashCopy(), append([]byte(nil), c.SRAM...)
+			if err := c.LoadSegment(tt.addr, tt.data); err == nil {
+				t.Fatal("invalid segment was accepted")
+			}
+			if !slices.Equal(c.Flash, beforeFlash) || !slices.Equal(c.SRAM, beforeSRAM) {
+				t.Fatal("invalid segment partially modified memory")
+			}
+		})
 	}
 }

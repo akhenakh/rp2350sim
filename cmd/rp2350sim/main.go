@@ -412,7 +412,16 @@ func main() {
 	}
 	if img != nil {
 		for _, seg := range img.Segments {
-			c.LoadSegment(seg.Addr, seg.Data)
+			if err := c.ValidateSegment(seg.Addr, seg.Data); err != nil {
+				log.Error("firmware segment validation failed", slog.String("path", *path), slog.Any("err", err))
+				exit(1)
+			}
+		}
+		for _, seg := range img.Segments {
+			if err := c.LoadSegment(seg.Addr, seg.Data); err != nil {
+				log.Error("firmware segment load failed", slog.String("path", *path), slog.Any("err", err))
+				exit(1)
+			}
 		}
 	} else {
 		// Booting straight from a flash image: validate the vector table the

@@ -67,6 +67,39 @@ func TestPartitionBootHighestVersion(t *testing.T) {
 	}
 }
 
+func TestPartitionBoundsAndDebugAliases(t *testing.T) {
+	c := buildPartitionFlash(t, 0)
+	c.Boot() // slot B, runtime aperture [0, 0x100000)
+	const runtimePastEnd = 0x100000
+	binary.LittleEndian.PutUint32(c.Flash[runtimePastEnd:], 0xdecafbad)
+
+	for _, addr := range []uint32{FlashBase + c.partSize, XIPNoCacheBase + c.partSize} {
+		if got := c.Read32(addr); got != 0 {
+			t.Fatalf("read past partition at %#x = %#x", addr, got)
+		}
+		if _, ok := c.Peek8(addr); ok {
+			t.Fatalf("peek past partition at %#x succeeded", addr)
+		}
+		if c.PokeFlash(addr, 0) {
+			t.Fatalf("poke past partition at %#x succeeded", addr)
+		}
+	}
+	if got := c.Read32(FlashBase + c.partSize - 2); got != 0 {
+		t.Fatalf("read crossing partition boundary = %#x", got)
+	}
+
+	// Raw no-translate storage remains visible at the same offset.
+	if got := c.Read32(XIPNoTranslateBase + c.partSize); got != 0xdecafbad {
+		t.Fatalf("raw no-translate read = %#x", got)
+	}
+	if b, ok := c.Peek8(XIPNoTranslateBase + runtimePastEnd); !ok || b != 0xad {
+		t.Fatalf("raw no-translate peek = %#x ok=%v", b, ok)
+	}
+	if _, ok := c.Peek8(XIPNoCacheBase + 4); !ok {
+		t.Fatal("nocache peek inside the partition failed")
+	}
+}
+
 // TestPartitionRejectsOutOfRange checks that a malformed table is ignored
 // instead of selecting a slot outside the flash array.
 func TestPartitionRejectsOutOfRange(t *testing.T) {

@@ -712,13 +712,17 @@ func (c *Chip) Partition() (*PartitionTable, int) {
 func (c *Chip) PreferPartition(idx int) { c.preferredPartition = idx }
 
 // flashIndex translates a runtime XIP address in the booted partition to a
-// storage offset in the flash array.
+// storage offset in the flash array. A partitioned runtime window faults at and
+// beyond its aperture; only the no-translate alias exposes raw storage there.
 func (c *Chip) flashIndex(addr uint32, size int) (uint32, bool) {
-	if addr < FlashBase || addr >= FlashBase+FlashSize {
+	if size < 0 || addr < FlashBase || addr >= FlashBase+FlashSize {
 		return 0, false
 	}
 	off := uint64(addr - FlashBase)
-	if c.partSize > 0 && off < uint64(c.partSize) {
+	if c.partSize > 0 {
+		if off >= uint64(c.partSize) || uint64(size) > uint64(c.partSize)-off {
+			return 0, false
+		}
 		off += uint64(c.partOffset)
 	}
 	if off+uint64(size) > uint64(FlashSize) {
@@ -727,11 +731,16 @@ func (c *Chip) flashIndex(addr uint32, size int) (uint32, bool) {
 	return uint32(off), true
 }
 
-// flashStorage maps a storage offset into the booted partition window for the
-// XIP alias views.
+// flashStorage maps an offset in a translated XIP alias to raw flash storage.
 func (c *Chip) flashStorage(off uint32, size int) (uint32, bool) {
+	if size < 0 || uint64(off) >= FlashSize {
+		return 0, false
+	}
 	o := uint64(off)
-	if c.partSize > 0 && o < uint64(c.partSize) {
+	if c.partSize > 0 {
+		if o >= uint64(c.partSize) || uint64(size) > uint64(c.partSize)-o {
+			return 0, false
+		}
 		o += uint64(c.partOffset)
 	}
 	if o+uint64(size) > uint64(FlashSize) {
@@ -787,9 +796,45 @@ func flashAlias(addr uint32) (uint32, bool) {
 	return 0, false
 }
 
-// LoadSegment copies image bytes to a physical address, routing flash, SRAM
-// and ROM ranges appropriately.
-func (c *Chip) LoadSegment(addr uint32, data []byte) {
+// ValidateSegment checks a physical destination without modifying memory.
+func (c *Chip) ValidateSegment(addr uint32, data []byte) error {
+	n := uint64(len(data))
+	end := uint64(addr) + n
+	if end > 1<<32 {
+		return fmt.Errorf("firmware segment at %#x wraps the 32-bit address space", addr)
+	}
+	switch {
+	case addr >= FlashBase && addr < FlashBase+FlashSize:
+		if end > uint64(FlashBase+FlashSize) {
+			return fmt.Errorf("firmware segment at %#x exceeds flash", addr)
+		}
+	case addr >= SRAMBase && addr < SRAMBase+SRAMSize:
+		if end > uint64(SRAMBase+SRAMSize) {
+			return fmt.Errorf("firmware segment at %#x exceeds SRAM", addr)
+		}
+	case addr < ROMSize:
+		if end > ROMSize {
+			return fmt.Errorf("firmware segment at %#x exceeds ROM", addr)
+		}
+	default:
+		if off, ok := psramAlias(addr); ok {
+			if c.psramSize == 0 || uint64(off)+n > uint64(c.psramSize) {
+				return fmt.Errorf("firmware segment at %#x exceeds configured PSRAM", addr)
+			}
+			return nil
+		}
+		return fmt.Errorf("firmware segment destination %#x is not writable memory", addr)
+	}
+	return nil
+}
+
+// LoadSegment copies image bytes to one physical memory destination. The whole
+// range is validated before any byte is copied, so a bad segment cannot leave a
+// partially loaded image or escape its destination array.
+func (c *Chip) LoadSegment(addr uint32, data []byte) error {
+	if err := c.ValidateSegment(addr, data); err != nil {
+		return err
+	}
 	switch {
 	case addr >= FlashBase && addr < FlashBase+FlashSize:
 		copy(c.Flash[addr-FlashBase:], data)
@@ -798,14 +843,10 @@ func (c *Chip) LoadSegment(addr uint32, data []byte) {
 	case addr < ROMSize:
 		copy(c.ROM[addr:], data)
 	default:
-		if off, ok := psramAlias(addr); ok && c.psramSize > 0 && off < c.psramSize {
-			copy(c.PSRAM[off:], data)
-			return
-		}
-		for i, b := range data {
-			c.Write8(addr+uint32(i), b)
-		}
+		off, _ := psramAlias(addr)
+		copy(c.PSRAM[off:], data)
 	}
+	return nil
 }
 
 // Bus interface implementation.
@@ -929,8 +970,8 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		// Flash writes are ignored: XIP is read-only in this model.
 		return
 	}
-	if off, ok := flashAlias(addr); ok {
-		if off >= FlashSize {
+	if _, ok := flashAlias(addr); ok {
+		if _, ok := c.flashAliasIndex(addr, 1); !ok {
 			c.unhandledWrite(addr, uint32(v))
 		}
 		// Read-only flash views; the maintenance window accepts cache
@@ -973,8 +1014,8 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 	if _, ok := c.flashIndex(addr, 2); ok {
 		return
 	}
-	if off, ok := flashAlias(addr); ok {
-		if off >= FlashSize-1 {
+	if _, ok := flashAlias(addr); ok {
+		if _, ok := c.flashAliasIndex(addr, 2); !ok {
 			c.unhandledWrite(addr, uint32(v))
 		}
 		return
@@ -1018,8 +1059,8 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 	if _, ok := c.flashIndex(addr, 4); ok {
 		return
 	}
-	if off, ok := flashAlias(addr); ok {
-		if off >= FlashSize-3 {
+	if _, ok := flashAlias(addr); ok {
+		if _, ok := c.flashAliasIndex(addr, 4); !ok {
 			c.unhandledWrite(addr, v)
 		}
 		return

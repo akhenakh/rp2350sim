@@ -19,6 +19,13 @@ const (
 	uf2FlagExtension    = 0x00008000
 	uf2ExtensionIgnore  = 0x9957E304 // RP2350-E10 absolute block marker
 	uf2ExtensionDataOff = 256
+
+	firmwareFlashBase = 0x10000000
+	firmwareFlashSize = 16 * 1024 * 1024
+	firmwareSRAMBase  = 0x20000000
+	firmwareSRAMSize  = 520 * 1024
+	firmwareROMSize   = 32 * 1024
+	maxSegmentSize    = firmwareFlashSize
 )
 
 // Image is a loaded firmware image.
@@ -39,6 +46,41 @@ type Segment struct {
 	Data []byte
 }
 
+func validateSegment(addr uint32, size uint64) error {
+	if size > maxSegmentSize {
+		return fmt.Errorf("firmware segment size %d exceeds %d", size, maxSegmentSize)
+	}
+	end := uint64(addr) + size
+	if end > 1<<32 {
+		return fmt.Errorf("firmware segment at %#x wraps the 32-bit address space", addr)
+	}
+	inWindow := func(base, length uint64) bool {
+		return uint64(addr) >= base && end <= base+length
+	}
+	switch {
+	case inWindow(0, firmwareROMSize),
+		inWindow(firmwareFlashBase, firmwareFlashSize),
+		inWindow(firmwareSRAMBase, firmwareSRAMSize),
+		inWindow(0x11000000, firmwareFlashSize),
+		inWindow(0x15000000, firmwareFlashSize),
+		inWindow(0x19000000, firmwareFlashSize),
+		inWindow(0x1d000000, firmwareFlashSize):
+		return nil
+	default:
+		return fmt.Errorf("firmware segment [%#x, %#x) is outside writable memory", addr, end)
+	}
+}
+
+// ValidateSegments checks every segment's address, length and destination.
+func (img *Image) ValidateSegments() error {
+	for _, seg := range img.Segments {
+		if err := validateSegment(seg.Addr, uint64(len(seg.Data))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Load reads a firmware file, detecting the format.
 func Load(path string) (*Image, error) {
 	data, err := os.ReadFile(path)
@@ -52,7 +94,10 @@ func Load(path string) (*Image, error) {
 		binary.LittleEndian.Uint32(data[4:]) == uf2MagicStart1:
 		return loadUF2(data)
 	default:
-		return &Image{Format: "bin", Segments: []Segment{{Addr: 0x10000000, Data: data}}}, nil
+		if len(data) > firmwareFlashSize {
+			return nil, fmt.Errorf("firmware: raw image size %d exceeds flash size %d", len(data), firmwareFlashSize)
+		}
+		return &Image{Format: "bin", Segments: []Segment{{Addr: firmwareFlashBase, Data: data}}}, nil
 	}
 }
 
@@ -95,10 +140,17 @@ func loadUF2(data []byte) (*Image, error) {
 			}
 		}
 		payload := blk[32 : 32+payloadSize]
-		// Merge into the previous segment when contiguous.
+		if err := validateSegment(addr, uint64(len(payload))); err != nil {
+			return nil, fmt.Errorf("uf2: %w", err)
+		}
+		// Merge into the previous segment when contiguous, validating the
+		// combined range so a chain of blocks cannot cross its destination.
 		if n := len(img.Segments); n > 0 {
 			last := &img.Segments[n-1]
-			if last.Addr+uint32(len(last.Data)) == addr {
+			if uint64(last.Addr)+uint64(len(last.Data)) == uint64(addr) {
+				if err := validateSegment(last.Addr, uint64(len(last.Data))+uint64(len(payload))); err != nil {
+					return nil, fmt.Errorf("uf2: %w", err)
+				}
 				last.Data = append(last.Data, payload...)
 				continue
 			}
@@ -124,11 +176,24 @@ func loadELF(data []byte) (*Image, error) {
 		if p.Type != elf.PT_LOAD || p.Filesz == 0 {
 			continue
 		}
+		if p.Filesz > maxSegmentSize {
+			return nil, fmt.Errorf("elf: segment size %d exceeds %d", p.Filesz, maxSegmentSize)
+		}
+		if p.Paddr > uint64(^uint32(0)) {
+			return nil, fmt.Errorf("elf: physical address %#x exceeds 32 bits", p.Paddr)
+		}
+		if p.Off > uint64(len(data)) || p.Filesz > uint64(len(data))-p.Off {
+			return nil, fmt.Errorf("elf: segment at %#x extends past the file", p.Off)
+		}
+		addr := uint32(p.Paddr)
+		if err := validateSegment(addr, p.Filesz); err != nil {
+			return nil, fmt.Errorf("elf: %w", err)
+		}
 		buf := make([]byte, p.Filesz)
 		if _, err := p.ReadAt(buf, 0); err != nil {
 			return nil, fmt.Errorf("elf: read segment: %w", err)
 		}
-		img.Segments = append(img.Segments, Segment{Addr: uint32(p.Paddr), Data: buf})
+		img.Segments = append(img.Segments, Segment{Addr: addr, Data: buf})
 	}
 	return img, nil
 }
@@ -154,6 +219,9 @@ func newReaderAt(b []byte) sliceReaderAt { return sliceReaderAt(b) }
 // layouts are rejected instead of being executed as if they were a flat
 // flash image.
 func (img *Image) ValidateBoot(flashBase, flashSize, sramBase, sramSize uint32) error {
+	if err := img.ValidateSegments(); err != nil {
+		return err
+	}
 	sp, pc, ok := img.vector(flashBase)
 	if !ok {
 		return fmt.Errorf("firmware: no vector table at %#x (only flat flash images are supported)", flashBase)
@@ -173,11 +241,11 @@ func (img *Image) ValidateBoot(flashBase, flashSize, sramBase, sramSize uint32) 
 // vector returns the eight bytes at addr when a segment covers them.
 func (img *Image) vector(addr uint32) (sp, pc uint32, ok bool) {
 	for _, s := range img.Segments {
-		end := s.Addr + uint32(len(s.Data))
-		if addr < s.Addr || addr+8 > end {
+		start, end := uint64(s.Addr), uint64(s.Addr)+uint64(len(s.Data))
+		if uint64(addr) < start || uint64(addr)+8 > end {
 			continue
 		}
-		off := addr - s.Addr
+		off := int(uint64(addr) - start)
 		sp = binary.LittleEndian.Uint32(s.Data[off:])
 		pc = binary.LittleEndian.Uint32(s.Data[off+4:])
 		return sp, pc, true
