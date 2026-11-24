@@ -443,9 +443,10 @@ rp2350sim-ui --board pico2-bus --tab bus --bus-connect \
 ```
 
 `task ui:ota` opens the same setup live; `task ui:ota-png` writes
-`build/ui-ota.png`. The guide screenshots for DVI, MIDI, audio, scope, logic,
-RP2350B, USB and OTA are regenerated with `task docs:images` (rendered at 2x and
-downscaled to 1280×820).
+`build/ui-ota.png`. Every guide screenshot (picker, Board, inputs, LCD,
+sensors, tabs, DVI, MIDI, audio, scope, logic, OTA) is regenerated with
+`task docs:images` (rendered at 2x and downscaled to 1280×820). The Ethernet
+and Wi-Fi captures start a temporary echo server on 127.0.0.1:9000.
 
 ## Keyboard
 
