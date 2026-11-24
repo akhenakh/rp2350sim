@@ -404,6 +404,8 @@ func TestUSBResetValuesAndDPRAMAliases(t *testing.T) {
 		{"SIE_CTRL", usbSIECTRL, usbSIEPullDown},
 		{"NAK_POLL", usbNAKPOLL, usbNAKPollRst},
 		{"USB_MUXING", usbMUXING, usbMuxToPHY},
+		{"USBPHY_TRIM", usbPHYTRIM, usbPHYTrimRst},
+		{"LINESTATE_TUNING", usbLINETUNING, usbLineTuneRst},
 		{"INTS", usbINTS, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -97,6 +97,8 @@ const (
 	usbEPSTALLARM  = 0x068
 	usbNAKPOLL     = 0x06C
 	usbMUXING      = 0x074
+	usbPHYTRIM     = 0x084
+	usbLINETUNING  = 0x088
 	usbINTR        = 0x08C
 	usbINTE        = 0x090
 	usbINTF        = 0x094
@@ -106,6 +108,8 @@ const (
 	usbSIEPullDown = 1 << 15
 	usbNAKPollRst  = 0x00100010
 	usbMuxToPHY    = 1
+	usbPHYTrimRst  = 0x00001F1F
+	usbLineTuneRst = 0x000000F8
 )
 
 // Interrupt bits in INTR/INTE/INTS.
@@ -311,6 +315,8 @@ func (u *usbBlock) reset() {
 	u.regs.regs[usbSIECTRL/4] = usbSIEPullDown
 	u.regs.regs[usbNAKPOLL/4] = usbNAKPollRst
 	u.regs.regs[usbMUXING/4] = usbMuxToPHY
+	u.regs.regs[usbPHYTRIM/4] = usbPHYTrimRst
+	u.regs.regs[usbLINETUNING/4] = usbLineTuneRst
 	u.attached = false
 	u.addr = 0
 	u.state = usbHostDetached
