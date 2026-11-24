@@ -11,8 +11,50 @@ func TestADCReadyAndResult(t *testing.T) {
 	if cs := c.Read32(adcBase); cs&adcCSReady == 0 {
 		t.Fatalf("CS = %#x, READY not set", cs)
 	}
+	if cs := c.Read32(adcBase); cs&0x4 != 0 {
+		t.Fatalf("CS = %#x, START_ONCE did not self-clear", cs)
+	}
 	if got := c.Read32(adcBase + 4); got != 0x800 {
 		t.Fatalf("RESULT = %#x, want 0x800", got)
+	}
+}
+
+func TestADCPackageMapping(t *testing.T) {
+	tests := []struct {
+		name        string
+		pkg         Package
+		gpioBase    int
+		channels    int
+		tempChannel int
+	}{
+		{name: "qfn60", pkg: PackageQFN60, gpioBase: 26, channels: 4, tempChannel: 4},
+		{name: "qfn80", pkg: PackageQFN80, gpioBase: 40, channels: 8, tempChannel: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New()
+			c.SetPackage(tt.pkg)
+			for ch := range tt.channels {
+				pin := tt.gpioBase + ch
+				volts := float32(ch) * 0.3
+				c.Pins.SetAnalog(pin, volts)
+				c.SetADC(ch, 0xABC)
+				c.Write32(adcBase, 1|uint32(ch)<<adcCSAinsel)
+				want := uint32(float32(0x0FFF) * volts / 3.3)
+				if got := c.Read32(adcBase + 4); got != want {
+					t.Fatalf("channel %d RESULT = %#x, want %#x", ch, got, want)
+				}
+			}
+			c.SetADC(tt.tempChannel, 0x789)
+			c.Write32(adcBase, 1|uint32(tt.tempChannel)<<adcCSAinsel)
+			if got := c.Read32(adcBase + 4); got != 0x789 {
+				t.Fatalf("temperature RESULT = %#x, want 0x789", got)
+			}
+			c.Write32(adcBase, 1|15<<adcCSAinsel)
+			if got := c.Read32(adcBase + 4); got != 0 {
+				t.Fatalf("unbonded channel RESULT = %#x, want 0", got)
+			}
+		})
 	}
 }
 
