@@ -54,6 +54,10 @@ type Chip struct {
 	psramLatency  uint32
 	psramCS       int
 	psramWritable bool
+	// psramStall guards the engine advance charged for PSRAM latency: a DMA
+	// engine ticked from inside the stall may itself access PSRAM, and the
+	// outer advance already owns the virtual clock.
+	psramStall bool
 
 	CPU0 *m33.CPU
 	CPU1 *m33.CPU

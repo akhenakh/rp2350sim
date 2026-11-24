@@ -254,9 +254,51 @@ func psramAlias(addr uint32) (uint32, bool) {
 
 // psramAccess charges the external latency. The clock is the same virtual
 // 150 MHz counter the peripherals use, so a slow PSRAM also pushes timers and
-// DMA forward exactly as a real external memory stall would.
+// DMA forward exactly as a real external memory stall would. The per-cycle
+// engines (PWM, DMA, PIO, SHA, HSTX) advance with it; cycle-counted registers
+// read Cycles directly and catch up on the next tickPeripherals.
 func (c *Chip) psramAccess() {
-	if c.psramLatency > 0 {
-		c.Cycles += uint64(c.psramLatency)
+	c.advanceEngines(uint64(c.psramLatency))
+}
+
+// advanceEngines moves the per-cycle engines forward by cycles. It exists for
+// virtual-time charges outside Step, chiefly a PSRAM stall in the middle of an
+// instruction; those engines would otherwise miss the elapsed cycles while
+// timers advanced.
+func (c *Chip) advanceEngines(cycles uint64) {
+	if cycles == 0 {
+		return
 	}
+	if c.psramStall {
+		// A DMA engine ticked below is itself reading PSRAM. The outer loop
+		// already owns the clock and will keep advancing the engines.
+		c.Cycles += cycles
+		return
+	}
+	c.psramStall = true
+	for range cycles {
+		c.Cycles++
+		if c.pwm != nil && c.pwm.busy() {
+			c.pwm.tick()
+		}
+		if c.dma != nil && c.dma.busy() {
+			c.dma.tick()
+		}
+		if c.sha != nil {
+			c.sha.tick(c)
+		}
+		if c.hstx != nil {
+			c.hstx.tick()
+		}
+		pioInputs := c.pioInputLevels()
+		for _, p := range c.pio {
+			if p != nil {
+				p.tickWithInputs(pioInputs)
+			}
+		}
+		for _, h := range c.CycleHooks {
+			h()
+		}
+	}
+	c.psramStall = false
 }
