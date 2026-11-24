@@ -82,10 +82,8 @@ func TestAttachBusPresets(t *testing.T) {
 		t.Fatalf("SPI presets = %+v", got)
 	}
 	// The W25Q16 answers JEDEC EF 40 15 after CS is asserted.
+	c.Pins.SetExternal(17, true)
 	c.Pins.SetExternal(17, false)
-	if c.Pins.OnChange != nil {
-		c.Pins.OnChange(17, c.Pins.Level(17))
-	}
 	if v := got[0].fn(0x9F); v != 0xEF {
 		t.Fatalf("JEDEC first byte = %#x", v)
 	}

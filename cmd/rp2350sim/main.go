@@ -768,7 +768,7 @@ func main() {
 		}
 	}
 	if *tracePins != "" || len(spiBridges) > 0 {
-		c.Pins.OnChange = func(pin int, level bool) {
+		c.Pins.OnChange = chainPinCallbacks(c.Pins.OnChange, func(pin int, level bool) {
 			if wanted[pin] {
 				log.Info("pin change",
 					slog.Int("pin", pin), slog.Bool("level", level),
@@ -777,7 +777,7 @@ func main() {
 			for _, br := range spiBridges {
 				br.SetCS(pin, level)
 			}
-		}
+		})
 	}
 
 	if *traceN > 0 {

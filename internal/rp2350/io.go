@@ -40,6 +40,9 @@ func (p *PinState) reset() {
 	p.AnalogValid = [48]bool{}
 	p.PullUp = [48]bool{}
 	p.PullDown = [48]bool{}
+	for i := range p.PullDown {
+		p.PullDown[i] = true
+	}
 	for i := range p.Func {
 		p.Func[i] = 0x1F // FUNCSEL_NULL
 	}
@@ -127,6 +130,7 @@ func (p *PinState) SetExternal(pin int, level bool) {
 	if pin < 0 || pin > 47 {
 		return
 	}
+	before := p.Level(pin)
 	bit := uint64(1) << uint(pin)
 	p.ExtValid |= bit
 	if level {
@@ -134,6 +138,7 @@ func (p *PinState) SetExternal(pin int, level bool) {
 	} else {
 		p.ExtLevel &^= bit
 	}
+	p.notifyChange(pin, before)
 }
 
 // ReleaseExternal stops driving a pin from the board model.
@@ -141,8 +146,18 @@ func (p *PinState) ReleaseExternal(pin int) {
 	if pin < 0 || pin > 47 {
 		return
 	}
+	before := p.Level(pin)
 	bit := uint64(1) << uint(pin)
 	p.ExtValid &^= bit
+	p.notifyChange(pin, before)
+}
+
+func (p *PinState) notifyChange(pin int, before bool) {
+	if p.OnChange != nil {
+		if after := p.Level(pin); after != before {
+			p.OnChange(pin, after)
+		}
+	}
 }
 
 func (p *PinState) setOutput(pin int, level bool) {
@@ -190,14 +205,23 @@ func (io *ioBank) init(c *Chip) {
 	io.pads.writeFn = func(c *Chip, off, v uint32) {
 		if off >= 0x04 && off < 0x04+4*48 && (off-0x04)%4 == 0 {
 			pin := int((off - 0x04) / 4)
+			before := c.Pins.Level(pin)
 			c.Pins.PullUp[pin] = v&(1<<3) != 0
 			c.Pins.PullDown[pin] = v&(1<<2) != 0
+			c.Pins.notifyChange(pin, before)
 		}
 	}
 	// IO_BANK0 CTRL resets to FUNCSEL=NULL (0x1F), matching PinState.Func.
 	io.bank0.resetFn = func(c *Chip) {
 		for pin := range 48 {
 			io.bank0.regs[(0x04+pin*8)/4] = 0x1F
+		}
+	}
+	io.pads.resetFn = func(c *Chip) {
+		for pin := range 48 {
+			io.pads.regs[(0x04+pin*4)/4] = 0x116
+			c.Pins.PullUp[pin] = false
+			c.Pins.PullDown[pin] = true
 		}
 	}
 }
@@ -318,6 +342,12 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 }
 
 func (s *sioBlock) write(c *Chip, off, v uint32) {
+	// RP2350-E2: the SIO decoder also treats writes to 0x180..0x1fc as
+	// writes to the corresponding spinlock 0x80 bytes below.
+	if off >= 0x180 && off < 0x200 {
+		n := (off - 0x180) / 4
+		s.spinlock &^= uint32(1) << n
+	}
 	oldOut, oldOE := c.Pins.Out, c.Pins.OE
 	switch off {
 	case 0x10:
