@@ -7,6 +7,10 @@ type PinState struct {
 	PullUp   [48]bool
 	PullDown [48]bool
 
+	// Bit-parallel summaries used by PIO's always-on input synchronizers.
+	pullUpMask uint64
+	pwmPins    uint64
+
 	// ExtLevel is a level driven by an external device (or the UI); ExtValid
 	// marks which pins are actually driven externally.
 	ExtLevel uint64
@@ -40,6 +44,8 @@ func (p *PinState) reset() {
 	p.AnalogValid = [48]bool{}
 	p.PullUp = [48]bool{}
 	p.PullDown = [48]bool{}
+	p.pullUpMask = 0
+	p.pwmPins = 0
 	for i := range p.PullDown {
 		p.PullDown[i] = true
 	}
@@ -201,6 +207,12 @@ func (io *ioBank) init(c *Chip) {
 			pin := int((off - 0x04) / 8)
 			old := c.Pins.Func[pin]
 			c.Pins.Func[pin] = uint8(v & 0x1F)
+			bit := uint64(1) << uint(pin)
+			if c.Pins.Func[pin] == pwmFuncSel {
+				c.Pins.pwmPins |= bit
+			} else {
+				c.Pins.pwmPins &^= bit
+			}
 			if c.pwm != nil {
 				if old == pwmFuncSel && c.Pins.Func[pin] != pwmFuncSel {
 					c.Pins.setOutput(pin, false)
@@ -218,6 +230,12 @@ func (io *ioBank) init(c *Chip) {
 			before := c.Pins.Level(pin)
 			c.Pins.PullUp[pin] = v&(1<<3) != 0
 			c.Pins.PullDown[pin] = v&(1<<2) != 0
+			bit := uint64(1) << uint(pin)
+			if c.Pins.PullUp[pin] {
+				c.Pins.pullUpMask |= bit
+			} else {
+				c.Pins.pullUpMask &^= bit
+			}
 			c.Pins.notifyChange(pin, before)
 		}
 	}
@@ -228,6 +246,7 @@ func (io *ioBank) init(c *Chip) {
 		}
 	}
 	io.pads.resetFn = func(c *Chip) {
+		c.Pins.pullUpMask = 0
 		for pin := range 48 {
 			io.pads.regs[(0x04+pin*4)/4] = 0x116
 			c.Pins.PullUp[pin] = false

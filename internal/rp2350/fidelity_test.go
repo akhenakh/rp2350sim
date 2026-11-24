@@ -167,10 +167,10 @@ func TestPIOIRQWaitAndRouting(t *testing.T) {
 	}
 
 	// IRQ0_INTE routes the shared flag to NVIC 15.
-	c.Write32(pioBase0+0x30, 1) // make sure the flag is clear
-	c.Write32(pioBase0+pioIRQ0INTE, 1)
-	p.mem[0] = 0xC000     // irq set 0
-	p.writeCtrl(1 | 1<<4) // enable and restart SM0 to PC=0
+	c.Write32(pioBase0+0x30, 1)           // make sure the flag is clear
+	c.Write32(pioBase0+pioIRQ0INTE, 1<<8) // shared IRQ flag 0
+	p.mem[0] = 0xC000                     // irq set 0
+	p.writeCtrl(1 | 1<<4)                 // enable and restart SM0 to PC=0
 	for range 1 {
 		p.tick()
 	}

@@ -8,7 +8,7 @@ import (
 // pioBlock models one RP2350 PIO block: 32 shared instruction words, four state
 // machines with their own config, scratch registers and FIFOs, and eight shared
 // IRQ flags. Nothing runs as a goroutine; the chip's per-cycle tick advances
-// each enabled state machine according to its clock divider.
+// each enabled state machine according to its free-running clock divider.
 type pioBlock struct {
 	chip  *Chip
 	block *regBlock
@@ -25,7 +25,16 @@ type pioBlock struct {
 	fdebug uint32
 
 	// active is a mask of enabled state machines, kept in step with CTRL.
-	active uint8
+	active   uint8
+	clocking uint8 // SMs whose divider is not 1 must tick while disabled
+
+	// Input synchronizers are relative to the block's 32-pin GPIO window.
+	// INPUT_SYNC_BYPASS selects the raw input for individual pins.
+	inputBypass  uint32
+	inputSync1   uint64
+	inputSync2   uint64
+	inputLast    uint64
+	inputPending uint8
 }
 
 type pioSM struct {
@@ -52,14 +61,30 @@ type pioSM struct {
 	rx  [8]uint32
 	rxN int
 
-	waitingPush bool // autopush pending (RX FIFO was full)
-	pcSet       bool
+	pcSet bool
 
-	// irq wait: the instruction raises the target flag first, then stalls
-	// until software (or another state machine) clears it.
-	irqWaiting   bool
-	irqWaitBlock *pioBlock
-	irqWaitFlag  int
+	// OUT/MOV EXEC queues an instruction for the next enabled SM cycle.
+	execPending bool
+	execInstr   uint16
+
+	// A stalled instruction remains at the current PC. Side-set and the main
+	// instruction's first-cycle effects are not repeated while it waits.
+	stalled     bool
+	stallKind   uint8
+	stallInstr  uint16
+	stallDelay  int
+	stallSource uint8
+	execStalled bool
+
+	// The source of the instruction currently being attempted.
+	instructionSource uint8
+
+	// OUT_STICKY latches the most recent main pin writes per SM. Side-set is
+	// deliberately not sticky and is applied after these and the main writes.
+	stickyLevelMask uint32
+	stickyLevelVal  uint32
+	stickyDirMask   uint32
+	stickyDirVal    uint32
 }
 
 const (
@@ -85,6 +110,22 @@ const (
 	pioExecctrlReset  = 0x0001F000
 	pioShiftctrlReset = 0x000C0000
 	pioPinctrlReset   = 0x14000000
+)
+
+const (
+	pioSourceMemory uint8 = iota
+	pioSourceExec
+	pioSourceForced
+)
+
+const (
+	pioStallNone uint8 = iota
+	pioStallWait
+	pioStallPush
+	pioStallPull
+	pioStallOutRefill
+	pioStallInPush
+	pioStallIRQ
 )
 
 func pioFuncSel(id int) uint8 { return uint8(6 + id) }
@@ -132,6 +173,12 @@ func (p *pioBlock) reset() {
 	p.outOE = 0
 	p.fdebug = 0
 	p.active = 0
+	p.clocking = 0
+	p.inputBypass = 0
+	p.inputSync1 = 0
+	p.inputSync2 = 0
+	p.inputLast = 0
+	p.inputPending = 0
 	p.chip.pioActive &^= 1 << uint(p.id)
 	for i := range p.sm {
 		s := &p.sm[i]
@@ -146,11 +193,20 @@ func (p *pioBlock) reset() {
 		s.txN = 0
 		s.rx = [8]uint32{}
 		s.rxN = 0
-		s.waitingPush = false
 		s.pcSet = false
-		s.irqWaiting = false
-		s.irqWaitBlock = nil
-		s.irqWaitFlag = 0
+		s.execPending = false
+		s.execInstr = 0
+		s.stalled = false
+		s.stallKind = pioStallNone
+		s.stallInstr = 0
+		s.stallDelay = 0
+		s.stallSource = pioSourceMemory
+		s.execStalled = false
+		s.instructionSource = pioSourceMemory
+		s.stickyLevelMask = 0
+		s.stickyLevelVal = 0
+		s.stickyDirMask = 0
+		s.stickyDirVal = 0
 		s.clkdiv = pioClkdivReset
 		s.execctrl = pioExecctrlReset
 		s.shiftctrl = pioShiftctrlReset
@@ -176,14 +232,22 @@ func (p *pioBlock) read(c *Chip, off uint32) (uint32, bool) {
 		return p.flevel(), true
 	case 0x030: // IRQ
 		return p.irq, true
+	case 0x038: // INPUT_SYNC_BYPASS
+		return p.inputBypass, true
+	case 0x03C: // DBG_PADOUT
+		return uint32(p.outVal), true
+	case 0x040: // DBG_PADOE
+		return uint32(p.outOE), true
+	case 0x044: // DBG_CFGINFO
+		return 1<<28 | 32<<16 | 4<<8 | 4, true
+	case 0x16C: // INTR
+		return p.intr(), true
 	case pioIRQ0INTE, pioIRQ0INTF, pioIRQ1INTE, pioIRQ1INTF:
 		return p.block.regs[off/4], true
 	case pioIRQ0INTS:
-		return (p.irq | p.block.regs[pioIRQ0INTF/4]) & p.block.regs[pioIRQ0INTE/4], true
+		return (p.intr() | p.block.regs[pioIRQ0INTF/4]) & p.block.regs[pioIRQ0INTE/4], true
 	case pioIRQ1INTS:
-		return (p.irq | p.block.regs[pioIRQ1INTF/4]) & p.block.regs[pioIRQ1INTE/4], true
-	case 0x044: // DBG_CFGINFO: 4-deep FIFOs, 32 instructions, PIO v1
-		return 4 | 32<<8 | 1<<16, true
+		return (p.intr() | p.block.regs[pioIRQ1INTF/4]) & p.block.regs[pioIRQ1INTE/4], true
 	}
 	if off >= 0x010 && off < 0x020 { // TXF0..3 (write-only)
 		return 0, true
@@ -191,16 +255,38 @@ func (p *pioBlock) read(c *Chip, off uint32) (uint32, bool) {
 	if off >= 0x020 && off < 0x030 { // RXF0..3
 		return p.sm[(off-0x020)/4].popRx(), true
 	}
-	if off >= 0x048 && off < 0x048+32*4 {
-		return uint32(p.mem[(off-0x048)/4]), true
+	if off >= 0x048 && off < 0x048+32*4 { // INSTR_MEM is write-only
+		return 0, true
+	}
+	if off >= 0x128 && off < 0x168 { // RXF0..3_PUTGET0..3
+		i := (off - 0x128) / 0x10
+		entry := (off - 0x128) % 0x10 / 4
+		s := &p.sm[i]
+		if s.rxPut() && !s.rxGet() {
+			return s.rx[entry], true
+		}
+		return 0, true
 	}
 	if off >= pioSMBase && off < pioSMBase+4*pioSMStride {
 		i := (off - pioSMBase) / pioSMStride
+		s := &p.sm[i]
 		switch (off - pioSMBase) % pioSMStride {
+		case 0x00: // CLKDIV
+			return s.clkdiv, true
+		case 0x04: // EXECCTRL
+			v := s.execctrl &^ (uint32(1) << 31)
+			if s.execStalled {
+				v |= 1 << 31
+			}
+			return v, true
+		case 0x08: // SHIFTCTRL
+			return s.shiftctrl, true
 		case 0x0C: // ADDR
-			return uint32(p.sm[i].pc), true
-		case 0x10: // INSTR
-			return 0, true
+			return uint32(s.pc), true
+		case 0x10: // INSTR reflects the current program-memory address
+			return uint32(p.mem[s.pc]), true
+		case 0x14: // PINCTRL
+			return s.pinctrl, true
 		}
 	}
 	return 0, false
@@ -222,7 +308,7 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 		return
 	case off == 0x030: // IRQ, write 1 to clear
 		p.irq &^= v & 0xFF
-		p.block.regs[off/4] = p.irq
+		p.block.regs[0x30/4] = p.irq
 		p.updateIRQ()
 		return
 	case off == 0x034: // IRQ_FORCE
@@ -230,54 +316,93 @@ func (p *pioBlock) write(c *Chip, off, v uint32) {
 		p.block.regs[0x30/4] = p.irq
 		p.updateIRQ()
 		return
+	case off == 0x038: // INPUT_SYNC_BYPASS
+		p.inputBypass = v
+		return
+	case off == 0x03C || off == 0x040: // debug pad registers are read-only
+		return
+	case off >= 0x048 && off < 0x048+32*4:
+		p.mem[(off-0x048)/4] = uint16(v)
+		return
+	case off >= 0x128 && off < 0x168:
+		i := (off - 0x128) / 0x10
+		entry := (off - 0x128) % 0x10 / 4
+		s := &p.sm[i]
+		if s.rxGet() && !s.rxPut() {
+			s.rx[entry] = v
+		}
+		return
+	case off == 0x168: // GPIOBASE, only bit 4 is writable
+		p.block.regs[off/4] = v & 0x10
+		return
 	case off == pioIRQ0INTE, off == pioIRQ0INTF, off == pioIRQ1INTE, off == pioIRQ1INTF:
 		p.updateIRQ()
 		return
 	case off == pioIRQ0INTS, off == pioIRQ1INTS: // read-only status
-		return
-	case off >= 0x048 && off < 0x048+32*4:
-		p.mem[(off-0x048)/4] = uint16(v)
 		return
 	}
 	if off >= pioSMBase && off < pioSMBase+4*pioSMStride {
 		i := (off - pioSMBase) / pioSMStride
 		s := &p.sm[i]
 		switch (off - pioSMBase) % pioSMStride {
-		case 0x00: // CLKDIV
-			s.clkdiv = v
-			s.acc = 0
+		case 0x00: // CLKDIV does not restart the free-running divider
+			s.clkdiv = v & 0xFFFFFF00
+			if s.clkdiv == pioClkdivReset {
+				s.acc = 0
+				p.clocking &^= 1 << uint(i)
+			} else {
+				p.clocking |= 1 << uint(i)
+			}
 		case 0x04: // EXECCTRL
-			s.execctrl = v
-		case 0x08: // SHIFTCTRL; changing a FIFO join flushes both FIFOs
+			oldSticky := s.execctrl&(1<<17) != 0
+			s.execctrl = v &^ (uint32(1) << 31)
+			if oldSticky && s.execctrl&(1<<17) == 0 {
+				s.clearSticky()
+			}
+		case 0x08: // SHIFTCTRL
 			old := s.shiftctrl
-			s.shiftctrl = v
+			s.shiftctrl = normalizePIOFIFOJoin(v)
 			p.chip.Logger.Debug("pio shiftctrl",
 				slog.Uint64("cycle", p.chip.Cycles),
 				slog.Int("block", p.id), slog.Int("sm", int(i)),
-				slog.String("from", fmtHex(old)), slog.String("to", fmtHex(v)))
-			if (old^v)&(1<<30|1<<31) != 0 {
+				slog.String("from", fmtHex(old)), slog.String("to", fmtHex(s.shiftctrl)))
+			if (old^s.shiftctrl)&pioFIFOJoinMask != 0 {
 				s.txN, s.rxN = 0, 0
 				p.chip.Logger.Debug("pio fifo flush",
 					slog.Uint64("cycle", p.chip.Cycles),
 					slog.Int("block", p.id), slog.Int("sm", int(i)))
+				p.updateIRQ()
 			}
-		case 0x0C: // ADDR
-			s.pc = uint8(v & 0x1F)
-		case 0x10: // INSTR: execute immediately
-			s.execNow(uint16(v))
+		case 0x0C: // ADDR is read-only
+			return
+		case 0x10: // INSTR executes immediately, including while disabled
+			s.forceInstruction(uint16(v))
 		case 0x14: // PINCTRL
 			s.pinctrl = v
 		}
 	}
 }
 
-// updateIRQ drives the two PIO interrupt lines from the shared flags,
+const pioFIFOJoinMask = 1<<14 | 1<<15 | 1<<30 | 1<<31
+
+func normalizePIOFIFOJoin(v uint32) uint32 {
+	v &^= 0x3FE0 // reserved bits 13:5
+	if v&(1<<14|1<<15) != 0 {
+		v &^= 1<<30 | 1<<31
+	} else if v&(1<<30|1<<31) != 0 {
+		v &^= 1<<14 | 1<<15
+	}
+	return v
+}
+
+// updateIRQ drives the two PIO interrupt lines from shared flags, FIFO status,
 // force registers and enables.
 func (p *pioBlock) updateIRQ() {
+	raw := p.intr()
 	for i := range 2 {
 		inte := p.block.regs[(pioIRQ0INTE+uint32(i)*0xC)/4]
 		intf := p.block.regs[(pioIRQ0INTF+uint32(i)*0xC)/4]
-		active := (p.irq | intf) & inte
+		active := (raw | intf) & inte
 		irq := 15 + 2*p.id + i
 		if active != 0 {
 			p.chip.PendIRQ(irq)
@@ -285,6 +410,20 @@ func (p *pioBlock) updateIRQ() {
 			p.chip.ClearPendingIRQ(irq)
 		}
 	}
+}
+
+func (p *pioBlock) intr() uint32 {
+	var v uint32
+	for i := range p.sm {
+		s := &p.sm[i]
+		if s.rxCap() > 0 && s.rxN > 0 {
+			v |= 1 << uint(i) // RXNEMPTY
+		}
+		if s.txCap() > 0 && s.txN < s.txCap() {
+			v |= 1 << uint(4+i) // TXNFULL
+		}
+	}
+	return v | p.irq<<8
 }
 
 func (p *pioBlock) writeCtrl(v uint32) {
@@ -302,11 +441,52 @@ func (p *pioBlock) writeCtrl(v uint32) {
 			s.acc = 0
 		}
 	}
-	// SM_RESTART and CLKDIV_RESTART are self-clearing strobes. Leaving them
-	// set makes a later read-modify-write (SET alias) re-restart the machine
-	// and jump back to the wrap target, losing the program's entry point.
-	v &^= 0xFF0 // bits 4..11
+
+	next := p.chip.pio[(p.id+1)%3]
+	prev := p.chip.pio[(p.id+2)%3]
+	nextMask := (v >> 20) & 0xF
+	prevMask := (v >> 16) & 0xF
+	enable := v&(1<<24) != 0
+	disable := v&(1<<25) != 0
+	restartDiv := v&(1<<26) != 0
+	applyNeighbour := func(q *pioBlock, mask uint32) {
+		if q == nil {
+			return
+		}
+		for i := range q.sm {
+			if mask&(1<<uint(i)) == 0 {
+				continue
+			}
+			s := &q.sm[i]
+			if disable {
+				s.enabled = false
+			} else if enable {
+				s.enabled = true
+			}
+			if restartDiv {
+				s.acc = 0
+			}
+		}
+		q.refreshActive()
+	}
+	applyNeighbour(next, nextMask)
+	applyNeighbour(prev, prevMask)
+
+	// All restart and NEXTPREV fields are self-clearing strobes. Leaving them
+	// set makes a later read-modify-write repeat the operation.
+	v &^= 0x07FFFFF0
 	p.block.regs[0] = v
+	p.active = active
+	p.refreshActive()
+}
+
+func (p *pioBlock) refreshActive() {
+	var active uint8
+	for i := range p.sm {
+		if p.sm[i].enabled {
+			active |= 1 << uint(i)
+		}
+	}
 	p.active = active
 	bit := uint8(1) << uint(p.id)
 	if active != 0 {
@@ -349,19 +529,27 @@ func (p *pioBlock) flevel() uint32 {
 // ---- state machine ----
 
 func (s *pioSM) restart() {
+	s.clearSticky()
 	s.pc = uint8((s.execctrl >> 7) & 0x1F) // wrap bottom
+	s.isr = 0
 	s.inCount, s.outCount = 0, 32
 	s.delay = 0
-	s.acc = 0
-	s.waitingPush = false
-	s.irqWaiting = false
+	s.pcSet = false
+	s.execPending = false
+	s.execInstr = 0
+	s.stalled = false
+	s.stallKind = pioStallNone
+	s.stallInstr = 0
+	s.stallDelay = 0
+	s.execStalled = false
+	// OSR, X/Y and the free-running clock divider are deliberately preserved.
 }
 
 func (s *pioSM) txCap() int {
 	if s.shiftctrl&(1<<30) != 0 {
 		return 8
 	}
-	if s.shiftctrl&(1<<31) != 0 {
+	if s.shiftctrl&(1<<31) != 0 || s.rxPut() || s.rxGet() {
 		return 0
 	}
 	return 4
@@ -371,11 +559,14 @@ func (s *pioSM) rxCap() int {
 	if s.shiftctrl&(1<<31) != 0 {
 		return 8
 	}
-	if s.shiftctrl&(1<<30) != 0 {
+	if s.shiftctrl&(1<<30) != 0 || s.rxPut() || s.rxGet() {
 		return 0
 	}
 	return 4
 }
+
+func (s *pioSM) rxPut() bool { return s.shiftctrl&(1<<15) != 0 }
+func (s *pioSM) rxGet() bool { return s.shiftctrl&(1<<14) != 0 }
 
 func (s *pioSM) txFull() bool { return s.txN >= s.txCap() }
 func (s *pioSM) rxFull() bool { return s.rxN >= s.rxCap() }
@@ -391,6 +582,7 @@ func (s *pioSM) pushTx(v uint32) {
 	}
 	s.tx[s.txN] = v
 	s.txN++
+	s.p.updateIRQ()
 }
 
 func (s *pioSM) popTx() (uint32, bool) {
@@ -404,6 +596,7 @@ func (s *pioSM) popTx() (uint32, bool) {
 	v := s.tx[0]
 	copy(s.tx[:], s.tx[1:s.txN])
 	s.txN--
+	s.p.updateIRQ()
 	return v, true
 }
 
@@ -414,6 +607,7 @@ func (s *pioSM) pushRx(v uint32) {
 	}
 	s.rx[s.rxN] = v
 	s.rxN++
+	s.p.updateIRQ()
 }
 
 func (s *pioSM) popRx() uint32 {
@@ -424,6 +618,7 @@ func (s *pioSM) popRx() uint32 {
 	v := s.rx[0]
 	copy(s.rx[:], s.rx[1:s.rxN])
 	s.rxN--
+	s.p.updateIRQ()
 	return v
 }
 
@@ -445,87 +640,211 @@ func (s *pioSM) autopush() bool      { return s.shiftctrl&(1<<16) != 0 }
 func (s *pioSM) autopull() bool      { return s.shiftctrl&(1<<17) != 0 }
 func (s *pioSM) inShiftRight() bool  { return s.shiftctrl&(1<<18) != 0 }
 func (s *pioSM) outShiftRight() bool { return s.shiftctrl&(1<<19) != 0 }
+func (s *pioSM) sticky() bool        { return s.execctrl&(1<<17) != 0 }
 
-func (s *pioSM) tick() {
-	if !s.enabled {
-		return
+func (s *pioSM) clockDivider() uint32 {
+	n := (s.clkdiv >> 16) & 0xFFFF
+	if n == 0 {
+		n = 65536
 	}
-	// The SM clock is sysclk / (INT + FRAC/256); never faster than sysclk.
-	thr := max((s.clkdiv>>16)<<8|(s.clkdiv>>8)&0xFF, 256)
-	s.acc += 256
-	if s.acc < thr {
-		return
-	}
-	s.acc -= thr
-
-	if s.waitingPush {
-		if !s.tryPush() {
-			return
-		}
-		s.waitingPush = false
-	}
-	if s.delay > 0 {
-		s.delay--
-		return
-	}
-	s.step()
+	return n<<8 | (s.clkdiv>>8)&0xFF
 }
 
-func (s *pioSM) tryPush() bool {
-	if s.rxFull() {
-		s.p.fdebug |= 1 << uint(s.idx) // RXSTALL
+// clockTick advances the divider on every system clock, even while disabled.
+func (s *pioSM) clockTick() bool {
+	thr := s.clockDivider()
+	if thr == 256 {
+		s.acc = 0
+		return true
+	}
+	s.acc += 256
+	if s.acc < thr {
 		return false
 	}
-	s.pushRx(s.isr)
-	s.isr = 0
-	s.inCount = 0
+	s.acc -= thr
 	return true
 }
 
-func (s *pioSM) step() {
-	instr := s.p.mem[s.pc]
-	if s.p.chip.pioLogN < 120 {
-		s.p.chip.pioLogN++
-		s.p.chip.Logger.Debug("pio step",
-			slog.Uint64("cycle", s.p.chip.Cycles),
-			slog.Int("block", s.p.id), slog.Int("sm", s.idx),
-			slog.Int("pc", int(s.pc)),
-			slog.String("instr", fmtHex(uint32(instr))),
-			slog.Int("out", s.outCount),
-			slog.String("y", fmtHex(s.y)),
-			slog.String("osr", fmtHex(s.osr)),
-			slog.Int("tx", s.txN),
-			slog.Bool("pin0", s.p.chip.Pins.Level(0)))
-	}
-	delay := s.applySide(instr)
-	s.pcSet = false
-	if !s.execute(instr) {
+func (s *pioSM) advanceClock(cycles uint64) {
+	if cycles == 0 {
 		return
 	}
-	if !s.pcSet {
-		s.advance()
+	thr := uint64(s.clockDivider())
+	if thr == 256 {
+		s.acc = 0
+		return
 	}
-	s.delay = delay
+	s.acc = uint32((uint64(s.acc) + cycles*256) % thr)
 }
 
-// execNow runs an instruction written to SMx_INSTR: it takes effect
-// immediately and does not normally advance the program counter.
-func (s *pioSM) execNow(instr uint16) {
-	s.p.chip.Logger.Debug("pio exec",
-		slog.Uint64("cycle", s.p.chip.Cycles),
-		slog.Int("block", s.p.id), slog.Int("sm", s.idx),
-		slog.String("instr", fmtHex(uint32(instr))),
-		slog.String("x", fmtHex(s.x)),
-		slog.String("osr", fmtHex(s.osr)),
-		slog.Int("out", s.outCount), slog.Int("tx", s.txN), slog.Int("rx", s.rxN))
+func (s *pioSM) tick() {
+	if !s.clockTick() || !s.enabled {
+		return
+	}
+	s.applySticky()
+	if s.delay > 0 {
+		s.autoPullBetween()
+		s.delay--
+		return
+	}
+	if s.stalled {
+		if !isPIOOut(s.stallInstr) && !isPIOPull(s.stallInstr) {
+			s.autoPullBetween()
+		}
+		if !s.resumeStall() {
+			return
+		}
+		source, instr := s.stallSource, s.stallInstr
+		s.stalled = false
+		s.stallKind = pioStallNone
+		s.execStalled = false
+		s.finishInstruction(instr, source)
+		return
+	}
+
+	instr := s.p.mem[s.pc]
+	source := pioSourceMemory
+	if s.execPending {
+		instr = s.execInstr
+		source = pioSourceExec
+		s.execPending = false
+	}
+	s.attemptInstruction(instr, source)
+}
+
+func (s *pioSM) attemptInstruction(instr uint16, source uint8) {
+	s.instructionSource = source
 	s.pcSet = false
-	s.execute(instr)
-	s.p.chip.Logger.Debug("pio exec result",
-		slog.Uint64("cycle", s.p.chip.Cycles),
-		slog.Int("block", s.p.id), slog.Int("sm", s.idx),
-		slog.String("x", fmtHex(s.x)),
-		slog.String("osr", fmtHex(s.osr)),
-		slog.Int("out", s.outCount), slog.Int("tx", s.txN), slog.Int("rx", s.rxN))
+	ok := s.execute(instr)
+	// Main pin writes happen in execute; side-set has priority and also
+	// applies immediately when the instruction stalls.
+	s.applySide(instr)
+	if !ok {
+		if !s.stalled {
+			s.beginStall(pioStallWait, instr, source)
+		}
+		if source == pioSourceForced {
+			s.execStalled = true
+			s.execPending = false // a stalled forced instruction overwrites the EXEC latch
+		}
+		if !isPIOOut(instr) && !isPIOPull(instr) {
+			s.autoPullBetween()
+		}
+		return
+	}
+	s.finishInstruction(instr, source)
+}
+
+func (s *pioSM) finishInstruction(instr uint16, source uint8) {
+	delay := s.instructionDelay(instr)
+	if source == pioSourceForced || isPIOExec(instr) {
+		delay = 0
+	}
+	s.delay = delay
+	if source == pioSourceMemory && !s.pcSet {
+		s.advance()
+	}
+	if !isPIOOut(instr) {
+		s.autoPullBetween()
+	}
+}
+
+func isPIOOut(instr uint16) bool { return instr>>13 == 3 }
+
+func isPIOPull(instr uint16) bool {
+	return instr>>13 == 4 && instr&0x80 != 0 && instr&0x10 == 0
+}
+
+func isPIOExec(instr uint16) bool {
+	if instr>>13 == 3 {
+		return (instr>>5)&7 == 7
+	}
+	return instr>>13 == 5 && (instr>>5)&7 == 4
+}
+
+func (s *pioSM) beginStall(kind uint8, instr uint16, source uint8) {
+	if s.stalled {
+		return
+	}
+	s.stalled = true
+	s.stallKind = kind
+	s.stallInstr = instr
+	s.stallDelay = s.instructionDelay(instr)
+	s.stallSource = source
+}
+
+func (s *pioSM) resumeStall() bool {
+	switch s.stallKind {
+	case pioStallWait:
+		return s.execWait(s.stallInstr)
+	case pioStallIRQ:
+		return s.execIrq(s.stallInstr)
+	case pioStallPush:
+		if s.rxFull() {
+			return false
+		}
+		s.pushRx(s.isr)
+		s.isr = 0
+		s.inCount = 0
+		return true
+	case pioStallPull:
+		if s.txN == 0 {
+			s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
+			return false
+		}
+		s.osr, _ = s.popTx()
+		s.outCount = 0
+		return true
+	case pioStallOutRefill:
+		if s.txN == 0 {
+			s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
+			return false
+		}
+		return s.execOut(s.stallInstr)
+	case pioStallInPush:
+		if s.rxFull() {
+			return false
+		}
+		s.pushRx(s.isr)
+		s.isr = 0
+		s.inCount = 0
+		return true
+	default:
+		return true
+	}
+}
+
+// autoPullBetween performs the asynchronous refill allowed on non-OUT cycles.
+func (s *pioSM) autoPullBetween() {
+	if !s.autopull() || s.outCount < s.pullThresh() {
+		return
+	}
+	if v, ok := s.popTx(); ok {
+		s.osr = v
+		s.outCount = 0
+	}
+}
+
+// execNow runs an instruction written to SMx_INSTR. Forced instructions ignore
+// the divider and delay, and may execute while the state machine is disabled.
+func (s *pioSM) execNow(instr uint16) {
+	s.forceInstruction(instr)
+}
+
+func (s *pioSM) forceInstruction(instr uint16) {
+	s.applySticky()
+	if instr == 0xA042 && s.execStalled { // NOP clears a stalled forced instruction
+		s.stalled = false
+		s.stallKind = pioStallNone
+		s.execStalled = false
+		return
+	}
+	if s.stalled {
+		s.stalled = false
+		s.stallKind = pioStallNone
+		s.execStalled = false
+	}
+	s.attemptInstruction(instr, pioSourceForced)
 }
 
 func (s *pioSM) advance() {
@@ -536,8 +855,7 @@ func (s *pioSM) advance() {
 	}
 }
 
-// applySide decodes and applies side-set, returning the instruction's delay.
-func (s *pioSM) applySide(instr uint16) int {
+func (s *pioSM) sideSet(instr uint16) (base, count int, v uint32, dirs, enabled bool) {
 	sc := int((s.pinctrl >> 29) & 7)
 	opt := s.execctrl&(1<<30) != 0
 	used := sc
@@ -545,24 +863,40 @@ func (s *pioSM) applySide(instr uint16) int {
 		used++
 	}
 	if used == 0 {
-		return int(instr>>8) & 0x1F
+		return 0, 0, 0, false, false
 	}
-	base := int((s.pinctrl >> 10) & 0x1F)
-	pindir := s.execctrl&(1<<29) != 0
+	base = int((s.pinctrl >> 10) & 0x1F)
+	dirs = s.execctrl&(1<<29) != 0
 	if opt {
-		if (instr>>12)&1 != 0 && sc > 0 {
-			v := uint32(instr>>uint(12-sc)) & (1<<uint(sc) - 1)
-			s.writePinRange(base, sc, v, pindir)
+		enabled = (instr>>12)&1 != 0 && sc > 0
+		if enabled {
+			v = uint32(instr>>uint(12-sc)) & (1<<uint(sc) - 1)
 		}
+		count = sc
 	} else {
-		v := uint32(instr>>uint(13-sc)) & (1<<uint(sc) - 1)
-		s.writePinRange(base, sc, v, pindir)
+		enabled = true
+		count = sc
+		v = uint32(instr>>uint(13-sc)) & (1<<uint(sc) - 1)
 	}
-	delayBits := 5 - used
-	if delayBits == 0 {
+	return base, count, v, dirs, enabled
+}
+
+func (s *pioSM) applySide(instr uint16) {
+	base, count, v, dirs, enabled := s.sideSet(instr)
+	if enabled {
+		s.writePinRange(base, count, v, dirs)
+	}
+}
+
+func (s *pioSM) instructionDelay(instr uint16) int {
+	sc := int((s.pinctrl >> 29) & 7)
+	if s.execctrl&(1<<30) != 0 {
+		sc++
+	}
+	if sc >= 5 {
 		return 0
 	}
-	return int(instr>>8) & (1<<uint(delayBits) - 1)
+	return int(instr>>8) & (1<<uint(5-sc) - 1)
 }
 
 // ---- pin access ----
@@ -578,7 +912,18 @@ func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 	if count <= 0 {
 		return
 	}
-	for i := range count {
+	if count >= 32 {
+		s.writePinMask(base, ^uint32(0), v, dirs)
+		return
+	}
+	s.writePinMask(base, 1<<uint(count)-1, v, dirs)
+}
+
+func (s *pioSM) writePinMask(base int, mask, v uint32, dirs bool) {
+	for i := range 32 {
+		if mask&(1<<uint(i)) == 0 {
+			continue
+		}
 		pin := s.p.pinAt(base + i)
 		bit := uint64(1) << uint(pin)
 		val := v&(1<<uint(i)) != 0
@@ -606,14 +951,114 @@ func (s *pioSM) writePinRange(base, count int, v uint32, dirs bool) {
 	}
 }
 
+func (s *pioSM) pinMask(base, count int) uint32 {
+	if count <= 0 {
+		return 0
+	}
+	if count >= 32 {
+		return ^uint32(0)
+	}
+	return (1<<uint(count) - 1) << uint(base&31)
+}
+
+func (s *pioSM) writeMainRange(base, count int, v uint32, dirs bool) {
+	s.writePinRange(base, count, v, dirs)
+	if !s.sticky() {
+		return
+	}
+	mask := s.pinMask(base, count)
+	if dirs {
+		s.stickyDirMask = mask
+		s.stickyDirVal = v & mask
+	} else {
+		s.stickyLevelMask = mask
+		s.stickyLevelVal = v & mask
+	}
+}
+
+func (s *pioSM) applySticky() {
+	if !s.sticky() {
+		return
+	}
+	if s.stickyLevelMask != 0 {
+		s.writePinMask(0, s.stickyLevelMask, s.stickyLevelVal, false)
+	}
+	if s.stickyDirMask != 0 {
+		s.writePinMask(0, s.stickyDirMask, s.stickyDirVal, true)
+	}
+}
+
+func (s *pioSM) clearSticky() {
+	if s.stickyLevelMask != 0 {
+		s.writePinMask(0, s.stickyLevelMask, 0, false)
+	}
+	if s.stickyDirMask != 0 {
+		s.writePinMask(0, s.stickyDirMask, 0, true)
+	}
+	s.stickyLevelMask, s.stickyLevelVal = 0, 0
+	s.stickyDirMask, s.stickyDirVal = 0, 0
+}
+
+func (s *pioSM) deassertSticky(dirs bool) {
+	if dirs {
+		if s.stickyDirMask != 0 {
+			s.writePinMask(0, s.stickyDirMask, 0, true)
+		}
+		s.stickyDirMask, s.stickyDirVal = 0, 0
+		return
+	}
+	if s.stickyLevelMask != 0 {
+		s.writePinMask(0, s.stickyLevelMask, 0, false)
+	}
+	s.stickyLevelMask, s.stickyLevelVal = 0, 0
+}
+
+func (s *pioSM) writeOutRange(base, count int, v uint32, dirs bool) {
+	if s.execctrl&(1<<18) != 0 && v&(1<<uint((s.execctrl>>19)&0x1F)) == 0 {
+		if s.sticky() {
+			s.deassertSticky(dirs)
+		}
+		return
+	}
+	s.writeMainRange(base, count, v, dirs)
+}
+
+func (s *pioSM) readPin(offset int) bool {
+	offset &= 31
+	pin := s.p.pinAt(offset)
+	if s.p.inputBypass&(1<<uint(offset)) != 0 {
+		return s.p.chip.Pins.Level(pin)
+	}
+	return s.p.inputSync2&(1<<uint(pin)) != 0
+}
+
+func (s *pioSM) readAbsolutePin(pin int) bool {
+	if pin < 0 || pin >= 48 {
+		return false
+	}
+	offset := pin - s.p.gpioBase()
+	if offset >= 0 && offset < 32 && s.p.inputBypass&(1<<uint(offset)) != 0 {
+		return s.p.chip.Pins.Level(pin)
+	}
+	return s.p.inputSync2&(1<<uint(pin)) != 0
+}
+
 func (s *pioSM) readPins(base int) uint32 {
 	var v uint32
 	for i := range 32 {
-		if s.p.chip.Pins.Level(s.p.pinAt(base + i)) {
+		if s.readPin(base + i) {
 			v |= 1 << uint(i)
 		}
 	}
 	return v
+}
+
+func (s *pioSM) inCountPins() int {
+	n := int(s.shiftctrl & 0x1F)
+	if n == 0 {
+		return 32
+	}
+	return n
 }
 
 func (s *pioSM) outCountPins() int {
@@ -630,10 +1075,14 @@ func (s *pioSM) execute(instr uint16) bool {
 	case 1: // WAIT
 		return s.execWait(instr)
 	case 2: // IN
-		s.execIn(instr)
+		return s.execIn(instr)
 	case 3: // OUT
 		return s.execOut(instr)
-	case 4: // PUSH / PULL
+	case 4: // PUSH / PULL / MOV RX FIFO
+		if instr&0x10 != 0 { // MOV RX FIFO (PUT and GET)
+			s.execMovFIFO(instr)
+			return true
+		}
 		return s.execPushPull(instr)
 	case 5: // MOV
 		s.execMov(instr)
@@ -655,21 +1104,17 @@ func (s *pioSM) execJmp(instr uint16) {
 	case 1:
 		jump = s.x == 0
 	case 2:
-		if s.x != 0 {
-			s.x--
-			jump = true
-		}
+		jump = s.x != 0
+		s.x--
 	case 3:
 		jump = s.y == 0
 	case 4:
-		if s.y != 0 {
-			s.y--
-			jump = true
-		}
+		jump = s.y != 0
+		s.y--
 	case 5:
 		jump = s.x != s.y
 	case 6:
-		jump = s.p.chip.Pins.Level(s.p.pinAt(int((s.execctrl >> 24) & 0x1F)))
+		jump = s.readPin(int((s.execctrl >> 24) & 0x1F))
 	case 7:
 		jump = s.outCount < s.pullThresh()
 	}
@@ -683,58 +1128,48 @@ func (s *pioSM) execWait(instr uint16) bool {
 	pol := instr&(1<<7) != 0
 	src := int(instr>>5) & 3
 	index := int(instr & 0x1F)
+	var level bool
 	switch src {
-	case 0: // GPIO, relative to GPIOBASE
-		return s.p.chip.Pins.Level(s.p.pinAt(index)) == pol
-	case 1: // PIN, relative to IN_BASE
-		pin := s.p.pinAt(int((s.pinctrl>>15)&0x1F) + index)
-		return s.p.chip.Pins.Level(pin) == pol
+	case 0: // GPIO is an absolute system GPIO, not affected by GPIOBASE
+		level = s.readAbsolutePin(index)
+	case 1: // PIN is relative to IN_BASE and masked by IN_COUNT
+		if index < s.inCountPins() {
+			level = s.readPin(int((s.pinctrl>>15)&0x1F) + index)
+		}
 	case 2: // IRQ
 		mode := (index >> 3) & 3
 		flag := index & 7
+		p := s.p
 		switch mode {
 		case 2: // relative to this state machine
 			flag = (flag &^ 3) | ((flag + s.idx) & 3)
 		case 1: // previous PIO block
-			p := s.p.chip.pio[(s.p.id+2)%3]
-			if p == nil {
-				return false
-			}
-			return p.waitIrq(flag, pol)
+			p = s.p.chip.pio[(s.p.id+2)%3]
 		case 3: // next PIO block
-			p := s.p.chip.pio[(s.p.id+1)%3]
-			if p == nil {
-				return false
-			}
-			return p.waitIrq(flag, pol)
+			p = s.p.chip.pio[(s.p.id+1)%3]
 		}
-		if (s.p.irq&(1<<uint(flag)) != 0) != pol {
+		if p == nil {
+			return false
+		}
+		if (p.irq&(1<<uint(flag)) != 0) != pol {
 			return false
 		}
 		if pol {
-			s.p.irq &^= 1 << uint(flag)
-			s.p.block.regs[0x30/4] = s.p.irq
+			p.irq &^= 1 << uint(flag)
+			p.block.regs[0x30/4] = p.irq
+			p.updateIRQ()
 		}
 		return true
+	case 3: // JMPPIN plus an offset of 0..3, modulo 32
+		level = s.readPin(int((s.execctrl>>24)&0x1F) + index)
 	}
-	return true
-}
-
-func (p *pioBlock) waitIrq(flag int, pol bool) bool {
-	if (p.irq&(1<<uint(flag)) != 0) != pol {
-		return false
-	}
-	if pol {
-		p.irq &^= 1 << uint(flag)
-		p.block.regs[0x30/4] = p.irq
-	}
-	return true
+	return level == pol
 }
 
 func (s *pioSM) inSource(src int) uint32 {
 	switch src {
 	case 0:
-		return s.readPins(int((s.pinctrl >> 15) & 0x1F))
+		return s.readPins(int((s.pinctrl>>15)&0x1F)) & pinCountMask(s.inCountPins())
 	case 1:
 		return s.x
 	case 2:
@@ -749,39 +1184,46 @@ func (s *pioSM) inSource(src int) uint32 {
 	return 0
 }
 
-func (s *pioSM) execIn(instr uint16) {
+func pinCountMask(count int) uint32 {
+	if count <= 0 {
+		return 0
+	}
+	if count >= 32 {
+		return ^uint32(0)
+	}
+	return 1<<uint(count) - 1
+}
+
+func (s *pioSM) execIn(instr uint16) bool {
 	count := int(instr & 0x1F)
 	if count == 0 {
 		count = 32
 	}
 	v := s.inSource(int(instr>>5) & 7)
 	s.isr = shiftIn(s.isr, v, count, s.inShiftRight())
-	s.inCount += count
-	if s.inCount > 32 {
-		s.inCount = 32
-	}
+	s.inCount = min(s.inCount+count, 32)
 	if s.autopush() && s.inCount >= s.pushThresh() {
 		if s.rxFull() {
-			s.waitingPush = true
-		} else {
-			s.pushRx(s.isr)
-			s.isr = 0
-			s.inCount = 0
+			s.p.fdebug |= 1 << uint(s.idx) // RXSTALL
+			s.beginStall(pioStallInPush, instr, s.instructionSource)
+			return false
 		}
+		s.pushRx(s.isr)
+		s.isr = 0
+		s.inCount = 0
 	}
+	return true
 }
 
 func shiftIn(cur, data uint32, n int, right bool) uint32 {
-	if right {
-		if n >= 32 {
-			return data
-		}
-		return cur>>uint(n) | data<<uint(32-n)
-	}
 	if n >= 32 {
 		return data
 	}
-	return cur<<uint(n) | data>>uint(32-n)
+	data &= 1<<uint(n) - 1
+	if right {
+		return cur>>uint(n) | data<<uint(32-n)
+	}
+	return cur<<uint(n) | data
 }
 
 func (s *pioSM) execOut(instr uint16) bool {
@@ -791,26 +1233,28 @@ func (s *pioSM) execOut(instr uint16) bool {
 	}
 	dest := int(instr>>5) & 7
 	right := s.outShiftRight()
-	sticky := s.execctrl&(1<<17) != 0
-	if s.outCount >= s.pullThresh() && s.autopull() {
+	sticky := s.sticky()
+
+	if s.autopull() && s.outCount >= s.pullThresh() {
 		if v, ok := s.popTx(); ok {
 			s.osr = v
 			s.outCount = 0
 		} else {
-			// Refill happens at the point the OSR is needed, so the
-			// instruction before this one still completes (the WS2812
-			// program's falling edge must not be skipped).
 			s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
-			return false
 		}
-	} else if s.outCount >= 32 {
-		// An empty OSR is refilled from the TX FIFO on OUT even when
-		// autopull is disabled; this is how the HAL's SetX/SetY work.
+		// Hardware cannot fill an empty OSR and OUT it in the same cycle.
+		s.beginStall(pioStallOutRefill, instr, s.instructionSource)
+		return false
+	}
+	if !s.autopull() && s.outCount >= 32 {
+		// Intentional TinyGo compatibility: SetX/SetY push a word and execute
+		// OUT X/Y,32 with autopull disabled. Retain only this permissive refill.
 		if v, ok := s.popTx(); ok {
 			s.osr = v
 			s.outCount = 0
 		}
 	}
+
 	var v uint32
 	if sticky && count < 32 {
 		if right {
@@ -833,31 +1277,58 @@ func (s *pioSM) execOut(instr uint16) bool {
 			s.osr <<= uint(count)
 		}
 	}
-	s.outCount += count
-	if s.outCount > 32 {
-		s.outCount = 32
-	}
+	s.outCount = min(s.outCount+count, 32)
 
 	switch dest {
 	case 0: // PINS
-		s.writePinRange(int(s.pinctrl&0x1F), s.outCountPins(), v, false)
+		s.writeOutRange(int(s.pinctrl&0x1F), s.outCountPins(), v, false)
 	case 1:
 		s.x = v
 	case 2:
 		s.y = v
 	case 3:
 	case 4: // PINDIRS
-		s.writePinRange(int(s.pinctrl&0x1F), s.outCountPins(), v, true)
+		s.writeOutRange(int(s.pinctrl&0x1F), s.outCountPins(), v, true)
 	case 5: // PC
 		s.pc = uint8(v & 0x1F)
 		s.pcSet = true
-	case 6: // ISR
+	case 6: // ISR also sets the input shift counter
 		s.isr = v
-	case 7: // EXEC
-		s.execNow(uint16(v))
+		s.inCount = count
+	case 7: // EXEC executes on the next enabled SM cycle
+		s.execPending = true
+		s.execInstr = uint16(v)
 	}
 
+	if s.autopull() && s.outCount >= s.pullThresh() {
+		if next, ok := s.popTx(); ok {
+			s.osr = next
+			s.outCount = 0
+		}
+	}
 	return true
+}
+
+func (s *pioSM) execMovFIFO(instr uint16) {
+	index := uint32(instr & 7)
+	if instr&(1<<3) == 0 {
+		index = s.y & 7
+	}
+	index &= 3
+	if instr&(1<<7) == 0 { // mov rxfifo[index], isr
+		if !s.rxPut() {
+			s.p.chip.CPU0.Halt("PIO PUT without FJOIN_RX_PUT")
+			return
+		}
+		s.rx[index] = s.isr
+		return
+	}
+	if !s.rxGet() {
+		s.p.chip.CPU0.Halt("PIO GET without FJOIN_RX_GET")
+		return
+	}
+	s.osr = s.rx[index]
+	s.outCount = 0
 }
 
 func (s *pioSM) execPushPull(instr uint16) bool {
@@ -869,22 +1340,34 @@ func (s *pioSM) execPushPull(instr uint16) bool {
 		}
 		if s.rxFull() {
 			s.p.fdebug |= 1 << uint(s.idx) // RXSTALL
-			return !block
+			if block {
+				s.beginStall(pioStallPush, instr, s.instructionSource)
+				return false
+			}
+			// Nonblocking PUSH drops the data but still clears the ISR.
+			s.isr = 0
+			s.inCount = 0
+			return true
 		}
 		s.pushRx(s.isr)
 		s.isr = 0
 		s.inCount = 0
 		return true
 	}
+
 	// PULL
 	ifEmpty := instr&0x40 != 0
 	block := instr&0x20 != 0
+	if s.autopull() && s.outCount == 0 {
+		return true // barrier: the OSR is already full
+	}
 	if ifEmpty && s.outCount < s.pullThresh() {
 		return true
 	}
 	if s.txN == 0 {
-		s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
 		if block {
+			s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
+			s.beginStall(pioStallPull, instr, s.instructionSource)
 			return false
 		}
 		s.osr = s.x
@@ -903,7 +1386,7 @@ func (s *pioSM) execMov(instr uint16) {
 	var v uint32
 	switch src {
 	case 0:
-		v = s.readPins(int((s.pinctrl >> 15) & 0x1F))
+		v = s.readPins(int((s.pinctrl>>15)&0x1F)) & pinCountMask(s.inCountPins())
 	case 1:
 		v = s.x
 	case 2:
@@ -928,20 +1411,22 @@ func (s *pioSM) execMov(instr uint16) {
 	}
 	switch dst {
 	case 0: // PINS
-		s.writePinRange(int(s.pinctrl&0x1F), s.outCountPins(), v, false)
+		s.writeMainRange(int(s.pinctrl&0x1F), s.outCountPins(), v, false)
 	case 1:
 		s.x = v
 	case 2:
 		s.y = v
 	case 3: // PINDIRS (RP2350)
-		s.writePinRange(int(s.pinctrl&0x1F), s.outCountPins(), v, true)
+		s.writeMainRange(int(s.pinctrl&0x1F), s.outCountPins(), v, true)
 	case 4: // EXEC
-		s.execNow(uint16(v))
+		s.execPending = true
+		s.execInstr = uint16(v)
 	case 5: // PC
 		s.pc = uint8(v & 0x1F)
 		s.pcSet = true
 	case 6:
 		s.isr = v
+		s.inCount = 0
 	case 7:
 		s.osr = v
 		s.outCount = 0
@@ -949,16 +1434,28 @@ func (s *pioSM) execMov(instr uint16) {
 }
 
 func (s *pioSM) movStatus() uint32 {
-	sel := (s.execctrl >> 5) & 1
+	sel := (s.execctrl >> 5) & 3
 	n := (s.execctrl >> 0) & 0x1F
-	var level int
-	if sel == 0 { // TX FIFO less than N
-		level = s.txN
-	} else { // RX FIFO less than N
-		level = s.rxN
-	}
-	if uint32(level) < n {
-		return ^uint32(0)
+	switch sel {
+	case 0: // TX FIFO level < N
+		if uint32(s.txN) < n {
+			return ^uint32(0)
+		}
+	case 1: // RX FIFO level < N
+		if uint32(s.rxN) < n {
+			return ^uint32(0)
+		}
+	case 2: // IRQ, optionally from the previous/next PIO block
+		p := s.p
+		flag := n & 7
+		if n >= 8 && n < 16 {
+			p = s.p.chip.pio[(s.p.id+2)%3]
+		} else if n >= 16 && n < 24 {
+			p = s.p.chip.pio[(s.p.id+1)%3]
+		}
+		if p != nil && p.irq&(1<<uint(flag)) != 0 {
+			return ^uint32(0)
+		}
 	}
 	return 0
 }
@@ -985,20 +1482,14 @@ func (s *pioSM) execIrq(instr uint16) bool {
 		p.irq |= 1 << uint(flag)
 		p.block.regs[0x30/4] = p.irq
 		p.updateIRQ()
-	case 1: // wait: raise the flag, then stall until it is cleared
-		if s.irqWaiting {
-			if s.irqWaitBlock.irq&(1<<uint(s.irqWaitFlag)) != 0 {
-				return false
-			}
-			s.irqWaiting = false
-			return true
+	case 1: // set and wait for software to clear
+		if s.stalled && s.stallKind == pioStallIRQ {
+			return p.irq&(1<<uint(flag)) == 0
 		}
 		p.irq |= 1 << uint(flag)
 		p.block.regs[0x30/4] = p.irq
 		p.updateIRQ()
-		s.irqWaiting = true
-		s.irqWaitBlock = p
-		s.irqWaitFlag = flag
+		s.beginStall(pioStallIRQ, instr, s.instructionSource)
 		return false
 	case 2, 3: // clear (Clear overrides Wait)
 		p.irq &^= 1 << uint(flag)
@@ -1015,22 +1506,116 @@ func (s *pioSM) execSet(instr uint16) {
 	count := int((s.pinctrl >> 26) & 7)
 	switch dest {
 	case 0: // PINS
-		s.writePinRange(base, count, v, false)
+		s.writeMainRange(base, count, v, false)
 	case 1:
 		s.x = v
 	case 2:
 		s.y = v
 	case 4: // PINDIRS
-		s.writePinRange(base, count, v, true)
+		s.writeMainRange(base, count, v, true)
+	}
+}
+
+// ---- input synchronizers and block tick ----
+
+func (c *Chip) pioInputLevels() uint64 {
+	p := c.Pins
+	pulls, pwmPins := p.pullUpMask, p.pwmPins
+	if !c.pioInputValid {
+		// Tests and board models may initialise pin arrays directly before
+		// the first PIO tick. Normal firmware writes maintain the summaries.
+		pulls, pwmPins = 0, 0
+		for pin := range 48 {
+			bit := uint64(1) << uint(pin)
+			if p.PullUp[pin] {
+				pulls |= bit
+			}
+			if p.Func[pin] == pwmFuncSel {
+				pwmPins |= bit
+			}
+		}
+	}
+	stable := c.pioInputValid && c.pioInputOut == p.Out && c.pioInputOE == p.OE &&
+		c.pioInputExtLevel == p.ExtLevel && c.pioInputExtValid == p.ExtValid &&
+		c.pioInputPulls == pulls && c.pioInputPWMPins == pwmPins
+	if stable && pwmPins == 0 {
+		return c.pioInputCacheLevels
+	}
+
+	oe, ext := p.OE, p.ExtValid
+	levels := (p.Out & oe) | (p.ExtLevel &^ oe & ext) | (pulls &^ oe &^ ext)
+	// PWM can change a driven level between microsecond ticks. Only those
+	// pins need the cycle-resolution override; ordinary pins stay bit-parallel.
+	if p.LevelOverride != nil {
+		for pwmPins != 0 {
+			pin := bits.TrailingZeros64(pwmPins)
+			pwmPins &^= 1 << uint(pin)
+			bit := uint64(1) << uint(pin)
+			if level, ok := p.LevelOverride(pin); ok {
+				if level {
+					levels |= bit
+				} else {
+					levels &^= bit
+				}
+			}
+		}
+	}
+	c.pioInputValid = true
+	c.pioInputOut, c.pioInputOE = p.Out, p.OE
+	c.pioInputExtLevel, c.pioInputExtValid = p.ExtLevel, p.ExtValid
+	c.pioInputPulls, c.pioInputPWMPins = pulls, p.pwmPins
+	c.pioInputCacheLevels = levels
+	return levels
+}
+
+func (p *pioBlock) tickWithInputs(raw uint64) {
+	if raw != p.inputLast {
+		p.inputLast = raw
+		p.inputPending = 2
+	}
+	if p.inputPending != 0 {
+		bypass := uint64(p.inputBypass) << uint(p.gpioBase())
+		old1 := p.inputSync1
+		p.inputSync1 = raw
+		p.inputSync2 = (old1 &^ bypass) | (raw & bypass)
+		p.inputPending--
+	}
+	for mask := p.active | p.clocking; mask != 0; {
+		i := bits.TrailingZeros8(mask)
+		mask &^= 1 << uint(i)
+		p.sm[i].tick()
+	}
+}
+
+func (p *pioBlock) advanceCycles(cycles uint64, raw uint64) {
+	if cycles == 0 {
+		return
+	}
+	for mask := p.active | p.clocking; mask != 0; {
+		i := bits.TrailingZeros8(mask)
+		mask &^= 1 << uint(i)
+		p.sm[i].advanceClock(cycles)
+	}
+	if raw != p.inputLast {
+		p.inputLast = raw
+		p.inputPending = 2
+	}
+	if p.inputPending != 0 {
+		if cycles == 1 {
+			bypass := uint64(p.inputBypass) << uint(p.gpioBase())
+			old1 := p.inputSync1
+			p.inputSync1 = raw
+			p.inputSync2 = (old1 &^ bypass) | (raw & bypass)
+			p.inputPending--
+		} else {
+			p.inputSync1 = raw
+			p.inputSync2 = raw
+			p.inputPending = 0
+		}
 	}
 }
 
 // tick advances one PIO block by one CPU cycle.
 func (p *pioBlock) tick() {
-	mask := p.active
-	for mask != 0 {
-		i := bits.TrailingZeros8(mask)
-		mask &^= 1 << uint(i)
-		p.sm[i].tick()
-	}
+	p.tickWithInputs(p.chip.pioInputLevels())
 }

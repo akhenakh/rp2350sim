@@ -121,8 +121,20 @@ type Chip struct {
 	otp    *otpBlock
 	wd     *watchdogBlock
 	// pioActive has a bit per PIO block with at least one enabled state
-	// machine, so the per-cycle tick skips idle blocks.
+	// machine, so execution can skip idle blocks. Dividers and input
+	// synchronizers still advance on every system cycle.
 	pioActive uint8
+
+	// GPIO input levels are stable for most cycles. Cache the bit-parallel
+	// resolution so always-on PIO synchronizers do not rescan all pins.
+	pioInputValid       bool
+	pioInputOut         uint64
+	pioInputOE          uint64
+	pioInputExtLevel    uint64
+	pioInputExtValid    uint64
+	pioInputPulls       uint64
+	pioInputPWMPins     uint64
+	pioInputCacheLevels uint64
 
 	regs    []*regBlock
 	byBase  map[uint32]*regBlock
@@ -337,6 +349,9 @@ func (c *Chip) Run(n uint64) uint64 {
 			}
 			// A due SysTick wrap may have just pended and woken a core.
 			if c.canIdleSkip() {
+				// Disabled PIO dividers and input synchronizers still run. The
+				// final cycle is handled by tickPeripherals below.
+				c.advancePIO(skip - 1)
 				c.Cycles += skip
 				done += skip
 				c.usbPoll = 7 // check host input on this tick
@@ -471,6 +486,18 @@ func (c *Chip) advanceSleep(max uint64) {
 	c.tickPeripherals()
 }
 
+func (c *Chip) advancePIO(cycles uint64) {
+	if cycles == 0 {
+		return
+	}
+	pioInputs := c.pioInputLevels()
+	for _, p := range c.pio {
+		if p != nil {
+			p.advanceCycles(cycles, pioInputs)
+		}
+	}
+}
+
 func (c *Chip) tickPeripherals() {
 	// SysTick is cycle-accurate: the lazy comparison is cheap enough to run on
 	// every cycle, and a WFI wake must happen before the cores are stepped.
@@ -521,11 +548,12 @@ func (c *Chip) tickPeripherals() {
 			c.usb.tick(c)
 		}
 	}
-	if c.pioActive != 0 {
-		for i, p := range c.pio {
-			if p != nil && c.pioActive&(1<<uint(i)) != 0 {
-				p.tick()
-			}
+	// PIO clock dividers are free-running and GPIO inputs are synchronized
+	// even while every state machine is disabled.
+	pioInputs := c.pioInputLevels()
+	for _, p := range c.pio {
+		if p != nil {
+			p.tickWithInputs(pioInputs)
 		}
 	}
 	for _, h := range c.CycleHooks {
@@ -648,6 +676,7 @@ func (c *Chip) Reset() {
 		b.reset(c)
 	}
 	c.pioActive = 0
+	c.pioInputValid = false
 	if c.Debug != nil {
 		c.Debug.Reset()
 	}
