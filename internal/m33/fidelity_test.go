@@ -110,6 +110,49 @@ func TestLiteralLoadsSignExtendAndAlign(t *testing.T) {
 	}
 }
 
+// TinyGo's task assembly writes PSP and switches CONTROL.SPSEL directly. An
+// interrupt can preempt before the next instruction, so exception entry must
+// see that PSP rather than a stale MSP copy.
+func TestExceptionAfterPSPSwitchUsesThreadStack(t *testing.T) {
+	bus := codeBus()
+	const (
+		vtor    = 0x8000
+		handler = 0x9000
+		msp     = 0x7000
+		psp     = 0x6000
+	)
+	vectorAt(bus, vtor, 11, handler)
+	irq := &fakeIRQ{allow: true}
+	c := New(bus)
+	c.Interrupts = irq
+	c.VTOR = vtor
+	c.MSP = msp
+	c.R[13] = msp
+	put16(t, bus, 0, 0xF380, 0x8814) // msr CONTROL, r0
+	c.CONTROL = 2
+	c.R[13] = psp // tinygo_swapTask wrote PSP and switched CONTROL.SPSEL
+	c.R[1] = 0x12345678
+	irq.next = 11
+	c.IRQPending = true
+	c.Step() // preempt before the next instruction
+
+	if c.IPSR != 11 || c.R[15] != handler {
+		t.Fatalf("exception did not enter: IPSR=%d PC=%#x", c.IPSR, c.R[15])
+	}
+	if c.PSP != psp-32 {
+		t.Fatalf("PSP = %#x, want frame at %#x", c.PSP, psp-32)
+	}
+	if c.MSP != msp || c.R[13] != msp {
+		t.Fatalf("handler stack changed: MSP=%#x SP=%#x", c.MSP, c.R[13])
+	}
+	if got := bus.Read32(psp - 32 + 4); got != 0x12345678 {
+		t.Fatalf("R1 in PSP frame = %#x, want %#x", got, uint32(0x12345678))
+	}
+	if got := bus.Read32(msp - 32); got != 0 {
+		t.Fatalf("frame unexpectedly written at MSP: %#x", got)
+	}
+}
+
 func TestWideHintIsNotABranch(t *testing.T) {
 	bus := codeBus()
 	put16(t, bus, 0, 0xF3AF, 0x8002) // wfe.w

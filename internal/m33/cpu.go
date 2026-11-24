@@ -339,6 +339,9 @@ func (c *CPU) Step() int {
 		return 0
 	}
 	if c.itstate == 0 && c.IRQPending && c.Interrupts != nil {
+		// Task-switch assembly can write PSP and CONTROL.SPSEL between
+		// instructions. Synchronize the banked SP before exception entry.
+		c.syncSP()
 		// The controller arbitrates against the masks and the current IPSR
 		// priority, so a higher-priority exception also preempts an active
 		// handler and NMI still gets through PRIMASK.
