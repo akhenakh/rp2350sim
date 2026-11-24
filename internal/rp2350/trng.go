@@ -6,6 +6,7 @@ import "encoding/binary"
 // deterministic: it derives words from a seeded splitmix64 stream, but exposes
 // the register behaviour the SDK polls (EHR valid, six data words, busy=0).
 const trngBase = 0x400F0000
+const trngIRQ = 39
 
 const (
 	trngIMR      = 0x100
@@ -27,6 +28,12 @@ const (
 	trngBist0    = 0x1E0
 )
 
+const (
+	trngIRQMask    = 0xF
+	trngConfigMask = 0x3
+	trngDebugMask  = 0xE
+)
+
 type trngBlock struct {
 	block *regBlock
 	state uint64
@@ -35,28 +42,35 @@ type trngBlock struct {
 	valid bool
 	imr   uint32
 	// config/sample/debug are stored for readback.
-	config  uint32
-	sample  uint32
-	debug   uint32
-	enabled bool
+	config    uint32
+	sample    uint32
+	debug     uint32
+	debugEn   uint32
+	enabled   bool
+	irqActive bool
 }
 
 func newTRNG() *trngBlock {
 	t := &trngBlock{block: newRegBlock(trngBase, 0x1000), state: 0x9E3779B97F4A7C15}
 	t.block.readFn = t.read
 	t.block.writeFn = t.write
-	t.block.resetFn = func(c *Chip) { t.reset() }
+	t.block.clearFn = t.clear
+	t.block.resetFn = func(c *Chip) { t.reset(c) }
 	return t
 }
 
-func (t *trngBlock) reset() {
+func (t *trngBlock) reset(c *Chip) {
 	t.state = 0x9E3779B97F4A7C15
 	t.ehr = [trngEHRWords]uint32{}
 	t.isr = 0
 	t.valid = false
 	t.enabled = false
-	t.config, t.sample, t.debug = 0, 0xFFFF, 0
-	t.imr = 0
+	t.config, t.sample, t.debug, t.debugEn = 0, 0xFFFF, 0, 0
+	t.imr = trngIRQMask
+	t.irqActive = false
+	if c != nil {
+		c.ClearPendingIRQ(trngIRQ)
+	}
 }
 
 func (t *trngBlock) splitmix() uint32 {
@@ -68,12 +82,29 @@ func (t *trngBlock) splitmix() uint32 {
 	return uint32(z)
 }
 
-func (t *trngBlock) refill() {
+func (t *trngBlock) refill(c *Chip) {
+	if t.isr&2 != 0 { // AUTOCORR_ERR halts collection until reset.
+		return
+	}
 	for i := range t.ehr {
 		t.ehr[i] = t.splitmix()
 	}
 	t.valid = true
 	t.isr |= 1 // EHR_VALID
+	t.syncIRQ(c)
+}
+
+func (t *trngBlock) syncIRQ(c *Chip) {
+	active := t.isr&^t.imr&trngIRQMask != 0
+	if active == t.irqActive {
+		return
+	}
+	t.irqActive = active
+	if active {
+		c.PendIRQ(trngIRQ)
+		return
+	}
+	c.ClearPendingIRQ(trngIRQ)
 }
 
 func (t *trngBlock) read(c *Chip, off uint32) (uint32, bool) {
@@ -81,7 +112,7 @@ func (t *trngBlock) read(c *Chip, off uint32) (uint32, bool) {
 	case trngIMR:
 		return t.imr, true
 	case trngISR:
-		return t.isr, true
+		return t.isr & trngIRQMask, true
 	case trngConfig:
 		return t.config, true
 	case trngValid:
@@ -101,22 +132,27 @@ func (t *trngBlock) read(c *Chip, off uint32) (uint32, bool) {
 	case trngDebug:
 		return t.debug, true
 	case trngDebugEn:
-		return 0, true
+		return t.debugEn, true
 	case trngBusy, trngRstBits:
 		return 0, true
 	case trngVersion:
-		// EHR width 192, tests and decorrelators present.
-		return 0x7F, true
+		return 0, true
 	case trngBist0, trngBist0 + 4, trngBist0 + 8:
 		return 0, true
 	}
 	if off >= trngEHR0 && off < trngEHR0+trngEHRWords*4 {
 		idx := (off - trngEHR0) / 4
 		v := t.ehr[idx]
-		if t.enabled && int(idx) == trngEHRWords-1 {
-			// Reading the last EHR word consumes the 192-bit sample; the
-			// hardware starts another one.
-			t.refill()
+		if int(idx) == trngEHRWords-1 {
+			if t.enabled {
+				// The completed sample is consumed and collection restarts.
+				t.refill(c)
+			} else {
+				t.ehr = [trngEHRWords]uint32{}
+				t.valid = false
+				t.isr &^= 1
+				t.syncIRQ(c)
+			}
 		}
 		return v, true
 	}
@@ -126,28 +162,61 @@ func (t *trngBlock) read(c *Chip, off uint32) (uint32, bool) {
 func (t *trngBlock) write(c *Chip, off, v uint32) {
 	switch off {
 	case trngIMR:
-		t.imr = v
+		t.imr = v & trngIRQMask
 	case trngICR:
-		t.isr &^= v
+		// AUTOCORR_ERR is reset-only.
+		t.isr &^= v &^ 2
 	case trngConfig:
-		t.config = v
+		t.config = v & trngConfigMask
 	case trngEnable:
 		if v&1 != 0 {
 			t.enabled = true
-			t.refill()
+			if !t.valid {
+				t.refill(c)
+			}
 		} else {
 			t.enabled = false
-			t.valid = false
 		}
 	case trngSample:
 		t.sample = v
 	case trngDebug:
-		t.debug = v
-	case trngSWReset, trngRstBits:
-		t.reset()
+		t.debug = v & trngDebugMask
+	case trngSWReset:
+		if v&1 != 0 {
+			t.reset(c)
+			return
+		}
+	case trngRstBits:
+		if !t.enabled {
+			t.ehr = [trngEHRWords]uint32{}
+			t.valid = false
+			t.isr &^= 1
+		}
 	case trngDebugEn:
-		// accepted, debug mode has no effect
+		t.debugEn = v & 1
+	case trngAutoStat:
+		// Any write resets the statistic counters.
 	}
+	t.syncIRQ(c)
+}
+
+func (t *trngBlock) clear(c *Chip, off, v uint32) {
+	switch off {
+	case trngICR:
+		t.write(c, off, v)
+		return
+	case trngIMR:
+		t.imr &^= v
+	case trngConfig:
+		t.config &^= v
+	case trngDebug:
+		t.debug &^= v
+	case trngDebugEn:
+		t.debugEn &^= v
+	default:
+		t.block.regs[off/4] &^= v
+	}
+	t.syncIRQ(c)
 }
 
 // SHA-256 is the RP2350 hardware hash block at 0x400F8000.

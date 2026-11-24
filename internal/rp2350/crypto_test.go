@@ -88,3 +88,101 @@ func TestTRNG(t *testing.T) {
 		t.Fatal("clearing ISR invalidated the EHR")
 	}
 }
+
+func TestTRNGResetAndFieldMasks(t *testing.T) {
+	c := New()
+	if got := c.Read32(trngBase + trngIMR); got != trngIRQMask {
+		t.Fatalf("IMR reset = %#x, want %#x", got, trngIRQMask)
+	}
+	if got := c.Read32(trngBase + trngVersion); got != 0 {
+		t.Fatalf("VERSION reset = %#x", got)
+	}
+	c.Write32(trngBase+trngConfig, 0xFFFFFFFF)
+	c.Write32(trngBase+trngDebug, 0xFFFFFFFF)
+	c.Write32(trngBase+trngDebugEn, 0xFFFFFFFF)
+	if got := c.Read32(trngBase + trngConfig); got != trngConfigMask {
+		t.Fatalf("CONFIG readback = %#x", got)
+	}
+	if got := c.Read32(trngBase + trngDebug); got != trngDebugMask {
+		t.Fatalf("DEBUG readback = %#x", got)
+	}
+	if got := c.Read32(trngBase + trngDebugEn); got != 1 {
+		t.Fatalf("DEBUG_EN readback = %#x", got)
+	}
+}
+
+func TestTRNGRstBitsCounter(t *testing.T) {
+	c := New()
+	trng := c.trng
+	c.Write32(trngBase+trngEnable, 1)
+	c.Write32(trngBase+trngEnable, 0)
+	c.Write32(trngBase+trngConfig, 3)
+	c.Write32(trngBase+trngDebug, 0xE)
+	c.Write32(trngBase+trngIMR, 0)
+	trng.isr = 0xF
+	c.Write32(trngBase+trngRstBits, 0xFFFFFFFF)
+	if trng.valid || trng.ehr != [trngEHRWords]uint32{} {
+		t.Fatal("RST_BITS_COUNTER did not clear collection state")
+	}
+	if trng.isr != 0xE {
+		t.Fatalf("RST_BITS_COUNTER ISR = %#x, want preserved error bits", trng.isr)
+	}
+	if trng.config != 3 || trng.debug != 0xE || trng.imr != 0 || trng.enabled {
+		t.Fatal("RST_BITS_COUNTER changed unrelated configuration")
+	}
+
+	c.Write32(trngBase+trngEnable, 1)
+	trng.valid = true
+	trng.ehr[0] = 0x12345678
+	c.Write32(trngBase+trngRstBits, 1)
+	if !trng.valid || trng.ehr[0] != 0x12345678 {
+		t.Fatal("RST_BITS_COUNTER took effect while enabled")
+	}
+}
+
+func TestTRNGEHRConsumedWhileDisabled(t *testing.T) {
+	c := New()
+	c.Write32(trngBase+trngEnable, 1)
+	c.Write32(trngBase+trngEnable, 0)
+	for i := range trngEHRWords {
+		c.Read32(trngBase + trngEHR0 + uint32(i*4))
+	}
+	if c.Read32(trngBase+trngValid) != 0 || c.Read32(trngBase+trngISR)&1 != 0 {
+		t.Fatal("last disabled EHR read did not clear valid/status")
+	}
+	for i := range trngEHRWords {
+		if got := c.Read32(trngBase + trngEHR0 + uint32(i*4)); got != 0 {
+			t.Fatalf("EHR%d after consumption = %#x", i, got)
+		}
+	}
+}
+
+func TestTRNGInterruptAndClearAlias(t *testing.T) {
+	c := New()
+	trng := c.trng
+	c.Write32(trngBase+trngEnable, 1)
+	if c.ppb[0].pending[1]&(1<<(trngIRQ-32)) != 0 {
+		t.Fatal("TRNG interrupted with reset IMR mask")
+	}
+	c.Write32(trngBase+trngIMR, 0)
+	if c.ppb[0].pending[1]&(1<<(trngIRQ-32)) == 0 || c.ppb[1].pending[1]&(1<<(trngIRQ-32)) == 0 {
+		t.Fatal("unmasked EHR_VALID did not pend IRQ 39")
+	}
+	c.Write32(trngBase+trngICR, 1)
+	if c.ppb[0].pending[1]&(1<<(trngIRQ-32)) != 0 || c.ppb[1].pending[1]&(1<<(trngIRQ-32)) != 0 {
+		t.Fatal("IRQ 39 stayed pending after EHR_VALID clear")
+	}
+
+	trng.isr = 3
+	c.Write32(trngBase+0x3000+trngICR, 3)
+	if trng.isr != 2 {
+		t.Fatalf("CLR alias ISR = %#x, want AUTOCORR_ERR preserved", trng.isr)
+	}
+	c.Write32(trngBase+trngSWReset, 1)
+	if trng.isr != 0 || trng.imr != trngIRQMask {
+		t.Fatal("SW reset did not restore TRNG interrupt state")
+	}
+	if c.ppb[0].pending[1]&(1<<(trngIRQ-32)) != 0 || c.ppb[1].pending[1]&(1<<(trngIRQ-32)) != 0 {
+		t.Fatal("SW reset left IRQ 39 pending")
+	}
+}
