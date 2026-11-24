@@ -66,10 +66,13 @@ func TestI2CRestartBeginsTransaction(t *testing.T) {
 	c.AttachI2C(0, 0x50, dev)
 	c.Write32(base+i2cENABLE, 1)
 	c.Write32(base+i2cTAR, 0x50)
-	if dev.begins != 1 {
-		t.Fatalf("TAR began %d transactions, want 1", dev.begins)
+	if dev.begins != 0 {
+		t.Fatalf("TAR began %d transactions before a command, want 0", dev.begins)
 	}
 	c.Write32(base+i2cDATA, 0x10)
+	if dev.begins != 1 {
+		t.Fatalf("first command began %d transactions, want 1", dev.begins)
+	}
 	c.Write32(base+i2cDATA, i2cRestart|1<<8) // repeated start + read
 	if dev.begins != 2 {
 		t.Fatalf("RESTART began %d transactions, want 2", dev.begins)
@@ -196,6 +199,25 @@ func TestI2CTXFIFOCapacityAndEnable(t *testing.T) {
 	}
 	if raw := c.Read32(base + i2cRAWINTR); raw&i2cTXOver == 0 {
 		t.Fatalf("TX_OVER not set on the 17th command: %#x", raw)
+	}
+}
+
+func TestI2CAbortRequiresPreviouslyEnabledController(t *testing.T) {
+	c := New()
+	const base = 0x40090000
+	c.Write32(base+i2cENABLE, 1|1<<1)
+	if got := c.Read32(base + i2cENABLESTAT); got != 1 {
+		t.Fatalf("controller not enabled after ENABLE|ABORT write: %#x", got)
+	}
+	if got := c.Read32(base + i2cTXABRTSRC); got != 0 {
+		t.Fatalf("ABORT was accepted while enabling: %#x", got)
+	}
+	if raw := c.Read32(base + i2cRAWINTR); raw&i2cTXAbrt != 0 {
+		t.Fatalf("ABORT was accepted while enabling: raw=%#x", raw)
+	}
+	c.Write32(base+i2cENABLE, 1|1<<1)
+	if got := c.Read32(base + i2cTXABRTSRC); got != 1<<16 {
+		t.Fatalf("ABORT was not accepted while enabled: %#x", got)
 	}
 }
 

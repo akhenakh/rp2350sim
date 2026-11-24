@@ -194,9 +194,18 @@ func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 		case i2cTAR:
 			i.block.regs[i2cTAR/4] = v & 0xfff
 			i.addr = uint8(v & 0x7f)
-			i.startTransaction()
+			i.addrPhase = true
+			i.idle = true
+			i.transactionOpen = false
+			if dev, ok := i.devices[i.addr]; ok {
+				if a, ok := dev.(I2CAddressable); ok {
+					a.SetAddress(i.addr)
+				}
+			}
 		case i2cDATA:
 			i.dataCmd(v)
+		case i2cINTRMASK:
+			i.block.regs[i2cINTRMASK/4] = v & 0x7ff
 		case i2cRXTL, i2cTXTL:
 			i.block.regs[off/4] = min(v&0xff, i2cFIFODepth)
 			i.refreshRaw()
@@ -206,9 +215,10 @@ func newI2C(c *Chip, base uint32, id int) *i2cBlock {
 }
 
 func (i *i2cBlock) writeEnable(v uint32) {
+	wasEnabled := i.enable
 	i.enable = v&1 != 0
 	// ABORT is self-clearing; TX_CMD_BLOCK remains under software control.
-	i.block.regs[i2cENABLE/4] = v &^ i2cEnableAbort
+	i.block.regs[i2cENABLE/4] = v & (1 | i2cCmdBlock)
 	if !i.enable {
 		i.tx = i.tx[:0]
 		i.rx = i.rx[:0]
@@ -218,7 +228,7 @@ func (i *i2cBlock) writeEnable(v uint32) {
 		i.refreshRaw()
 		return
 	}
-	if v&i2cEnableAbort != 0 {
+	if v&i2cEnableAbort != 0 && wasEnabled {
 		i.abort(i2cABRTUserAbrt)
 		return
 	}

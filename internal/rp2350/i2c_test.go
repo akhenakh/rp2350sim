@@ -58,6 +58,26 @@ func TestI2CEmptyBusNacks(t *testing.T) {
 	}
 }
 
+func TestI2CControlRegisterMasks(t *testing.T) {
+	c := New()
+	const base = 0x40090000
+	c.Write32(base+i2cCON, 0xffffffff)
+	if got := c.Read32(base + i2cCON); got != 0x3ff {
+		t.Fatalf("IC_CON readback = %#x, want writable bits 0..9", got)
+	}
+	c.Write32(base+i2cINTRMASK, 0xffffffff)
+	if got := c.Read32(base + i2cINTRMASK); got != 0x7ff {
+		t.Fatalf("IC_INTR_MASK readback = %#x, want 0x7ff", got)
+	}
+	c.Write32(base+i2cENABLE, 0xffffffff)
+	if got := c.Read32(base + i2cENABLE); got != 1|1<<2 {
+		t.Fatalf("IC_ENABLE readback = %#x, want ENABLE|TX_CMD_BLOCK", got)
+	}
+	if raw := c.Read32(base + i2cRAWINTR); raw&i2cTXAbrt != 0 {
+		t.Fatalf("reserved/ABORT bits were not ignored while enabling: %#x", raw)
+	}
+}
+
 func TestI2CResetValuesAndActivity(t *testing.T) {
 	c := New()
 	const base = 0x40090000
@@ -83,11 +103,16 @@ func TestI2CResetValuesAndActivity(t *testing.T) {
 		}
 	}
 
+	c.AttachI2C(0, 0x50, &fakeI2C{})
 	c.Write32(base+i2cENABLE, 1)
 	c.Write32(base+i2cTAR, 0x50)
+	if raw := c.Read32(base + i2cRAWINTR); raw&(1<<8|1<<10) != 0 {
+		t.Fatalf("TAR latch asserted START/ACTIVITY: %#x", raw)
+	}
+	c.Write32(base+i2cDATA, 0x00)
 	raw := c.Read32(base + i2cRAWINTR)
 	if raw&(1<<8) == 0 || raw&(1<<10) == 0 {
-		t.Fatalf("START/ACTIVITY not latched: %#x", raw)
+		t.Fatalf("START/ACTIVITY not latched by the first command: %#x", raw)
 	}
 	if status := c.Read32(base + i2cSTATUS); status&1 == 0 {
 		t.Fatalf("master activity not reported: %#x", status)
