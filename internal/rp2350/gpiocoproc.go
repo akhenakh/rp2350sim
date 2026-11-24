@@ -42,6 +42,13 @@ func (c *Chip) ExecGPIOCoproc(cpu *m33.CPU, hw1, hw2 uint16) {
 			if cpu.R[rt2]&1 != 0 {
 				c.cpBit(crm, uint(cpu.R[rt]), opc-4)
 			}
+		case 8, 9, 10, 11:
+			index := cpu.R[rt2]
+			if index > 1 {
+				c.Logger.Warn("gpio coproc: invalid indexed register", slog.Uint64("index", uint64(index)))
+				return
+			}
+			c.cpApply(crm+index, opc-8, uint64(cpu.R[rt]))
 		default:
 			c.Logger.Warn("gpio coproc: unsupported MCRR", slog.Uint64("opc", uint64(opc)))
 		}

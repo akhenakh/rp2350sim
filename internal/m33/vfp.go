@@ -21,6 +21,9 @@ const (
 	fpscrC   = 1 << 29
 	fpscrV   = 1 << 28
 	fpscrIOC = 1 << 0
+	fpscrDZC = 1 << 1
+	fpscrOFC = 1 << 2
+	fpscrUFC = 1 << 3
 	fpscrIXC = 1 << 4
 )
 
@@ -64,34 +67,34 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	h2n := hw2 &^ 0xF0AF
 	switch {
 	case h1n == 0xEE30 && h2n == 0x0A00:
-		c.vfpSetS(sd, c.vfpS(sn)+c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpAdd(c.vfpS(sn), c.vfpS(sm)))
 		return
 	case h1n == 0xEE30 && h2n == 0x0A40:
-		c.vfpSetS(sd, c.vfpS(sn)-c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpAdd(c.vfpS(sn), -c.vfpS(sm)))
 		return
 	case h1n == 0xEE20 && h2n == 0x0A00:
-		c.vfpSetS(sd, c.vfpS(sn)*c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpMul(c.vfpS(sn), c.vfpS(sm)))
 		return
 	case h1n == 0xEE80 && h2n == 0x0A00:
-		c.vfpSetS(sd, c.vfpS(sn)/c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpDiv(c.vfpS(sn), c.vfpS(sm)))
 		return
 	case h1n == 0xEE00 && h2n == 0x0A00:
-		c.vfpSetS(sd, c.vfpS(sd)+c.vfpS(sn)*c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpFMA(c.vfpS(sd), c.vfpS(sn), c.vfpS(sm), false))
 		return
 	case h1n == 0xEE00 && h2n == 0x0A40:
-		c.vfpSetS(sd, c.vfpS(sd)-c.vfpS(sn)*c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpFMA(c.vfpS(sd), c.vfpS(sn), c.vfpS(sm), true))
 		return
 	case h1n == 0xEEA0 && h2n == 0x0A00: // VFMA
-		c.vfpSetS(sd, c.vfpS(sd)+c.vfpS(sn)*c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpFMA(c.vfpS(sd), c.vfpS(sn), c.vfpS(sm), false))
 		return
 	case h1n == 0xEEA0 && h2n == 0x0A40: // VFMS
-		c.vfpSetS(sd, c.vfpS(sd)-c.vfpS(sn)*c.vfpS(sm))
+		c.vfpSetS(sd, c.vfpFMA(c.vfpS(sd), c.vfpS(sn), c.vfpS(sm), true))
 		return
 	case h1n == 0xEE90 && h2n == 0x0A40: // VFNMA
-		c.vfpSetS(sd, -(c.vfpS(sd) + c.vfpS(sn)*c.vfpS(sm)))
+		c.vfpSetS(sd, -c.vfpFMA(c.vfpS(sd), c.vfpS(sn), c.vfpS(sm), false))
 		return
 	case h1n == 0xEE90 && h2n == 0x0A00: // VFNMS
-		c.vfpSetS(sd, -(c.vfpS(sd) - c.vfpS(sn)*c.vfpS(sm)))
+		c.vfpSetS(sd, -c.vfpFMA(c.vfpS(sd), c.vfpS(sn), c.vfpS(sm), true))
 		return
 	}
 
@@ -113,7 +116,7 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	case a == 0xEE80 && b == 0x0A40 && op == 1:
 		c.vfpSetS(sd, -c.vfpS(sm))
 	case a == 0xEE80 && b == 0x0AC0 && op == 1:
-		c.vfpSetS(sd, float32(math.Sqrt(float64(c.vfpS(sm)))))
+		c.vfpSetS(sd, c.vfpSqrt(c.vfpS(sm)))
 	case a == 0xEE80 && b == 0x0A40 && op == 4:
 		c.vfpCompare(c.vfpS(sd), c.vfpS(sm))
 	case a == 0xEE80 && b == 0x0AC0 && op == 4:
@@ -125,9 +128,19 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 		imm := uint32(hw1&0xF)<<4 | uint32(hw2&0xF)
 		c.vfpSetS(sd, vfpExpandImm(imm))
 	case a == 0xEE80 && b == 0x0AC0 && op == 8:
-		c.vfpSetS(sd, float32(int32(c.S[sm]))) // VCVT.F32.S32
+		v := int32(c.S[sm])
+		r := float32(v)
+		if float64(r) != float64(v) {
+			c.FPSCR |= fpscrIXC
+		}
+		c.vfpSetS(sd, r) // VCVT.F32.S32
 	case a == 0xEE80 && b == 0x0A40 && op == 8:
-		c.vfpSetS(sd, float32(c.S[sm])) // VCVT.F32.U32
+		v := c.S[sm]
+		r := float32(v)
+		if float64(r) != float64(v) {
+			c.FPSCR |= fpscrIXC
+		}
+		c.vfpSetS(sd, r) // VCVT.F32.U32
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xD:
 		c.S[sd&31] = c.vfpToInt32(c.vfpS(sm)) // VCVT.S32.F32 (truncate)
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xC:
@@ -135,6 +148,89 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	default:
 		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
 	}
+}
+
+func vfpSignalingNaN(f float32) bool {
+	bits := math.Float32bits(f)
+	return bits&0x7F800000 == 0x7F800000 && bits&0x007FFFFF != 0 && bits&0x00400000 == 0
+}
+
+func (c *CPU) vfpRecord(a, b, result float32, exact float64, invalid, divideByZero bool) {
+	if invalid || vfpSignalingNaN(a) || vfpSignalingNaN(b) {
+		c.FPSCR |= fpscrIOC
+	}
+	if divideByZero {
+		c.FPSCR |= fpscrDZC
+	}
+	if math.IsNaN(float64(result)) {
+		return
+	}
+	if math.IsInf(float64(result), 0) {
+		if !math.IsInf(exact, 0) {
+			c.FPSCR |= fpscrOFC | fpscrIXC
+		}
+		return
+	}
+	if exact != float64(result) {
+		c.FPSCR |= fpscrIXC
+		if result == 0 || math.Abs(float64(result)) < math.SmallestNonzeroFloat32 {
+			c.FPSCR |= fpscrUFC
+		}
+	}
+}
+
+func (c *CPU) vfpAdd(a, b float32) float32 {
+	result := a + b
+	invalid := math.IsInf(float64(a), 0) && math.IsInf(float64(b), 0) && math.Signbit(float64(a)) != math.Signbit(float64(b))
+	c.vfpRecord(a, b, result, float64(a)+float64(b), invalid, false)
+	return result
+}
+
+func (c *CPU) vfpMul(a, b float32) float32 {
+	result := a * b
+	invalid := (a == 0 && math.IsInf(float64(b), 0)) || (b == 0 && math.IsInf(float64(a), 0))
+	c.vfpRecord(a, b, result, float64(a)*float64(b), invalid, false)
+	return result
+}
+
+func (c *CPU) vfpDiv(a, b float32) float32 {
+	result := a / b
+	invalid := a == 0 && b == 0
+	divideByZero := b == 0 && a != 0 && !math.IsInf(float64(a), 0) && !math.IsNaN(float64(a))
+	c.vfpRecord(a, b, result, float64(a)/float64(b), invalid, divideByZero)
+	return result
+}
+
+func (c *CPU) vfpSqrt(a float32) float32 {
+	exact := math.Sqrt(float64(a))
+	result := float32(exact)
+	c.vfpRecord(a, 0, result, exact, a < 0, false)
+	return result
+}
+
+func (c *CPU) vfpFMA(a, b, addend float32, subtract bool) float32 {
+	product := b * addend
+	var result float32
+	if subtract {
+		result = a - product
+	} else {
+		result = a + product
+	}
+	exactProduct := float64(b) * float64(addend)
+	exact := float64(a) + exactProduct
+	if subtract {
+		exact = float64(a) - exactProduct
+	}
+	invalid := (b == 0 && math.IsInf(float64(addend), 0)) || (addend == 0 && math.IsInf(float64(b), 0)) ||
+		(math.IsInf(float64(a), 0) && math.IsInf(exactProduct, 0) && math.Signbit(float64(a)) != math.Signbit(exactProduct))
+	if subtract {
+		invalid = invalid || (math.IsInf(float64(a), 0) && math.IsInf(exactProduct, 0) && math.Signbit(float64(a)) == math.Signbit(exactProduct))
+	}
+	c.vfpRecord(a, b, result, exact, invalid, false)
+	if vfpSignalingNaN(addend) {
+		c.FPSCR |= fpscrIOC
+	}
+	return result
 }
 
 // vfpToInt32 converts with the Arm rules: NaN gives zero, out-of-range values
@@ -187,7 +283,7 @@ func (c *CPU) vfpCompare(a, b float32) {
 	flags := c.FPSCR &^ (fpscrN | fpscrZ | fpscrC | fpscrV)
 	switch {
 	case math.IsNaN(float64(a)) || math.IsNaN(float64(b)):
-		flags |= fpscrC | fpscrV // unordered
+		flags |= fpscrC | fpscrV | fpscrIOC // unordered
 	case a == b:
 		flags |= fpscrZ | fpscrC
 	case a < b:
@@ -233,7 +329,7 @@ func (c *CPU) vfpCoreTransfer(hw1, hw2 uint16) {
 		sd := int((hw1&0xF)<<1) | int((hw2>>7)&1)
 		c.R[rt] = c.S[sd]
 	case 0xE: // VMSR FPSCR, Rt
-		c.FPSCR = c.R[rt] & 0xF7C0_0000
+		c.FPSCR = c.R[rt] & 0xF800_009F
 	case 0xF: // VMRS Rt, FPSCR (Rt == 15 copies the flags to APSR)
 		if rt == 15 {
 			c.APSR = (c.APSR &^ 0xF8000000) | (c.FPSCR & 0xF8000000)

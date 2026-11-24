@@ -33,6 +33,45 @@ func TestGPIOCoprocBits(t *testing.T) {
 	}
 }
 
+func TestGPIOCoprocIndexedWrites(t *testing.T) {
+	c := New()
+	cpu := c.CPU0
+	c.Pins.Out = 0x0000000F0000000F
+	cpu.R[0] = 1 << 1 // value/mask
+	cpu.R[1] = 1      // select GPIO_HI_OUT
+
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x0480) // mcrr p0,#8,r0,r1,c0
+	if got := c.Pins.Out; got != 0x000000020000000F {
+		t.Fatalf("indexed put = %#x, want high half replaced and low half preserved", got)
+	}
+	cpu.R[0] = 1 << 3
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x0480)
+	if got := c.Pins.Out; got != 0x000000080000000F {
+		t.Fatalf("indexed high put = %#x, want low half preserved", got)
+	}
+
+	cpu.R[0] = 1 << 2
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x0490) // xor
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x04A0) // set
+	cpu.R[0] = 1 << 3
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x04B0) // clear
+	if got := c.Pins.Out; got != 0x000000040000000F {
+		t.Fatalf("indexed xor/set/clear = %#x, want 0x000000040000000f", got)
+	}
+
+	c.Pins.OE = 0x0000000500000005
+	cpu.R[0] = 1 << 2
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x0484) // mcrr p0,#8,r0,r1,c4
+	if got := c.Pins.OE; got != 0x0000000400000005 {
+		t.Fatalf("indexed OE put = %#x, want high half replaced and low half preserved", got)
+	}
+	cpu.R[0] = 1 << 3
+	c.ExecGPIOCoproc(cpu, 0xEC01, 0x0484)
+	if got := c.Pins.OE; got != 0x0000000800000005 {
+		t.Fatalf("indexed high OE put = %#x, want low half preserved", got)
+	}
+}
+
 func TestGPIOCoprocMCRRHighHalf(t *testing.T) {
 	c := New()
 	cpu := c.CPU0

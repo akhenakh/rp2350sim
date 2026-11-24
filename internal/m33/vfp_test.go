@@ -31,6 +31,43 @@ func TestVFPFused(t *testing.T) {
 	}
 }
 
+func TestVFPExceptionFlagsAndVMSR(t *testing.T) {
+	cpu := New(newTestBus())
+	cpu.S[1] = math.Float32bits(1)
+	cpu.S[2] = 0
+	cpu.exec32Coproc(0xEE80, 0x0A81) // vdiv.f32 s0, s1, s2
+	if !math.IsInf(float64(math.Float32frombits(cpu.S[0])), 1) {
+		t.Fatalf("1/0 = %v, want +Inf", math.Float32frombits(cpu.S[0]))
+	}
+	if cpu.FPSCR&fpscrDZC == 0 {
+		t.Fatal("VDIV 1/0 did not set DZC")
+	}
+
+	cpu.S[1] = math.Float32bits(1)
+	cpu.S[2] = math.Float32bits(float32(math.Ldexp(1, -24))) // lost when added to 1
+	cpu.exec32Coproc(0xEE30, 0x0A81)                         // vadd.f32 s0, s1, s2
+	if cpu.S[0] != math.Float32bits(1) || cpu.FPSCR&(fpscrDZC|fpscrIXC) != fpscrDZC|fpscrIXC {
+		t.Fatalf("cumulative inexact VADD flags: result=%#x FPSCR=%#x", cpu.S[0], cpu.FPSCR)
+	}
+
+	cpu.S[2] = 0x01000001            // 16777217 is not exactly representable as float32
+	cpu.exec32Coproc(0xEEB8, 0x0AC1) // vcvt.f32.s32 s0, s2
+	if cpu.FPSCR&fpscrIXC == 0 {
+		t.Fatal("inexact integer-to-float conversion did not set IXC")
+	}
+
+	cpu.R[0] = fpscrN | fpscrDZC | fpscrIXC
+	cpu.exec32Coproc(0xEEE1, 0x0A10) // vmsr fpscr, r0
+	if got := cpu.FPSCR & (fpscrN | fpscrDZC | fpscrIXC); got != fpscrN|fpscrDZC|fpscrIXC {
+		t.Fatalf("VMSR FPSCR = %#x, want cumulative flags retained", got)
+	}
+	cpu.R[0] = 0
+	cpu.exec32Coproc(0xEEE1, 0x0A10) // vmsr fpscr, r0
+	if cpu.FPSCR != 0 {
+		t.Fatalf("VMSR zero left FPSCR=%#x", cpu.FPSCR)
+	}
+}
+
 // TestVCVTIntBits checks that float-to-integer conversions write the integer
 // bit pattern, not an IEEE-754 float re-encoding of the integer.
 func TestVCVTIntBits(t *testing.T) {

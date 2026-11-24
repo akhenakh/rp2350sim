@@ -38,12 +38,21 @@ const (
 	dcpSqrt
 )
 
+type dcpConvert uint8
+
+const (
+	dcpConvertNone dcpConvert = iota
+	dcpConvertTruncate
+	dcpConvertRound
+)
+
 type dcpState struct {
 	x, y       float64
 	result     float64
 	format     dcpFormat // operand format
 	haveResult bool
 	op         dcpOp
+	convert    dcpConvert
 	flags      uint32
 	class      uint32
 }
@@ -66,6 +75,7 @@ func (c *CPU) execDCP(hw1, hw2 uint16) {
 }
 
 func (c *CPU) dcpMCRR(hw1, hw2 uint16) {
+	c.dcp.convert = dcpConvertNone
 	opc := (hw2 >> 4) & 0xF
 	crm := hw2 & 0xF
 	rt := uint32(hw2 >> 12)
@@ -184,11 +194,17 @@ func (c *CPU) dcpMRC(hw1, hw2 uint16) {
 		}
 	case crm == 3: // RDIC/RDUC
 		c.finish()
+		switch c.dcp.convert {
+		case dcpConvertTruncate:
+			c.dcp.result = math.Trunc(c.dcp.result)
+		case dcpConvertRound:
+			c.dcp.result = math.Round(c.dcp.result)
+		}
 		if rt != 15 {
 			if opc2 == 0 {
-				c.R[rt] = uint32(int32(c.dcp.result))
+				c.R[rt] = dcpToInt32(c.dcp.result)
 			} else {
-				c.R[rt] = uint32(c.dcp.result)
+				c.R[rt] = dcpToUint32(c.dcp.result)
 			}
 		}
 	default:
@@ -204,6 +220,7 @@ func (c *CPU) dcpCDP(hw1, hw2 uint16) {
 	case opc1 == 0 && crm == 0 && opc2 == 0: // INIT
 		c.dcp.x, c.dcp.y, c.dcp.result = 0, 0, 0
 		c.dcp.op = dcpNone
+		c.dcp.convert = dcpConvertNone
 	case opc1 == 0 && crm == 1 && opc2 == 0: // ADD0 (prepare)
 		c.dcp.op = dcpAdd
 	case opc1 == 1 && crm == 1 && opc2 == 0: // ADD1
@@ -214,8 +231,14 @@ func (c *CPU) dcpCDP(hw1, hw2 uint16) {
 		c.finish()
 	case opc1 == 2 && crm == 1 && opc2 == 0: // SQR0
 		c.dcp.op = dcpSqrt
-	case opc1 == 8: // NORM/NRDF/NRDD/NTDC/NRDC
-		if (crm == 2 && opc2 == 1) || (crm == 0 && opc2 >= 1 && opc2 <= 3) {
+	case opc1 == 8 && crm == 0 && opc2 == 2: // NTDC
+		c.finish()
+		c.dcp.convert = dcpConvertTruncate
+	case opc1 == 8 && crm == 0 && opc2 == 3: // NRDC
+		c.finish()
+		c.dcp.convert = dcpConvertRound
+	case opc1 == 8: // NORM/NRDF/NRDD
+		if (crm == 2 && opc2 == 1) || (crm == 0 && opc2 == 1) {
 			c.finish()
 		}
 	default:
@@ -277,16 +300,43 @@ func (c *CPU) dcpCompare() {
 }
 
 func (c *CPU) dcpClassify() {
-	f := float32(c.dcp.x)
+	f := c.dcp.x
+	if c.dcp.format == dcpFloat {
+		f = float64(float32(f))
+	}
 	switch {
-	case math.IsNaN(float64(f)):
+	case math.IsNaN(f):
 		c.dcp.class = 1
-	case math.IsInf(float64(f), 0):
+	case math.IsInf(f, 0):
 		c.dcp.class = 2
 	case f == 0:
 		c.dcp.class = 4
 	default:
 		c.dcp.class = 0
+	}
+}
+
+func dcpToInt32(f float64) uint32 {
+	switch {
+	case math.IsNaN(f):
+		return 0
+	case f >= 2147483648:
+		return 0x7FFFFFFF
+	case f < -2147483648:
+		return 0x80000000
+	default:
+		return uint32(int32(f))
+	}
+}
+
+func dcpToUint32(f float64) uint32 {
+	switch {
+	case math.IsNaN(f), f <= 0:
+		return 0
+	case f >= 4294967296:
+		return 0xFFFFFFFF
+	default:
+		return uint32(f)
 	}
 }
 
