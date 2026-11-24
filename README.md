@@ -2,6 +2,7 @@
 
 rp2350sim is a Raspberry Pi RP2350 (Pico 2 and compatible boards) emulator for developing, testing, and debugging firmware on a desktop without hardware. It runs unmodified Pico SDK C and `tinygo build -target=pico2` programs, including RTOS firmware such as Zephyr, with a live UI for the emulated board and its peripherals.
 
+
 Status: runs real programs end to end, package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a CST816D touch controller, a QMI8658 IMU, a microSD card model that can be backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, the OTP array (fuses, Hamming ECC, page locks, bootrom access), and optional QSPI PSRAM (1-16 MiB on QMI CS1, with configurable access latency).
 Stock **Pico SDK C**
@@ -10,7 +11,7 @@ firmware boots through the same vector table and runs its runtime, UART stdio, G
 Fully tested on Linux & Mac OSX. Windows binaries are built and the network
 models use portable Go net, but the bash smoke suite is not run on Windows.
 
-## Download
+## Installation
 
 On macOS Apple Silicon or Intel, install both programs with
 [Homebrew](https://brew.sh):
@@ -28,19 +29,6 @@ paru -S rp2350sim
 ```
 
 Prebuilt binaries are attached to [GitHub Releases](https://github.com/akhenakh/rp2350sim/releases).
-Every archive contains both programs, `LICENSE`, `README.md` and the `docs/`
-directory:
-
-| platform | archive | programs |
-|---|---|---|
-| Linux (`amd64`, `arm64`) | `rp2350sim_<version>_linux_<arch>.tar.gz` | `rp2350sim`, `rp2350sim-ui` |
-| macOS (`amd64`, `arm64`) | `rp2350sim_<version>_darwin_<arch>.tar.gz` | `rp2350sim`, `rp2350sim-ui` |
-| Windows (`amd64`, `arm64`) | `rp2350sim_<version>_windows_<arch>.zip` | `rp2350sim.exe`, `rp2350sim-ui.exe` |
-| all | `rp2350sim_<version>_checksums.txt` | SHA-256 checksums |
-
-`rp2350sim -version` and `rp2350sim-ui --version` report the release build. The
-binaries are pure Go, so no CGO toolchain is needed. Tags matching `v*` publish
-these archives; [docs/release.md](docs/release.md) covers the pipeline.
 
 ### Verifying a release
 
@@ -56,90 +44,6 @@ gh attestation verify rp2350sim_<version>_linux_amd64.tar.gz \
 This project was created using AI, cross checked against existing implementations, unit tested and smoke tested , CI guards.  
 Your best bet is to try and see if it's running your code properly, send bug reports if you want the tool to improve.
 
-## Layout
-
-```
-cmd/rp2350sim/      headless runner and debugging tools
-cmd/simui/          Shirei desktop UI (separate module)
-firmware/c/         Pico SDK C examples (CMake)
-internal/m33/       ARMv8-M Mainline (Cortex-M33) interpreter
-internal/debug/     ELF symbols, source lines, CFI and variable evaluation
-internal/rp2350/    chip: memory map, SIO, NVIC, timers, clocks, GPIO, USB,
-                    UART, SPI, DMA, PWM, ADC, I2C, OTP, QMI/PSRAM
-internal/devices/   external chips (ST7789, CST816D, QMI8658, SD, W5500/W6300)
-internal/firmware/  UF2 / ELF / raw image loaders
-drivers/w6300/      TinyGo netdev driver for the W6300 (separate module)
-drivers/ch9120/     CH9120 module driver and one-socket netdev (separate module)
-firmware/           example TinyGo programs (blinky, lcd, sdcard, piotest, ws2812, w5500, w6300)
-tools/              corpus generator, host Ethernet test server
-Taskfile.yml        build/run/test tasks
-```
-
-## Tasks
-
-The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
-
-| task | what it does |
-|---|---|
-| `task` | build the emulator and the blinky firmware |
-| `task build` | build `build/rp2350sim` |
-| `task install` | install `rp2350sim` into `$(go env GOPATH)/bin` |
-| `task firmware:blinky` | TinyGo blinky ELF for the Pico 2 |
-| `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
-| `task firmware:busmaster`, `busdevice` | TinyGo I2C/SPI TCP bridge master and device demos |
-| `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
-| `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
-| `task run:sdcard` | read the card identity and list a host-backed FAT16 root directory |
-| `task run:touchlcd` | run the Touch-LCD-2 example with a deterministic touch |
-| `task touchlcd` | run the Touch-LCD-2 example and export its framebuffer |
-| `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
-| `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
-| `task run:echo` | echo injected console input through USB CDC |
-| `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
-| `task run:w5500` | run the W5500 example (TCP client, UDP, TCP server) against `tools/ethhost` |
-| `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
-| `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
-| `task ui:blinky` (`ui`) | desktop UI on the `pico2` board with the blinky firmware |
-| `task ui:lcd` | desktop UI on the `geek` board with the ST7789 example |
-| `task ui:touchlcd` | desktop UI on the `touch-lcd2` board |
-| `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
-| `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
-| `task ui:w5500` | desktop UI on the `pico2-w5500` board with the W5500 example |
-| `task run:ch9120` | CH9120 UART-to-Ethernet example against the host echo |
-| `task ui:ch9120` | desktop UI on the `rp2350-eth` board with the CH9120 example |
-| `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
-| `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
-| `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
-| `task ui:psram` | PSRAM board with the Pico SDK PSRAM demo |
-| `task ui:debug` | Debug tab stopped at the C fixture's `debug_marker` |
-| `task ui:debug:png` | headless render of the Debug tab to `build/ui-debug.png` |
-| `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
-| `task ui:serial` | UART1 bridged over TCP with an echo firmware |
-| `task ui:bus` | Bus Pirate board paused: connect terminals, queue ACK/data, then Run |
-| `task ui:bus:png` | headless render of the Bus Pirate tab to `build/ui-bus.png` |
-| `task ui:presets` | built-in BME280/SSD1306/MPU6050/W25Q16 board |
-| `task ui:presets:png` | headless render of the built-in presets tab to `build/ui-presets.png` |
-| `task run:presets` | probe the four built-in bus presets and print their IDs |
-| `task ui:build` | live-reload Source/Build drawer for the blinky example |
-| `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
-| `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |
-| `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
-| `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
-| `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
-| `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
-| `task picoexamples:build` | build the pinned pico-examples subset (needs `PICO_SDK_PATH`) |
-| `task c:hello`, `c:blinky`, `c:float`, `c:dcp`, `c:multicore` | run the C examples |
-| `task c:otp` | run the C OTP demo and dump the programmed array |
-| `task c:psram` | run the Pico SDK PSRAM demo with an 8 MiB device |
-| `task c:debug` | run the C debugger fixture and stop at `debug_marker` |
-| `task debug:test` | run the TinyGo and C DWARF debugger tests |
-| `task c:ota` | run the single-slot self-update demo and reboot the new image |
-| `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
-| `task release:check` | validate the GoReleaser configuration |
-| `task release:snapshot` | build all release archives under `dist/` (no publish) |
-| `task docs:serve` | preview the Geekdoc documentation at <http://localhost:1313> |
-| `task docs:build` | build the Geekdoc site into `site/public` |
-| `task clean` | remove `build/` |
 
 ## Running firmware
 
@@ -335,20 +239,75 @@ which echoes UART1. The headless runner has the same feature:
 `-serial-tcp 1:127.0.0.1:0` prints the chosen address on stderr.
 `tools/serialcheck` is the client used by the smoke test.
 
+## Tasks
+
+The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
+
+| task | what it does |
+|---|---|
+| `task` | build the emulator and the blinky firmware |
+| `task build` | build `build/rp2350sim` |
+| `task install` | install `rp2350sim` into `$(go env GOPATH)/bin` |
+| `task firmware:blinky` | TinyGo blinky ELF for the Pico 2 |
+| `task firmware:blinky:uf2` | blinky UF2 for flashing a real board |
+| `task firmware:busmaster`, `busdevice` | TinyGo I2C/SPI TCP bridge master and device demos |
+| `task run:blinky` | run blinky and trace GP25 for three virtual seconds |
+| `task run:lcd` | run the ST7789 example in the emulator with the LCD attached |
+| `task run:sdcard` | read the card identity and list a host-backed FAT16 root directory |
+| `task run:touchlcd` | run the Touch-LCD-2 example with a deterministic touch |
+| `task touchlcd` | run the Touch-LCD-2 example and export its framebuffer |
+| `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
+| `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
+| `task run:echo` | echo injected console input through USB CDC |
+| `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
+| `task run:w5500` | run the W5500 example (TCP client, UDP, TCP server) against `tools/ethhost` |
+| `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
+| `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
+| `task ui:blinky` (`ui`) | desktop UI on the `pico2` board with the blinky firmware |
+| `task ui:lcd` | desktop UI on the `geek` board with the ST7789 example |
+| `task ui:touchlcd` | desktop UI on the `touch-lcd2` board |
+| `task ui:ws2812` | desktop UI on the `pico2-ws2812` board |
+| `task ui:w6300` | desktop UI on the `poe-eth` board with the W6300 example |
+| `task ui:w5500` | desktop UI on the `pico2-w5500` board with the W5500 example |
+| `task run:ch9120` | CH9120 UART-to-Ethernet example against the host echo |
+| `task ui:ch9120` | desktop UI on the `rp2350-eth` board with the CH9120 example |
+| `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
+| `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
+| `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
+| `task ui:psram` | PSRAM board with the Pico SDK PSRAM demo |
+| `task ui:debug` | Debug tab stopped at the C fixture's `debug_marker` |
+| `task ui:debug:png` | headless render of the Debug tab to `build/ui-debug.png` |
+| `task ui:logic` | logic analyzer with the UART/I2C/SPI demo firmware |
+| `task ui:serial` | UART1 bridged over TCP with an echo firmware |
+| `task ui:bus` | Bus Pirate board paused: connect terminals, queue ACK/data, then Run |
+| `task ui:bus:png` | headless render of the Bus Pirate tab to `build/ui-bus.png` |
+| `task ui:presets` | built-in BME280/SSD1306/MPU6050/W25Q16 board |
+| `task ui:presets:png` | headless render of the built-in presets tab to `build/ui-presets.png` |
+| `task run:presets` | probe the four built-in bus presets and print their IDs |
+| `task ui:build` | live-reload Source/Build drawer for the blinky example |
+| `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
+| `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |
+| `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
+| `task test` / `task test:qemu` | unit tests / QEMU differential corpus |
+| `task lint` | go vet, golangci-lint (modernize) and go fix diff in every module |
+| `task c:build` | build the Pico SDK C examples (needs `PICO_SDK_PATH`) |
+| `task picoexamples:build` | build the pinned pico-examples subset (needs `PICO_SDK_PATH`) |
+| `task c:hello`, `c:blinky`, `c:float`, `c:dcp`, `c:multicore` | run the C examples |
+| `task c:otp` | run the C OTP demo and dump the programmed array |
+| `task c:psram` | run the Pico SDK PSRAM demo with an 8 MiB device |
+| `task c:debug` | run the C debugger fixture and stop at `debug_marker` |
+| `task debug:test` | run the TinyGo and C DWARF debugger tests |
+| `task c:ota` | run the single-slot self-update demo and reboot the new image |
+| `task ci` | vet, unit tests, QEMU corpus, firmware smokes and a UI snapshot |
+| `task release:check` | validate the GoReleaser configuration |
+| `task release:snapshot` | build all release archives under `dist/` (no publish) |
+| `task docs:serve` | preview the Geekdoc documentation at <http://localhost:1313> |
+| `task docs:build` | build the Geekdoc site into `site/public` |
+| `task clean` | remove `build/` |
+
 ## Documentation
 
-The user guide lives in [`docs/`](docs/README.md):
-
-- [`docs/cli.md`](docs/cli.md) — every flag, output contract and exit code
-- [`docs/peripherals.md`](docs/peripherals.md) — each peripheral from the CLI and the UI
-- [`docs/bus-pirate.md`](docs/bus-pirate.md) — Bus Pirate tokens, built-in presets and fake I2C/SPI peripherals
-- [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer
-- [`docs/debug.md`](docs/debug.md) — Debug tab, breakpoints, watchpoints, memory, DWARF variables and GDB remote
-- [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, signal checks, artifacts
-- [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
-- [`docs/boards.md`](docs/boards.md) — supported boards, wiring and limitations
-- [`docs/c.md`](docs/c.md) — C firmware with the Pico SDK, examples and current gaps
-- [`docs/release.md`](docs/release.md) — release archives, GoReleaser and supported platforms
+The user guide lives in [`docs/`](docs/README.md)
 
 The same pages are published as a Geekdoc site at
 <https://akhenakh.github.io/rp2350sim/>. Preview it locally with
