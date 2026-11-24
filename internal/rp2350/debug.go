@@ -203,6 +203,9 @@ func (c *Chip) Peek8(addr uint32) (byte, bool) {
 	if off, ok := c.flashAliasIndex(addr, 1); ok {
 		return c.Flash[off], true
 	}
+	if xipMaintenance(addr) {
+		return 0, true
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize > 0 && off < c.psramSize {
 			return c.PSRAM[off], true

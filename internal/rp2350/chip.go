@@ -947,15 +947,15 @@ func (c *Chip) Read8(addr uint32) uint8 {
 	if _, ok := flashAlias(addr); ok {
 		return c.unhandledRead8(addr)
 	}
+	if xipMaintenance(addr) {
+		return 0
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize == 0 || off >= c.psramSize {
 			return c.unhandledRead8(addr)
 		}
 		c.psramAccess()
 		return c.PSRAM[off]
-	}
-	if xipMaintenance(addr) {
-		return 0
 	}
 	if addr < ROMSize {
 		return c.ROM[addr]
@@ -983,15 +983,15 @@ func (c *Chip) Read16(addr uint32) uint16 {
 	if _, ok := flashAlias(addr); ok {
 		return c.unhandledRead16(addr)
 	}
+	if xipMaintenance(addr) {
+		return 0
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize < 2 || off >= c.psramSize-1 {
 			return c.unhandledRead16(addr)
 		}
 		c.psramAccess()
 		return binary.LittleEndian.Uint16(c.PSRAM[off:])
-	}
-	if xipMaintenance(addr) {
-		return 0
 	}
 	if addr < ROMSize-1 {
 		return binary.LittleEndian.Uint16(c.ROM[addr:])
@@ -1020,15 +1020,15 @@ func (c *Chip) Read32(addr uint32) uint32 {
 	if _, ok := flashAlias(addr); ok {
 		return c.unhandledRead32(addr)
 	}
+	if xipMaintenance(addr) {
+		return 0
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize < 4 || off >= c.psramSize-3 {
 			return c.unhandledRead32(addr)
 		}
 		c.psramAccess()
 		return binary.LittleEndian.Uint32(c.PSRAM[off:])
-	}
-	if xipMaintenance(addr) {
-		return 0
 	}
 	if addr < ROMSize-3 {
 		return binary.LittleEndian.Uint32(c.ROM[addr:])
@@ -1061,6 +1061,9 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		// maintenance writes as no-ops.
 		return
 	}
+	if xipMaintenance(addr) {
+		return
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize == 0 || off >= c.psramSize {
 			c.unhandledWrite(addr, uint32(v))
@@ -1070,9 +1073,6 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		if c.psramWritable {
 			c.PSRAM[off] = v
 		}
-		return
-	}
-	if xipMaintenance(addr) {
 		return
 	}
 	if addr >= PeriphBase {
@@ -1103,6 +1103,9 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		}
 		return
 	}
+	if xipMaintenance(addr) {
+		return
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize < 2 || off >= c.psramSize-1 {
 			c.unhandledWrite(addr, uint32(v))
@@ -1113,9 +1116,6 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 			c.PSRAM[off] = byte(v)
 			c.PSRAM[off+1] = byte(v >> 8)
 		}
-		return
-	}
-	if xipMaintenance(addr) {
 		return
 	}
 	if addr >= PeriphBase {
@@ -1148,6 +1148,9 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		}
 		return
 	}
+	if xipMaintenance(addr) {
+		return
+	}
 	if off, ok := psramAlias(addr); ok {
 		if c.psramSize < 4 || off >= c.psramSize-3 {
 			c.unhandledWrite(addr, v)
@@ -1160,9 +1163,6 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 			c.PSRAM[off+2] = byte(v >> 16)
 			c.PSRAM[off+3] = byte(v >> 24)
 		}
-		return
-	}
-	if xipMaintenance(addr) {
 		return
 	}
 	if addr >= PeriphBase {

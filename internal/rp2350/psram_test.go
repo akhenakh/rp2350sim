@@ -30,11 +30,34 @@ func TestPSRAMWindowWriteGateAndLatency(t *testing.T) {
 	if got := c.Cycles - before; got != 5 {
 		t.Fatalf("read cost = %d cycles, want 5", got)
 	}
-	if v := c.Read32(PSRAMMaintBase); v != 0xdeadbeef {
-		t.Fatalf("maintenance read = %#x, want 0xdeadbeef", v)
+	if v := c.Read32(PSRAMMaintBase); v != 0 {
+		t.Fatalf("maintenance read = %#x, want 0", v)
 	}
 	if v := c.Read32(PSRAMNoXlateBase); v != 0xdeadbeef {
 		t.Fatalf("no-translate read = %#x, want 0xdeadbeef", v)
+	}
+}
+
+// A ranged cache-maintenance sweep inside the PSRAM maintenance window must
+// not alias the data array: the window carries cache operations, so writes are
+// no-ops and reads are not data.
+func TestPSRAMMaintenanceWindowDoesNotAliasData(t *testing.T) {
+	c := New()
+	c.ConfigurePSRAM(8*1024*1024, 0, 8)
+	c.Write32(xipBase, xipCtrlWritableM1)
+	c.Write32(PSRAMBase, 0xdeadbeef)
+
+	c.Write32(PSRAMMaintBase, 0)
+	c.Write32(PSRAMMaintBase+0x4000, 0xffffffff)
+
+	if got := c.Read32(PSRAMBase); got != 0xdeadbeef {
+		t.Fatalf("maintenance write corrupted PSRAM: %#x", got)
+	}
+	if got := c.Read32(PSRAMMaintBase); got != 0 {
+		t.Fatalf("maintenance read = %#x, want 0", got)
+	}
+	if len(c.Unhandled) != 0 {
+		t.Fatalf("maintenance window reported unhandled accesses: %v", c.Unhandled)
 	}
 }
 

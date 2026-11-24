@@ -236,15 +236,16 @@ func xipMaintenance(addr uint32) bool {
 	return addr >= XIPMaintenanceBase && addr < XIPNoTranslateBase
 }
 
-// psramAlias maps the cached and uncached QMI window-1 views.
+// psramAlias maps the cached and uncached QMI window-1 views. The maintenance
+// view at PSRAMMaintBase is deliberately absent: it carries cache operations,
+// not data, so aliasing it would let a ranged maintenance sweep overwrite the
+// PSRAM array.
 func psramAlias(addr uint32) (uint32, bool) {
 	switch {
 	case addr >= PSRAMBase && addr < PSRAMBase+PSRAMWindowSize:
 		return addr - PSRAMBase, true
 	case addr >= PSRAMNoCacheBase && addr < PSRAMNoCacheBase+PSRAMWindowSize:
 		return addr - PSRAMNoCacheBase, true
-	case addr >= PSRAMMaintBase && addr < PSRAMMaintBase+PSRAMWindowSize:
-		return addr - PSRAMMaintBase, true
 	case addr >= PSRAMNoXlateBase && addr < PSRAMNoXlateBase+PSRAMWindowSize:
 		return addr - PSRAMNoXlateBase, true
 	}
