@@ -122,50 +122,62 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 		t.Fatal(err)
 	}
 	g := exec.Command(gdbPath, "-batch", "-x", scriptPath)
-	var out strings.Builder
+	var out, stderr strings.Builder
 	g.Stdout = &out
-	g.Stderr = nil
-	err = g.Run()
-	text := out.String()
-	if err != nil && len(text) < len(cases) {
-		t.Fatalf("gdb failed: %v\n%s", err, text)
-	}
+	g.Stderr = &stderr
+	gdbErr := g.Run()
 
 	results := make([]oracleResult, len(cases))
 	seen := make([]bool, len(cases))
-	for line := range strings.SplitSeq(text, "\n") {
+	halt := ""
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		if strings.Contains(line, "Program received signal") {
+			halt = strings.TrimSpace(line)
+			continue
+		}
 		if !strings.HasPrefix(line, "CASE ") {
 			continue
 		}
 		f := strings.Fields(line)
-		if len(f) < 19 {
-			continue
+		if len(f) != 19 {
+			t.Fatalf("malformed oracle result: %q", line)
 		}
 		var idx int
-		fmt.Sscanf(f[1], "%d", &idx)
-		if idx < 0 || idx >= len(cases) {
-			continue
+		if _, err := fmt.Sscanf(f[1], "%d", &idx); err != nil || idx < 0 || idx >= len(cases) {
+			t.Fatalf("invalid oracle case index: %q", line)
+		}
+		if seen[idx] {
+			t.Fatalf("duplicate oracle result for case %d", idx)
 		}
 		var vals [17]uint32
-		ok := true
 		for k := range 17 {
 			if _, err := fmt.Sscanf(f[2+k], "%x", &vals[k]); err != nil {
-				ok = false
-				break
+				t.Fatalf("invalid oracle register in %q: %v", line, err)
 			}
 		}
-		if !ok {
-			continue
-		}
-		res := oracleResult{XPSR: vals[16]}
+		res := oracleResult{XPSR: vals[16], Halt: halt}
 		res.Regs = vals[:16]
 		results[idx] = res
 		seen[idx] = true
+		halt = ""
+	}
+	oracleStopped := gdbErr != nil && strings.Contains(out.String()+stderr.String(), "Remote connection closed")
+	if gdbErr != nil && !oracleStopped {
+		t.Fatalf("gdb failed: %v\nstdout:\n%s\nstderr:\n%s", gdbErr, out.String(), stderr.String())
 	}
 	for i := range results {
-		if !seen[i] {
-			results[i].Halt = "no result"
+		if seen[i] {
+			continue
 		}
+		if oracleStopped && cases[i].expectHalt {
+			results[i].Halt = "oracle halt"
+			continue
+		}
+		if gdbErr != nil {
+			t.Fatalf("gdb failed with a missing non-halt case %d: %v\nstdout:\n%s\nstderr:\n%s",
+				i, gdbErr, out.String(), stderr.String())
+		}
+		results[i].Halt = "no result"
 	}
 	return results
 }
@@ -179,35 +191,8 @@ func TestQEMUInstructions(t *testing.T) {
 
 	failures := 0
 	for i, c := range cases {
-		want := results[i]
-		if want.Halt != "" {
-			// The oracle could not run this case; skip it.
-			continue
-		}
-		cpu, _ := runLocal(c)
-		if cpu.Halted {
-			t.Errorf("%s: local halted: %s", c.name, cpu.HaltReason)
-			failures++
-			continue
-		}
-		var diff []string
-		for r := range 13 {
-			if cpu.R[r] != want.Regs[r] {
-				diff = append(diff, fmt.Sprintf("r%d got %#08x want %#08x", r, cpu.R[r], want.Regs[r]))
-			}
-		}
-		if cpu.R[13] != want.Regs[13] {
-			diff = append(diff, fmt.Sprintf("sp got %#08x want %#08x", cpu.R[13], want.Regs[13]))
-		}
-		if cpu.R[15] != want.Regs[15] {
-			diff = append(diff, fmt.Sprintf("pc got %#08x want %#08x", cpu.R[15], want.Regs[15]))
-		}
-		gotFlags := cpu.APSR & 0xF8000000
-		wantFlags := want.XPSR & 0xF8000000
-		if gotFlags != wantFlags {
-			diff = append(diff, fmt.Sprintf("apsr got %#08x want %#08x", gotFlags, wantFlags))
-		}
-		if len(diff) > 0 {
+		_, diff := compareOracleCase(c, results[i])
+		if len(diff) != 0 {
 			failures++
 			if failures <= 30 {
 				t.Errorf("%s [%04x %04x]: %s", c.name, c.hw[0], hwOrZero(c.hw), strings.Join(diff, ", "))
@@ -245,6 +230,49 @@ func runLocal(c diffCase) (*CPU, *testBus) {
 	return cpu, bus
 }
 
+func compareOracleCase(c diffCase, want oracleResult) (*CPU, []string) {
+	cpu, _ := runLocal(c)
+	if want.Halt == "no result" {
+		return cpu, []string{"oracle produced no result"}
+	}
+	if c.expectHalt {
+		if want.Halt == "" {
+			return cpu, []string{"oracle did not halt as expected"}
+		}
+		if !cpu.Halted {
+			return cpu, []string{"local core did not halt as expected"}
+		}
+		return cpu, nil
+	}
+	if want.Halt != "" {
+		return cpu, []string{"oracle halted: " + want.Halt}
+	}
+	if cpu.Halted {
+		return cpu, []string{"local halted: " + cpu.HaltReason}
+	}
+	var diff []string
+	for r := range 13 {
+		if cpu.R[r] != want.Regs[r] {
+			diff = append(diff, fmt.Sprintf("r%d got %#08x want %#08x", r, cpu.R[r], want.Regs[r]))
+		}
+	}
+	if cpu.R[13] != want.Regs[13] {
+		diff = append(diff, fmt.Sprintf("sp got %#08x want %#08x", cpu.R[13], want.Regs[13]))
+	}
+	if cpu.R[14] != want.Regs[14] {
+		diff = append(diff, fmt.Sprintf("lr got %#08x want %#08x", cpu.R[14], want.Regs[14]))
+	}
+	if cpu.R[15] != want.Regs[15] {
+		diff = append(diff, fmt.Sprintf("pc got %#08x want %#08x", cpu.R[15], want.Regs[15]))
+	}
+	gotFlags := cpu.APSR & 0xF8000000
+	wantFlags := want.XPSR & 0xF8000000
+	if gotFlags != wantFlags {
+		diff = append(diff, fmt.Sprintf("apsr got %#08x want %#08x", gotFlags, wantFlags))
+	}
+	return cpu, diff
+}
+
 // TestQEMUITBlockSequence checks flag behaviour across two IT blocks with a
 // 16-bit conditional MOV between them (the LLVM pattern used by TinyGo's SPI
 // DMA setup).
@@ -266,31 +294,76 @@ func TestQEMUITBlockSequence(t *testing.T) {
 		steps: 12,
 	}}
 	results := runOracle(t, cases)
-	got := results[0]
-	t.Logf("qemu r1=%#x r2=%#x apsr=%#x halt=%q", got.Regs[1], got.Regs[2], got.XPSR, got.Halt)
-	if got.Halt != "" {
-		t.Skipf("oracle could not run: %s", got.Halt)
+	cpu, diff := compareOracleCase(cases[0], results[0])
+	if len(diff) != 0 {
+		t.Fatalf("IT sequence diverged: %s", strings.Join(diff, ", "))
 	}
-	cpu, _ := runLocal(cases[0])
-	t.Logf("local r1=%#x r2=%#x apsr=%#x", cpu.R[1], cpu.R[2], cpu.APSR)
-	if cpu.R[1] != got.Regs[1] {
-		t.Fatalf("r1 local %#x qemu %#x", cpu.R[1], got.Regs[1])
+	if cpu.R[1] != 8 || cpu.R[2] != 0x40011 {
+		t.Fatalf("IT sequence r1=%#x r2=%#x, want 8 and 0x40011", cpu.R[1], cpu.R[2])
 	}
 }
 
 func TestQEMUITFlagRules(t *testing.T) {
-	cases := []diffCase{
-		{name: "it-adds", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x3001}, steps: 4},
-		{name: "it-cmp", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x2805}, steps: 4},
-		{name: "it-tst", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x4208}, steps: 4},
+	cases := []struct {
+		diffCase
+		wantFlags uint32
+		wantR0    uint32
+	}{
+		{diffCase{name: "it-adds", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x3001}, steps: 4}, 0x60000000, 1},
+		{diffCase{name: "it-cmp", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x2805}, steps: 4}, 0x80000000, 0},
+		{diffCase{name: "it-tst", hw: []uint16{0x2000, 0x2800, 0xBF08, 0x4208}, steps: 4}, 0x60000000, 0},
 	}
+	oracleCases := make([]diffCase, len(cases))
+	for i := range cases {
+		oracleCases[i] = cases[i].diffCase
+	}
+	results := runOracle(t, oracleCases)
+	for i := range cases {
+		t.Run(cases[i].name, func(t *testing.T) {
+			cpu, diff := compareOracleCase(cases[i].diffCase, results[i])
+			if len(diff) != 0 {
+				t.Fatalf("diverged: %s", strings.Join(diff, ", "))
+			}
+			if got := cpu.APSR & 0xF8000000; got != cases[i].wantFlags {
+				t.Fatalf("APSR flags = %#x, want %#x", got, cases[i].wantFlags)
+			}
+			if cpu.R[0] != cases[i].wantR0 {
+				t.Fatalf("r0 = %#x, want %#x", cpu.R[0], cases[i].wantR0)
+			}
+		})
+	}
+}
+
+func TestQEMUBranchLink(t *testing.T) {
+	cases := []struct {
+		diffCase
+		wantLR uint32
+	}{
+		{diffCase{name: "bl", hw: []uint16{0xF000, 0xF882}, steps: 1}, qemuCodeBase + 5},
+		{diffCase{name: "blx_register", hw: []uint16{0x4780}, regs: [13]uint32{0: qemuCodeBase + 0x100}, steps: 1}, qemuCodeBase + 3},
+	}
+	oracleCases := make([]diffCase, len(cases))
+	for i := range cases {
+		oracleCases[i] = cases[i].diffCase
+	}
+	results := runOracle(t, oracleCases)
+	for i := range cases {
+		t.Run(cases[i].name, func(t *testing.T) {
+			cpu, diff := compareOracleCase(cases[i].diffCase, results[i])
+			if len(diff) != 0 {
+				t.Fatalf("diverged: %s", strings.Join(diff, ", "))
+			}
+			if cpu.R[14] != cases[i].wantLR {
+				t.Fatalf("LR = %#x, want %#x", cpu.R[14], cases[i].wantLR)
+			}
+		})
+	}
+}
+
+func TestQEMUExpectedHalt(t *testing.T) {
+	cases := []diffCase{{name: "udf", hw: []uint16{0xDE00}, steps: 1, expectHalt: true}}
 	results := runOracle(t, cases)
-	for i, got := range results {
-		t.Logf("%s: qemu apsr=%#x halt=%q", cases[i].name, got.XPSR, got.Halt)
-		if got.Halt != "" {
-			continue
-		}
-		cpu, _ := runLocal(cases[i])
-		t.Logf("%s: local apsr=%#x", cases[i].name, cpu.APSR)
+	if _, diff := compareOracleCase(cases[0], results[0]); len(diff) != 0 {
+		t.Fatalf("expected-halt case diverged: %s", strings.Join(diff, ", "))
 	}
 }

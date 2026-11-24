@@ -8,12 +8,13 @@ const (
 )
 
 type diffCase struct {
-	name  string
-	hw    []uint16
-	regs  [13]uint32
-	cpsr  uint32
-	mem   map[uint32]uint32 // preloaded words
-	steps int
+	name       string
+	hw         []uint16
+	regs       [13]uint32
+	cpsr       uint32
+	mem        map[uint32]uint32 // preloaded words
+	steps      int
+	expectHalt bool
 }
 
 func (c diffCase) bytes() []byte {
