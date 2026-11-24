@@ -26,6 +26,10 @@ func openFirmwareDialog() {
 			// No native dialog backend: fall back to the path in the toolbar.
 			if p := strings.TrimSpace(fwPath); p != "" {
 				_ = emu.Load(p)
+				shirei.WithFrameLock(func() {
+					flashMode = false
+					watchFile(p, "firmware")
+				})
 			}
 			shirei.RequestNextFrame()
 			return
@@ -60,7 +64,11 @@ func openFirmwareDialog() {
 			_ = zenity.Error(err.Error(), zenity.Title("rp2350sim"))
 			return
 		}
-		shirei.WithFrameLock(func() { fwPath = path })
+		shirei.WithFrameLock(func() {
+			fwPath = path
+			flashMode = false
+			watchFile(path, "firmware")
+		})
 		shirei.RequestNextFrame()
 	}()
 }

@@ -286,3 +286,66 @@ func TestBoardsADCAndDevicePinValidation(t *testing.T) {
 		t.Fatal("input on the LCD chip select was accepted")
 	}
 }
+
+// TestEmbeddedPresetBoard guards the built-in bus preset board.
+func TestEmbeddedPresetBoard(t *testing.T) {
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b *BoardDef
+	for i := range boards {
+		if boards[i].ID == "pico2-presets" {
+			b = &boards[i]
+		}
+	}
+	if b == nil {
+		t.Fatal("pico2-presets board is missing")
+	}
+	if len(b.I2CPresets) != 3 || len(b.SPIPresets) != 1 {
+		t.Fatalf("presets = %+v / %+v", b.I2CPresets, b.SPIPresets)
+	}
+	if b.I2CPresets[0].Preset != "bme280" || b.I2CPresets[0].Addr != 0x76 {
+		t.Fatalf("bme280 = %+v", b.I2CPresets[0])
+	}
+	if b.SPIPresets[0].Preset != "w25q16" || b.SPIPresets[0].CS != 17 {
+		t.Fatalf("w25q16 = %+v", b.SPIPresets[0])
+	}
+}
+
+func TestBoardsValidatePresets(t *testing.T) {
+	good := `boards:
+  - id: ok
+    i2c_presets:
+      - { bus: 0, preset: bme280 }
+      - { bus: 1, preset: ssd1306, addr: 0x3d }
+    spi_presets:
+      - { bus: 0, cs: 17, preset: w25q16 }
+`
+	writeBoards(t, good)
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boards[0].I2CPresets[0].Addr; got != 0x76 {
+		t.Fatalf("default address = %#x, want 0x76", got)
+	}
+	bad := []string{
+		`i2c_presets: [{ bus: 0, preset: nope }]`,
+		`i2c_presets: [{ bus: 0, preset: w25q16 }]`,
+		`i2c_presets: [{ bus: 2, preset: bme280 }]`,
+		`i2c_presets: [{ bus: 0, preset: bme280, addr: 0x50 }]`,
+		`spi_presets: [{ bus: 0, cs: 17, preset: bme280 }]`,
+		`spi_presets: [{ bus: 0, cs: 99, preset: w25q16 }]`,
+		`touch: { bus: 0, addr: 0x76, int: 1, width: 240, height: 320 }
+		 i2c_presets: [{ bus: 0, preset: bme280, addr: 0x76 }]`,
+		`lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 320 }
+		 spi_presets: [{ bus: 0, cs: 17, preset: w25q16 }]`,
+	}
+	for _, snippet := range bad {
+		writeBoards(t, "boards:\n  - id: t\n    "+snippet+"\n")
+		if _, err := LoadBoards(); err == nil {
+			t.Fatalf("invalid preset config accepted: %s", snippet)
+		}
+	}
+}

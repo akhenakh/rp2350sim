@@ -106,6 +106,162 @@ func (s *busBridgeSpec) mergeEndpoint() error {
 	return nil
 }
 
+// printBusPresets lists the built-in device models for -list-presets.
+func printBusPresets() {
+	for _, p := range devices.BusPresetList() {
+		if p.Kind == devices.BusI2C {
+			addrs := make([]string, len(p.Addresses))
+			for i, a := range p.Addresses {
+				addrs[i] = fmt.Sprintf("0x%02x", a)
+			}
+			fmt.Printf("%-10s i2c  %-12s %s\n", p.Name, strings.Join(addrs, ","), p.Description)
+		} else {
+			fmt.Printf("%-10s spi  %-12s %s\n", p.Name, "any CS", p.Description)
+		}
+	}
+}
+
+// busPresetSpec is one -i2c-preset / -spi-preset flag.
+type busPresetSpec struct {
+	kind devices.BusKind
+	bus  int
+	name string
+	addr int // I2C only; 0 selects the preset default
+	cs   int // SPI only
+}
+
+// parseBusPresetSpecs parses repeatable preset flags:
+//
+//	i2c: bus:preset[@addr]
+//	spi: bus:preset@cs
+func parseBusPresetSpecs(kind devices.BusKind, specs []string) ([]busPresetSpec, error) {
+	var out []busPresetSpec
+	for _, raw := range specs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		busPart, rest, ok := strings.Cut(raw, ":")
+		if !ok {
+			return nil, fmt.Errorf("%s preset %q: want bus:name", kind, raw)
+		}
+		bus, err := strconv.Atoi(strings.TrimSpace(busPart))
+		if err != nil || bus < 0 || bus > 1 {
+			return nil, fmt.Errorf("%s preset %q: bus must be 0 or 1", kind, raw)
+		}
+		spec := busPresetSpec{kind: kind, bus: bus}
+		switch kind {
+		case devices.BusI2C:
+			name, addrPart, hasAddr := strings.Cut(rest, "@")
+			name = strings.TrimSpace(name)
+			info, ok := devices.FindBusPreset(name)
+			if !ok {
+				return nil, fmt.Errorf("i2c preset %q: unknown preset %q", raw, name)
+			}
+			if info.Kind != devices.BusI2C {
+				return nil, fmt.Errorf("i2c preset %q: %q is not an I2C device", raw, name)
+			}
+			spec.name = info.Name
+			if hasAddr {
+				n, err := strconv.ParseUint(strings.TrimSpace(addrPart), 0, 8)
+				if err != nil || n < 0x08 || n > 0x77 {
+					return nil, fmt.Errorf("i2c preset %q: address %q is not 7-bit", raw, addrPart)
+				}
+				spec.addr = int(n)
+			}
+			if spec.addr == 0 {
+				spec.addr = int(info.Addresses[0])
+			}
+			supported := false
+			for _, a := range info.Addresses {
+				if spec.addr == int(a) {
+					supported = true
+					break
+				}
+			}
+			if !supported {
+				return nil, fmt.Errorf("i2c preset %q: %s does not implement address %#x", raw, spec.name, spec.addr)
+			}
+		case devices.BusSPI:
+			name, csPart, ok := strings.Cut(rest, "@")
+			name = strings.TrimSpace(name)
+			if !ok {
+				return nil, fmt.Errorf("spi preset %q: want bus:name@cs", raw)
+			}
+			info, ok := devices.FindBusPreset(name)
+			if !ok {
+				return nil, fmt.Errorf("spi preset %q: unknown preset %q", raw, name)
+			}
+			if info.Kind != devices.BusSPI {
+				return nil, fmt.Errorf("spi preset %q: %q is not an SPI device", raw, name)
+			}
+			cs, err := strconv.Atoi(strings.TrimSpace(csPart))
+			if err != nil || cs < 0 || cs > 47 {
+				return nil, fmt.Errorf("spi preset %q: CS must be a GPIO 0..47", raw)
+			}
+			spec.name, spec.cs = info.Name, cs
+		default:
+			return nil, fmt.Errorf("unknown bus kind %q", kind)
+		}
+		out = append(out, spec)
+	}
+	return out, nil
+}
+
+// attachBusPresets attaches built-in device models to the chip. addSPI joins
+// them to the same per-bus client list as LCD/SD/Ethernet.
+func attachBusPresets(
+	c *rp2350.Chip,
+	log *slog.Logger,
+	specs []busPresetSpec,
+	addSPI func(bus, cs int, fn func(byte) byte),
+) error {
+	selects := map[int]func(){}
+	for _, spec := range specs {
+		switch spec.kind {
+		case devices.BusI2C:
+			if c.HasI2CDevice(spec.bus, uint8(spec.addr)) {
+				return fmt.Errorf("i2c preset %s: bus %d address 0x%02x already has a device",
+					spec.name, spec.bus, spec.addr)
+			}
+			dev, addr, err := devices.NewI2CPreset(spec.name, spec.addr)
+			if err != nil {
+				return err
+			}
+			c.AttachI2C(spec.bus, addr, dev)
+			log.Info("attached I2C preset",
+				slog.String("preset", spec.name),
+				slog.Int("bus", spec.bus),
+				slog.String("addr", fmt.Sprintf("0x%02x", addr)))
+		case devices.BusSPI:
+			p, err := devices.NewSPIPreset(spec.name)
+			if err != nil {
+				return err
+			}
+			addSPI(spec.bus, spec.cs, p.Transfer)
+			selects[spec.cs] = p.Select
+			log.Info("attached SPI preset",
+				slog.String("preset", spec.name),
+				slog.Int("bus", spec.bus),
+				slog.Int("cs", spec.cs))
+		}
+	}
+	if len(selects) > 0 {
+		prev := c.Pins.OnChange
+		c.Pins.OnChange = func(pin int, level bool) {
+			if prev != nil {
+				prev(pin, level)
+			}
+			if !level {
+				if f := selects[pin]; f != nil {
+					f()
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // attachBusBridges starts the TCP bridges and attaches them to the chip.
 // The caller supplies addSPI so the remote devices join the same per-bus
 // client list as LCD/SD/Ethernet before the SPI handler is built.

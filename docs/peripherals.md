@@ -592,6 +592,17 @@ Reference board: `pico2-analog`. Task: `task ui:scope`.
 The token reference, transcripts and fake-peripheral recipes are in
 [bus-pirate.md](bus-pirate.md). The summary here is the peripheral guide.
 
+**Built-in presets.** `-i2c-preset` and `-spi-preset` attach an embedded
+device model directly, with no external process: `bme280`, `ssd1306`,
+`mpu6050` (I2C) and `w25q16` (SPI). `-list-presets` prints the registry. For
+example:
+
+```sh
+rp2350sim -fw build/blinky.elf -seconds 2 \
+  -i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 \
+  -spi-preset 0:w25q16@17
+```
+
 **Headless.** `-i2c-tcp` and `-spi-tcp` expose the controller to an external
 program acting as the device. The wire format is Bus Pirate tokens:
 
@@ -614,7 +625,10 @@ The address byte is `addr << 1`. `-bus-timeout` (1 s) bounds a request;
 `-bus-wait` (2 s) waits once for the first client, then a missing client
 NAKs/returns `0xff`. `tools/busfake` is a ready-made EEPROM/JEDEC device.
 
-**UI.** The **Bus** tab lists the bridges. Select one, press **Connect
+The demo `firmware/presets` probes all four models; `task run:presets` prints
+each result. **UI.** The **Bus** tab lists built-in presets and TCP bridges. A board with
+`i2c_presets`/`spi_presets` (for example `pico2-presets`) shows the attached
+models and needs no terminal. For a bridge, select it, press **Connect
 terminal**, queue `ACK`/`NAK`/hex tokens, then run the firmware. Each bridge
 keeps its own terminal. The UI timeout is 500 ms, so `task ui:bus` starts
 paused: connect both terminals, queue the answers, then press **Run**.
@@ -643,6 +657,7 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2w` | `-ch9120` (Wi-Fi transport) | `task ui:wifi` |
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` | `task ui:serial` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` | `task ui:bus` |
+| `pico2-presets` | `-i2c-preset`, `-spi-preset` | — (built-in models) |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
 | `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task run:audio`, `task ui:audio` |
 | `pico2-midi` | `-usb-midi -midi-monitor` | `task run:midi`, `task ui:midi` |

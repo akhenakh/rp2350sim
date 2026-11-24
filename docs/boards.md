@@ -25,6 +25,7 @@ and reference firmware. In short:
 | `pico2w` | `-ch9120` (virtual Wi-Fi transport) |
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` |
+| `pico2-presets` | `-i2c-preset`, `-spi-preset` |
 | `pico2-analog` | `-logic-*` (the generated waveform is UI-only) |
 | `pico2-psram` | `-psram 8` |
 

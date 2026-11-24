@@ -33,6 +33,19 @@ The UI equivalent is a board with `i2c_tcp`/`spi_tcp`, for example
 in [peripherals.md](peripherals.md#bus-pirate-i2c-and-spi-targets) and
 [ui.md](ui.md).
 
+Common devices are also built in and need no script at all:
+
+```sh
+rp2350sim -fw build/blinky.elf -seconds 2 \
+  -i2c-preset 0:bme280@0x76 -i2c-preset 0:ssd1306@0x3c \
+  -spi-preset 0:w25q16@17
+```
+
+`bme280`, `ssd1306` and `mpu6050` are I2C targets; `w25q16` is a 2 MiB SPI NOR
+flash. `-list-presets` prints the registry. The same models are selectable in
+`boards.yaml` with `i2c_presets`/`spi_presets`, for example the
+`pico2-presets` board. `firmware/presets` probes all four (`task run:presets`).
+
 For a scripted or headless session, `--bus-connect` attaches the terminal to
 every listener and `--bus-answer kind=TOKENS` queues the device responses:
 

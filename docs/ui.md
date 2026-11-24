@@ -57,6 +57,11 @@ Startup flags:
 | `--debug-tab TAB` | debug inspector tab at startup: `registers`, `memory`, `variables` |
 | `--bus-connect` | connect the Bus tab terminal to every bridge listener automatically |
 | `--bus-answer KIND=TOKENS` | queue Bus Pirate responses for `i2c` or `spi`; repeatable |
+| `--watch` | reload and reset when the firmware (or `--flash` image) changes on disk |
+| `--build-drawer` | open the Source/Build drawer at startup |
+| `--build-tab source\|build` | initial drawer tab |
+| `--build-dir DIR`, `--build-cmd CMD` | override the inferred build plan |
+| `--source FILE` | source file to open in the drawer |
 
 For headless use, `--run` executes synchronously before the frame is rendered
 (the UI does not step in the background), and the system font scan is awaited
@@ -65,8 +70,8 @@ so labels are present.
 ## Toolbar and machine lifecycle
 
 The toolbar shows the CPU/board identity, the firmware path, **Open…** (OS file
-dialog), **Load**, **Run**/**Pause**, **Reset**, **GDB**, **Board…** and the
-scope controls. The status line under it reports the image name, virtual time,
+dialog), **Load**, **Run**/**Pause**, **Reset**, **GDB**, **Board…**,
+**Build** (Source/Build drawer) and the scope controls. The status line under it reports the image name, virtual time,
 PC and SP, or `(flash)` after a self-update.
 
 - **Load** restarts the selected image, useful after a rebuild.
@@ -108,6 +113,8 @@ addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
 | `serial` | list of `{uart, listen}` | Console (UART TCP bridge) |
 | `i2c_tcp` | `{bus, addrs, listen \| connect}` | Bus |
 | `spi_tcp` | `{bus, cs, listen \| connect}` | Bus |
+| `i2c_presets` | list of `{bus, preset, addr}` (built-in target) | Bus |
+| `spi_presets` | list of `{bus, cs, preset}` (built-in target) | Bus |
 
 `listen` defaults to `127.0.0.1:0` (a free port). `connect: host:port` makes the
 emulator dial an external device server instead of listening.
@@ -139,6 +146,16 @@ boards:
     spi_tcp:
       - bus: 0
         cs: 17
+
+  - id: pico2-presets
+    name: RP2350 + built-in bus devices
+    description: BME280, SSD1306 and MPU6050 on I2C0 · W25Q16 on SPI0 CS GP17
+    i2c_presets:
+      - { bus: 0, preset: bme280, addr: 0x76 }
+      - { bus: 0, preset: ssd1306, addr: 0x3c }
+      - { bus: 0, preset: mpu6050, addr: 0x68 }
+    spi_presets:
+      - { bus: 0, cs: 17, preset: w25q16 }
 
   - id: geek
     name: Waveshare RP2350-GEEK
@@ -382,11 +399,17 @@ fixture tests.
 
 ### Bus
 
-The I2C/SPI TCP device bridges. Select a listening bridge and **Connect
-terminal** to act as the device: the panel shows the Bus Pirate request tokens
-and sends the `ACK`/`NAK`/hex responses you type. Responses are queued, so you
-can arm a three-byte SPI read before the firmware asks for it. Each bridge keeps
-its own terminal; the I2C and SPI devices can both be connected.
+The I2C/SPI tab lists the board's built-in presets (`i2c_presets` /
+`spi_presets`) and TCP bridges. A preset is attached directly to the emulated
+controller, so firmware sees a real BME280, SSD1306, MPU6050 or W25Q16 without
+an external script. The panel names each preset and its address or chip select;
+no terminal is involved.
+
+For TCP bridges, select a listening bridge and **Connect terminal** to act as
+the device: the panel shows the Bus Pirate request tokens and sends the
+`ACK`/`NAK`/hex responses you type. Responses are queued, so you can arm a
+three-byte SPI read before the firmware asks for it. Each bridge keeps its own
+terminal; the I2C and SPI devices can both be connected.
 
 ![Bus tab](images/bus.png)
 
@@ -400,6 +423,38 @@ Connect-mode bridges have no terminal: their external server is the device,
 exactly like the CLI `=host:port` form. See
 [bus-pirate.md](bus-pirate.md) for the token protocol and fake-device
 examples.
+
+### Live reload and the Source/Build drawer
+
+`--watch` polls the loaded firmware (or `--flash` image) and restarts the
+machine when it changes on disk. A change must be stable for two 200 ms polls,
+so a linker writing the output in place is not executed half-finished. The
+status line shows `watch <name>` and the number of reloads; a load error stays
+visible until the next successful change. The watcher follows a new path when
+you press **Load** or pick another file; the toolbar **Build** button opens the
+drawer that usually produces that file.
+
+The **Source / Build** drawer is optional and opens from the toolbar or with
+`--build-drawer`. Its **Source** tab edits one file with line numbers, **Open**
+and **Save**; its **Build** tab runs a shell command in a chosen directory and
+streams stdout/stderr into the log. Empty fields are inferred from the
+firmware path:
+
+- `build/<name>.elf` with `firmware/<name>/go.mod`:
+  `tinygo build -target=pico2 -o '<elf>' .`, source `firmware/<name>/main.go`.
+- `firmware/c/build/<name>.elf`: `cmake --build firmware/c/build`, directory
+  `firmware/c`.
+- Any other path with a `go.mod` or `CMakeLists.txt` is treated the same way.
+
+Override the plan with `--build-dir`, `--build-cmd` and `--source`, or edit the
+fields in the drawer. **Reload firmware** restarts the current image; with
+`--watch` a successful build reloads automatically. The command runs through
+the host shell (`sh -c`, or `cmd /C` on Windows), so treat the drawer as a
+local developer tool.
+
+```sh
+rp2350sim-ui --board pico2 --watch --build-drawer build/blinky.elf
+```
 
 ### Console
 

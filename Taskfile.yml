@@ -71,6 +71,7 @@ tasks:
       - firmware:serialbridge
       - firmware:busmaster
       - firmware:busdevice
+      - firmware:presets
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -224,6 +225,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BLINKY}} -seconds 3 -trace-pins 25'
 
+  run:presets:
+    desc: Run the built-in bus preset demo (BME280, MPU6050, SSD1306, W25Q16)
+    deps: [build, firmware:presets]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/presets.elf -seconds 2 -i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 -i2c-preset 0:ssd1306@0x3c -spi-preset 0:w25q16@17'
+
   firmware:touchlcd:
     desc: Build the RP2350-Touch-LCD-2 example firmware
     dir: firmware/touchlcd
@@ -361,6 +368,18 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/busmaster.elf .'
+
+  firmware:presets:
+    desc: Build the built-in I2C/SPI preset demo
+    dir: firmware/presets
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/presets.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/presets.elf .'
 
   firmware:busdevice:
     desc: Build the I2C/SPI TCP bridge device demo
@@ -641,6 +660,27 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-bus --tab bus --run 0.05 --png '../../{{.BUILD}}/ui-bus.png' '../../{{.BUILD}}/busmaster.elf'
+
+  ui:presets:
+    desc: Run the UI with the built-in I2C/SPI device presets
+    deps: [firmware:presets]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-presets --tab bus '../../{{.BUILD}}/presets.elf'
+
+  ui:presets:png:
+    desc: Render the built-in bus presets tab to build/ui-presets.png
+    deps: [firmware:presets]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-presets --tab bus --run 0.05 --png '../../{{.BUILD}}/ui-presets.png' '../../{{.BUILD}}/presets.elf'
+
+  ui:build:
+    desc: Open the Source/Build drawer with live reload for the blinky firmware
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --watch --build-drawer '../../{{.BUILD}}/blinky.elf'
 
   ui:w6300:
     desc: Run the UI with the W6300 example on the POE-ETH board

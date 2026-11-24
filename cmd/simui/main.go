@@ -55,6 +55,10 @@ var (
 	pendingTouch       bool
 	pendingTouchX      int
 	pendingTouchY      int
+
+	watchEnabled  bool
+	flashMode     bool
+	firmwareWatch *firmwareWatcher
 )
 
 // Scope voltage ranges in volts (full scale, from 0).
@@ -151,7 +155,7 @@ func RootView() {
 			return
 		}
 		tabsBar()
-		Container(Attrs(Grow(1), Expand, Pad4(10, 10, 10, 10)), func() {
+		content := func() {
 			switch activeTab {
 			case tabLCD:
 				lcdPanel(snap)
@@ -181,6 +185,20 @@ func RootView() {
 				consolePanel(snap)
 			default:
 				boardAndPins(snap)
+			}
+		}
+		Container(Attrs(Row, Grow(1), Expand, Gap(8)), func() {
+			if buildPanelOpen {
+				w := float32(viewW) - 478
+				if w < 480 {
+					w = 480
+				}
+				Container(Attrs(FixWidth(w), Expand, Clip, Pad4(10, 10, 10, 10)), content)
+			} else {
+				Container(Attrs(Grow(1), Expand, Pad4(10, 10, 10, 10)), content)
+			}
+			if buildPanelOpen {
+				buildDrawer(snap)
 			}
 		})
 	})
@@ -544,7 +562,8 @@ func boardHasSensors(b *BoardDef) bool {
 }
 
 func boardHasBuses(b *BoardDef) bool {
-	return b != nil && (len(b.I2CTCP) > 0 || len(b.SPITCP) > 0)
+	return b != nil && (len(b.I2CTCP) > 0 || len(b.SPITCP) > 0 ||
+		len(b.I2CPresets) > 0 || len(b.SPIPresets) > 0)
 }
 
 func tabButton(label string, tab int) {
@@ -920,6 +939,8 @@ func toolbar(snap MachineState) {
 		if Button(NoIcon, "Load") {
 			if p := strings.TrimSpace(fwPath); p != "" {
 				_ = emu.Load(p)
+				flashMode = false
+				watchFile(p, "firmware")
 			}
 		}
 		runLabel := "Run"
@@ -943,6 +964,10 @@ func toolbar(snap MachineState) {
 		}
 		if Button(NoIcon, "Board…") {
 			pendingBoardPicker = true
+			RequestNextFrame()
+		}
+		if Button(NoIcon, "Build") {
+			buildPanelOpen = !buildPanelOpen
 			RequestNextFrame()
 		}
 		if Button(NoIcon, "All / Active") {
@@ -973,6 +998,19 @@ func toolbar(snap MachineState) {
 		}
 		if snap.Err != "" {
 			Label(snap.Err, FontSize(12), TextColor(0, 70, 50, 1))
+		}
+		if firmwareWatch != nil {
+			st := firmwareWatch.Status()
+			if st.Watching {
+				text := "watch " + filepath.Base(st.Path)
+				if st.Reloads > 0 {
+					text += fmt.Sprintf(" · reload %d", st.Reloads)
+				}
+				if st.Err != "" {
+					text = "watch error: " + st.Err
+				}
+				Label(text, FontSize(12), FontWeight(600), TextColor(35, 70, 65, 1))
+			}
 		}
 	})
 	if snap.FlashWrites > 0 {
@@ -2849,16 +2887,36 @@ func busLabel(info BusBridgeInfo) string {
 func busPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
 		Container(Attrs(Row, CrossMid, Gap(10)), func() {
-			Label("I2C / SPI TCP", FontSize(16), FontWeight(700))
-			Label("Bus Pirate tokens", FontSize(12))
+			Label("I2C / SPI devices", FontSize(16), FontWeight(700))
+			Label("built-in presets · Bus Pirate tokens", FontSize(12))
 			Filler(1)
 			if len(snap.Buses) > 0 {
-				Label(fmt.Sprintf("%d bridge(s)", len(snap.Buses)), FontSize(11), TextColor(140, 45, 65, 1))
+				Label(fmt.Sprintf("%d line(s)", len(snap.Buses)), FontSize(11), TextColor(140, 45, 65, 1))
 			}
 		})
+		if selectedBoard != nil && (len(selectedBoard.I2CPresets) > 0 || len(selectedBoard.SPIPresets) > 0) {
+			Container(Attrs(Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
+				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
+				Label("Built-in presets", FontSize(12), FontWeight(700))
+				Container(Attrs(Row, Gap(6), Wrap), func() {
+					for _, d := range selectedBoard.I2CPresets {
+						Label(fmt.Sprintf("I2C%d %s 0x%02x", d.Bus, strings.ToUpper(d.Preset), d.Addr),
+							FontSize(11), Fonts(Monospace...), TextColor(140, 45, 68, 1))
+					}
+					for _, d := range selectedBoard.SPIPresets {
+						Label(fmt.Sprintf("SPI%d CS%d %s", d.Bus, d.CS, strings.ToUpper(d.Preset)),
+							FontSize(11), Fonts(Monospace...), TextColor(140, 45, 68, 1))
+					}
+				})
+				Label("Attached directly to the emulated bus; no external script or TCP client needed.",
+					FontSize(11), TextColor(220, 6, 62, 1))
+			})
+		}
 		infos := emu.BusBridges()
 		if len(infos) == 0 {
-			Label("This board has no i2c_tcp or spi_tcp entries.", FontSize(13))
+			if selectedBoard == nil || (len(selectedBoard.I2CPresets) == 0 && len(selectedBoard.SPIPresets) == 0) {
+				Label("This board has no i2c_tcp, spi_tcp or preset entries.", FontSize(13))
+			}
 			return
 		}
 		if busSel >= len(infos) {
@@ -3054,6 +3112,12 @@ func main() {
 	png := flag.String("png", "", "render one settled frame to PATH and exit")
 	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time at startup (live windows keep running)")
 	paused := flag.Bool("paused", false, "load the firmware but start paused (press Run to execute)")
+	watchFlag := flag.Bool("watch", false, "reload and reset when the firmware/flash file changes on disk")
+	buildDrawerFlag := flag.Bool("build-drawer", false, "open the Source/Build drawer at startup")
+	buildDirFlag := flag.String("build-dir", "", "working directory for the Build drawer (default: inferred from the firmware)")
+	buildCmdFlag := flag.String("build-cmd", "", "build command for the Build drawer (default: inferred: tinygo build or cmake --build)")
+	buildTabFlag := flag.String("build-tab", "source", "Build drawer tab at startup: source or build")
+	sourceFlag := flag.String("source", "", "source file to open in the Build drawer")
 	winW := flag.Int("width", 1280, "window width in points")
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
@@ -3128,6 +3192,7 @@ func main() {
 	}
 	// Allow a firmware path on the command line as a convenience. Without one,
 	// a flash image can provide the boot vector directly.
+	usedFlash := false
 	if rest := flag.Args(); len(rest) > 0 {
 		fwPath = rest[0]
 		_ = emu.Load(fwPath)
@@ -3137,6 +3202,35 @@ func main() {
 			fmt.Fprintln(os.Stderr, "flash load:", err)
 			os.Exit(1)
 		}
+		usedFlash = true
+	}
+	flashMode = usedFlash
+	// Headless snapshots are one-shot: a watcher would make the frame depend
+	// on wall-clock state.
+	watchEnabled = *watchFlag && *png == ""
+	if watchEnabled {
+		switch {
+		case fwPath != "" && usedFlash:
+			watchFile(fwPath, "flash")
+		case fwPath != "":
+			watchFile(fwPath, "firmware")
+		default:
+			fmt.Fprintln(os.Stderr, "--watch needs a firmware or flash file")
+			os.Exit(2)
+		}
+	}
+	initBuildDrawer(*buildDirFlag, *buildCmdFlag, *sourceFlag)
+	switch strings.ToLower(*buildTabFlag) {
+	case "", "source":
+		buildPanel.tab = 0
+	case "build":
+		buildPanel.tab = 1
+	default:
+		fmt.Fprintf(os.Stderr, "unknown --build-tab %q (source or build)\n", *buildTabFlag)
+		os.Exit(2)
+	}
+	if *buildDrawerFlag {
+		buildPanelOpen = true
 	}
 	if *debugBreak != "" {
 		if _, err := emu.AddBreakpoint(*debugBreak); err != nil {

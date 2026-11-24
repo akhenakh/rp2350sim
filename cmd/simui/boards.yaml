@@ -19,6 +19,11 @@
 #   serial: [{ uart, listen }]
 #   i2c_tcp: [{ bus, addrs: [0x50], listen | connect }]
 #   spi_tcp: [{ bus, cs, listen | connect }]
+#   i2c_presets: [{ bus, preset, addr }]   addr 0 = preset default
+#   spi_presets: [{ bus, cs, preset }]
+#
+# Built-in presets: bme280 (0x76/0x77), ssd1306 (0x3c/0x3d), mpu6050
+# (0x68/0x69), w25q16 (SPI). Run `rp2350sim -list-presets` for the full list.
 #
 # RP2350SIM_BOARDS=/path/to/file.yaml replaces this embedded list.
 
@@ -78,6 +83,17 @@ boards:
       - bus: 0
         cs: 17
         listen: 127.0.0.1:0
+
+  - id: pico2-presets
+    name: RP2350 + built-in bus devices
+    description: BME280, SSD1306 and MPU6050 on I2C0 · W25Q16 flash on SPI0 CS GP17
+    scope: [0, 1]
+    i2c_presets:
+      - { bus: 0, preset: bme280, addr: 0x76 }
+      - { bus: 0, preset: ssd1306, addr: 0x3c }
+      - { bus: 0, preset: mpu6050, addr: 0x68 }
+    spi_presets:
+      - { bus: 0, cs: 17, preset: w25q16 }
 
   - id: pico2-lcd
     name: RP2350 + ST7789 LCD

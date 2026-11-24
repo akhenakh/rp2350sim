@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/akhenakh/rp2350sim/internal/devices"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,6 +34,8 @@ type BoardDef struct {
 	Serial      []SerialDevice `yaml:"serial"`
 	I2CTCP      []I2CTCPBridge `yaml:"i2c_tcp"`
 	SPITCP      []SPITCPBridge `yaml:"spi_tcp"`
+	I2CPresets  []I2CPresetDef `yaml:"i2c_presets"`
+	SPIPresets  []SPIPresetDef `yaml:"spi_presets"`
 	Wifi        *WifiDevice    `yaml:"wifi"`
 	Audio       *AudioDevice   `yaml:"audio"`
 	MIDI        *MIDIDevice    `yaml:"midi"`
@@ -84,6 +87,21 @@ type SPITCPBridge struct {
 	CS      int    `yaml:"cs"`
 	Listen  string `yaml:"listen"`
 	Connect string `yaml:"connect"`
+}
+
+// I2CPresetDef attaches a built-in I2C device preset. Addr 0 selects the
+// model's default address.
+type I2CPresetDef struct {
+	Bus    int    `yaml:"bus"`
+	Preset string `yaml:"preset"`
+	Addr   int    `yaml:"addr"`
+}
+
+// SPIPresetDef attaches a built-in SPI device preset on one chip select.
+type SPIPresetDef struct {
+	Bus    int    `yaml:"bus"`
+	CS     int    `yaml:"cs"`
+	Preset string `yaml:"preset"`
 }
 
 // WifiDevice is the virtual Wi-Fi transport: a host-backed serial netdev.
@@ -549,6 +567,50 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: spi_tcp listen and connect are mutually exclusive", b.ID)
 			}
 		}
+		for i := range b.I2CPresets {
+			p := &b.I2CPresets[i]
+			info, ok := devices.FindBusPreset(p.Preset)
+			if !ok {
+				return nil, fmt.Errorf("boards: %s: unknown i2c preset %q", b.ID, p.Preset)
+			}
+			if info.Kind != devices.BusI2C {
+				return nil, fmt.Errorf("boards: %s: preset %q is not an I2C device", b.ID, p.Preset)
+			}
+			p.Preset = info.Name
+			if p.Bus != 0 && p.Bus != 1 {
+				return nil, fmt.Errorf("boards: %s: i2c preset %s bus must be 0 or 1", b.ID, p.Preset)
+			}
+			if p.Addr == 0 {
+				p.Addr = int(info.Addresses[0])
+			}
+			supported := false
+			for _, a := range info.Addresses {
+				if p.Addr == int(a) {
+					supported = true
+					break
+				}
+			}
+			if !supported {
+				return nil, fmt.Errorf("boards: %s: preset %s does not implement address %#x", b.ID, p.Preset, p.Addr)
+			}
+			if err := addI2C(p.Bus, p.Addr, "preset "+p.Preset); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+		}
+		for i := range b.SPIPresets {
+			p := &b.SPIPresets[i]
+			info, ok := devices.FindBusPreset(p.Preset)
+			if !ok {
+				return nil, fmt.Errorf("boards: %s: unknown spi preset %q", b.ID, p.Preset)
+			}
+			if info.Kind != devices.BusSPI {
+				return nil, fmt.Errorf("boards: %s: preset %q is not an SPI device", b.ID, p.Preset)
+			}
+			p.Preset = info.Name
+			if err := validSPI(spi, p.Bus, p.CS, "spi preset "+p.Preset); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+		}
 		if w := b.Wifi; w != nil {
 			if w.UART < 0 || w.UART > 1 {
 				return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
@@ -609,6 +671,9 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 		if d := b.PSRAM; d != nil {
 			addDevicePin("psram cs", d.CS)
+		}
+		for _, p := range b.SPIPresets {
+			addDevicePin("preset "+p.Preset+" cs", p.CS)
 		}
 		if d := b.Battery; d != nil {
 			addDevicePin("battery", d.Pin)

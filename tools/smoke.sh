@@ -301,6 +301,23 @@ else
 fi
 kill "$bdevpid" 2>/dev/null || true
 
+# --- built-in bus presets --------------------------------------------------
+out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 \
+	-i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 \
+	-i2c-preset 0:ssd1306@0x3c -spi-preset 0:w25q16@17 -quiet 2>/dev/null)
+contains "BME280 preset" "bme280: 60" "$out"
+contains "MPU6050 preset" "mpu6050: 68" "$out"
+contains "SSD1306 preset" "ssd1306: ok" "$out"
+contains "W25Q16 preset" "w25q16: ef 40 15" "$out"
+
+if (cd cmd/simui && go run . --board pico2-presets --tab bus --run 0.05 \
+	--png "../../$BUILD/ui-presets-smoke.png" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-presets-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI built-in bus presets tab"
+else
+	bad "UI built-in bus presets tab" "$(cat "$BUILD/smoke.log")"
+fi
+
 if (cd cmd/simui && go run . --board pico2 --png "../../$BUILD/ui-smoke.png" --run 0.4 "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI headless snapshot"

@@ -222,10 +222,18 @@ func main() {
 	)
 	var expectFlag stringList
 	var i2cTCPFlag, spiTCPFlag stringList
+	var i2cPresetFlag, spiPresetFlag stringList
 	flag.Var(&expectFlag, "expect", "fail unless this console output appears (repeatable)")
 	flag.Var(&i2cTCPFlag, "i2c-tcp", "I2C target over TCP: bus:addr[,addr][@listen|=connect] (repeatable)")
 	flag.Var(&spiTCPFlag, "spi-tcp", "SPI device over TCP: bus:cs[@listen|=connect] (repeatable)")
+	flag.Var(&i2cPresetFlag, "i2c-preset", "built-in I2C device: bus:name[@addr] (repeatable)")
+	flag.Var(&spiPresetFlag, "spi-preset", "built-in SPI device: bus:name@cs (repeatable)")
+	listPresets := flag.Bool("list-presets", false, "list built-in I2C/SPI device presets and exit")
 	flag.Parse()
+	if *listPresets {
+		printBusPresets()
+		return
+	}
 	explicitBudget := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "steps" || f.Name == "seconds" {
@@ -573,16 +581,26 @@ func main() {
 		log.Error("spi-tcp", slog.Any("err", err))
 		exit(2)
 	}
+	i2cPresets, err := parseBusPresetSpecs(devices.BusI2C, i2cPresetFlag)
+	if err != nil {
+		log.Error("i2c-preset", slog.Any("err", err))
+		exit(2)
+	}
+	spiPresets, err := parseBusPresetSpecs(devices.BusSPI, spiPresetFlag)
+	if err != nil {
+		log.Error("spi-preset", slog.Any("err", err))
+		exit(2)
+	}
+	addSPI := func(bus, cs int, fn func(byte) byte) {
+		if bus == 0 {
+			spi0 = append(spi0, spiDev{cs, fn})
+		} else {
+			spi1 = append(spi1, spiDev{cs, fn})
+		}
+	}
 	var busBridges []*devices.BusBridge
 	var spiBridges []*devices.SPIBridge
-	busBridges, spiBridges, err = attachBusBridges(c, log, *busTimeout, *busWait, i2cSpecs, spiSpecs,
-		func(bus, cs int, fn func(byte) byte) {
-			if bus == 0 {
-				spi0 = append(spi0, spiDev{cs, fn})
-			} else {
-				spi1 = append(spi1, spiDev{cs, fn})
-			}
-		})
+	busBridges, spiBridges, err = attachBusBridges(c, log, *busTimeout, *busWait, i2cSpecs, spiSpecs, addSPI)
 	if err != nil {
 		log.Error("bus bridge", slog.Any("err", err))
 		exit(2)
@@ -592,6 +610,10 @@ func main() {
 			br.Close()
 		}
 	}()
+	if err := attachBusPresets(c, log, append(i2cPresets, spiPresets...), addSPI); err != nil {
+		log.Error("bus preset", slog.Any("err", err))
+		exit(2)
+	}
 	// A controller may carry several devices; each needs its own CS pin, and
 	// a pin cannot serve two controllers.
 	type spiKey struct{ bus, cs int }

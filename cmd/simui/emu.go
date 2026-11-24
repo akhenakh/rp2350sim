@@ -221,6 +221,7 @@ type Emu struct {
 	spiBuses  []*devices.SPIBridge
 	busAll    []*devices.BusBridge
 	busErrors []string
+	presetErr []string
 	busSig    string
 }
 
@@ -1074,6 +1075,7 @@ func (e *Emu) resetChip() {
 		}
 
 		e.attachBus(c, b, attachSPI)
+		e.attachBusPresets(c, b, attachSPI)
 
 		// A protocol without an attached chip still records bytes clocked by
 		// firmware through that SPI controller.
@@ -1159,6 +1161,48 @@ func (e *Emu) resetChip() {
 	e.lcdFrame = nil
 	e.lcdDuty = -1
 	e.lcdOn = false
+}
+
+// attachBusPresets attaches the board's built-in I2C/SPI device presets to a
+// fresh chip. SPI presets also reset their command state when their chip
+// select is asserted, so every frame starts at a command byte.
+func (e *Emu) attachBusPresets(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs int, fn func(byte) byte)) {
+	e.presetErr = e.presetErr[:0]
+	if b == nil {
+		return
+	}
+	for _, d := range b.I2CPresets {
+		dev, addr, err := devices.NewI2CPreset(d.Preset, d.Addr)
+		if err != nil {
+			e.presetErr = append(e.presetErr, fmt.Sprintf("I2C%d %s: %v", d.Bus, d.Preset, err))
+			continue
+		}
+		c.AttachI2C(d.Bus, addr, dev)
+	}
+	selects := map[int]func(){}
+	for _, d := range b.SPIPresets {
+		p, err := devices.NewSPIPreset(d.Preset)
+		if err != nil {
+			e.presetErr = append(e.presetErr, fmt.Sprintf("SPI%d CS%d %s: %v", d.Bus, d.CS, d.Preset, err))
+			continue
+		}
+		attachSPI(d.Bus, d.CS, p.Transfer)
+		selects[d.CS] = p.Select
+	}
+	if len(selects) == 0 {
+		return
+	}
+	prev := c.Pins.OnChange
+	c.Pins.OnChange = func(pin int, level bool) {
+		if prev != nil {
+			prev(pin, level)
+		}
+		if !level {
+			if f := selects[pin]; f != nil {
+				f()
+			}
+		}
+	}
 }
 
 // attachBus starts the Bus Pirate TCP bridges and reattaches them to a new
@@ -1619,6 +1663,37 @@ func (e *Emu) Load(path string) error {
 	return nil
 }
 
+// Reload reads the firmware again and restarts it, preserving an intentional
+// pause. It is the live-reload path used by --watch and the Build drawer.
+func (e *Emu) Reload(path string) error {
+	e.mu.Lock()
+	wasRunning := e.running
+	paused := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
+	e.mu.Unlock()
+	if err := e.Load(path); err != nil {
+		return err
+	}
+	if !wasRunning || paused {
+		e.SetRunning(false)
+	}
+	return nil
+}
+
+// ReloadFlash reloads a raw flash image, preserving an intentional pause.
+func (e *Emu) ReloadFlash(path string) error {
+	e.mu.Lock()
+	wasRunning := e.running
+	paused := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
+	e.mu.Unlock()
+	if err := e.LoadFlash(path); err != nil {
+		return err
+	}
+	if !wasRunning || paused {
+		e.SetRunning(false)
+	}
+	return nil
+}
+
 // RunFor synchronously advances the machine by a number of cycles. It is used
 // by --png snapshots to render a meaningful frame without a live window.
 func (e *Emu) RunFor(cycles uint64) {
@@ -1847,6 +1922,15 @@ func (e *Emu) Snapshot() MachineState {
 		}
 	}
 	s.Buses = append([]string(nil), e.busErrors...)
+	s.Buses = append(s.Buses, e.presetErr...)
+	if b := e.board; b != nil {
+		for _, d := range b.I2CPresets {
+			s.Buses = append(s.Buses, fmt.Sprintf("I2C%d preset %s @0x%02x", d.Bus, d.Preset, d.Addr))
+		}
+		for _, d := range b.SPIPresets {
+			s.Buses = append(s.Buses, fmt.Sprintf("SPI%d CS%d preset %s", d.Bus, d.CS, d.Preset))
+		}
+	}
 	for _, br := range e.i2cBuses {
 		listen, connect, client, connected := br.Status()
 		where := listen

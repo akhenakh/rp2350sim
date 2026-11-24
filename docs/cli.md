@@ -405,6 +405,32 @@ rp2350sim -fw master.elf -seconds 5 \
   collisions are rejected. An I2C target can NAK a byte (the controller raises
   `TX_ABRT`); a read NAK aborts the transfer.
 
+### Built-in I2C/SPI presets
+
+Common targets are embedded in the emulator, so a run does not need a second
+process or a TCP script:
+
+```sh
+rp2350sim -fw build/protocols.elf -seconds 5 \
+  -i2c-preset 0:bme280@0x76 -i2c-preset 0:ssd1306@0x3c \
+  -i2c-preset 0:mpu6050@0x68 -spi-preset 0:w25q16@17
+```
+
+- `-i2c-preset bus:name[@addr]` attaches one built-in target. `addr` selects
+  an alternate address and defaults to the first supported one.
+- `-spi-preset bus:name@cs` attaches one built-in SPI target on a chip select.
+- `-list-presets` prints every preset and its addresses.
+- `bme280` (0x76/0x77) exposes chip id 0x60, calibration and a datasheet
+  sample; `ssd1306` (0x3c/0x3d) accepts command and data streams and keeps the
+  GDDRAM; `mpu6050` (0x68/0x69) reports WHO_AM_I 0x68 and 1 g on Z; `w25q16`
+  is a 2 MiB JEDEC SPI flash (EF 40 15) with read, program, erase and write
+  enable.
+- A preset is attached directly to the controller; it does not listen on TCP.
+  It cannot share an I2C address or SPI chip select with another device.
+- `firmware/presets` probes all four models; `task run:presets` builds and runs
+  it and prints `bme280: 60`, `mpu6050: 68`, `ssd1306: ok` and
+  `w25q16: ef 40 15`.
+
 `tools/busfake` is a ready-made host device (EEPROM at 0x50, JEDEC flash on
 the CS pin). It connects to a listening bridge:
 
@@ -456,6 +482,9 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-vcd PATH` | write the captured pins as an IEEE 1364 VCD (GTKWave/PulseView) |
 | `-i2c-tcp bus:addr[,addr][@listen|=connect]` | expose I2C targets over TCP (repeatable) |
 | `-spi-tcp bus:cs[@listen|=connect]` | expose an SPI device over TCP (repeatable) |
+| `-i2c-preset bus:name[@addr]` | attach a built-in I2C device (repeatable) |
+| `-spi-preset bus:name@cs` | attach a built-in SPI device (repeatable) |
+| `-list-presets` | print the built-in device registry |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
 | `-bus-wait D` | first-client wait for an I2C/SPI bridge (default 2s) |
 
