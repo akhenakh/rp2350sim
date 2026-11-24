@@ -4,7 +4,8 @@
 firmware: a Cortex-M33 interpreter, the RP2350 chip peripherals, and models for
 the boards and external chips (ST7789 LCD, W5500/W6300/CH9120 Ethernet,
 WS2812B, virtual Wi-Fi). A Shirei desktop UI adds board selection, live GPIO, a
-scope, a logic analyzer and Bus Pirate terminals.
+scope, a logic analyzer, built-in bus presets, Bus Pirate terminals and a
+Source/Build drawer with live reload.
 
 ![Board picker](images/picker.png)
 
@@ -16,8 +17,8 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 |---|---|
 | [cli.md](cli.md) | every command-line flag, output contract, exit codes, examples |
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
-| [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens and recipes for faking I2C/SPI peripherals |
-| [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, Bus Pirate terminals |
+| [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
+| [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer |
 | [debug.md](debug.md) | the Debug tab, symbols, breakpoints, watchpoints, memory and variables |
 | [boards.md](boards.md) | supported boards, wiring, peripherals and current limitations |
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |

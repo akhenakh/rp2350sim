@@ -15,7 +15,7 @@ commands and UI steps; the register-level wiring lives in
 | GPIO, PWM, ADC | `-trace-pins`, `-logic-pins` | Board, Scope | `blinky`, `pico-examples` |
 | UART0/1 | console, `-serial-tcp`, `-logic-uart` | `serial`, Console, Logic | `uart`, `serialbridge` |
 | SPI0/1 | `-logic-spi` | Logic | `protocols` |
-| I2C0/1 | `-i2c-tcp`, `-logic-i2c` | `i2c_tcp`, Bus, Logic | `busmaster` |
+| I2C0/1 | `-i2c-tcp`, `-i2c-preset`, `-logic-i2c` | `i2c_tcp` / `i2c_presets`, Bus, Logic | `busmaster`, `presets` |
 | PIO | `-logic-pins`, `-continue-after-halt` | Logic, Scope | `piotest`, `ws2812` |
 | USB CDC (TinyGo, TinyUSB) | `-input`, `-stdin`, `-expect` | Console | `echo`, `firmware/c/usbhello` |
 | USB-MIDI / UART MIDI | `-usb-midi`, `-midi-uart`, `-midi-udp` | `midi`, MIDI | `midi` |
@@ -42,6 +42,7 @@ commands and UI steps; the register-level wiring lives in
 | Logic analyzer | `-logic-*` | Logic | `protocols` |
 | Oscilloscope | power trace + `pincheck` | Scope | `pico2-analog` |
 | Bus Pirate target | `-i2c-tcp`, `-spi-tcp` | `i2c_tcp` / `spi_tcp`, Bus | `busmaster`, `busdevice` |
+| Built-in bus presets | `-i2c-preset`, `-spi-preset`, `-list-presets` | `i2c_presets` / `spi_presets`, Bus | `presets` |
 
 Build the demo firmware once with:
 
@@ -49,7 +50,7 @@ Build the demo firmware once with:
 task firmware:blinky firmware:lcd firmware:touchlcd firmware:piotest \
   firmware:ws2812 firmware:w5500 firmware:w6300 firmware:ch9120 firmware:wifi \
   firmware:protocols firmware:serialbridge firmware:busmaster firmware:busdevice \
-  firmware:cores firmware:sdcard firmware:audio firmware:midi
+  firmware:presets firmware:cores firmware:sdcard firmware:audio firmware:midi
 ```
 
 ## GPIO, PWM and ADC

@@ -3,8 +3,9 @@
 `rp2350sim-ui` is a Shirei desktop application that wraps the same emulator as
 the headless runner. It starts with a board picker, attaches that board's
 devices, and exposes the live machine through tabs: GPIO, LCD, DVI, sensors,
-Ethernet, LEDs, scope, logic analyzer, audio, MIDI, OTP, Bus Pirate terminals,
-the debugger and the firmware console.
+Ethernet, LEDs, scope, logic analyzer, audio, MIDI, OTP, built-in bus presets,
+Bus Pirate terminals, the debugger and the firmware console. The optional
+Source/Build drawer adds a single-file editor and a live-reload build loop.
 
 The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
 the emulator build. Download `rp2350sim-ui` from
@@ -71,8 +72,9 @@ so labels are present.
 
 The toolbar shows the CPU/board identity, the firmware path, **Open…** (OS file
 dialog), **Load**, **Run**/**Pause**, **Reset**, **GDB**, **Board…**,
-**Build** (Source/Build drawer) and the scope controls. The status line under it reports the image name, virtual time,
-PC and SP, or `(flash)` after a self-update.
+**Build** (Source/Build drawer) and the scope controls. The status line under
+it reports the image name, virtual time, PC and SP, or `(flash)` after a
+self-update.
 
 - **Load** restarts the selected image, useful after a rebuild.
 - **Reset** restarts the current image, preserving a self-updated flash.

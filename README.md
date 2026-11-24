@@ -96,6 +96,10 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:serial` | UART1 bridged over TCP with an echo firmware |
 | `task ui:bus` | Bus Pirate board paused: connect terminals, queue ACK/data, then Run |
 | `task ui:bus:png` | headless render of the Bus Pirate tab to `build/ui-bus.png` |
+| `task ui:presets` | built-in BME280/SSD1306/MPU6050/W25Q16 board |
+| `task ui:presets:png` | headless render of the built-in presets tab to `build/ui-presets.png` |
+| `task run:presets` | probe the four built-in bus presets and print their IDs |
+| `task ui:build` | live-reload Source/Build drawer for the blinky example |
 | `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
 | `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |
@@ -163,6 +167,9 @@ Useful flags:
 | `-logic-pins 0,1`, `-logic-out PATH` | capture a logic-analyzer trace (UART/I2C/SPI taps plus pin samples) |
 | `-i2c-tcp 0:0x50@127.0.0.1:0` | expose I2C targets as Bus Pirate TCP devices |
 | `-spi-tcp 0:17@127.0.0.1:0` | expose an SPI device as a Bus Pirate TCP device |
+| `-i2c-preset 0:bme280@0x76` | attach a built-in I2C device (repeatable) |
+| `-spi-preset 0:w25q16@17` | attach a built-in SPI device (repeatable) |
+| `-list-presets` | print the built-in device registry |
 | `-continue-after-halt` | keep PIO/PWM/DMA running after a core halts (firmware that returns from `main`) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-sample N` | print the PC in 10M-cycle chunks |
@@ -253,7 +260,7 @@ The UI starts with a board picker. The list comes from `cmd/simui/boards.yaml`
 hardware: an ST7789 LCD with its CS/DC/RST pins, touch and IMU controllers, a
 W5500/W6300/CH9120 network controller, virtual Wi-Fi, a microSD directory, a
 WS2812B data pin, scope channels, generated analog signals, logic-analyzer
-protocols, UART TCP bridges or remote I2C/SPI Bus Pirate devices.
+protocols, UART TCP bridges, built-in I2C/SPI presets or remote Bus Pirate devices.
 `rp2350sim-ui --list-boards` prints the ids.
 
 Selecting a board attaches only those devices to the emulated chip and builds
@@ -273,11 +280,13 @@ the tabs accordingly:
 - **OTP**: pages, rows, ECC status and locks.
 - **Debug**: breakpoints, cycle stepping, registers, memory, source lines and
   DWARF variables.
-- **Bus**: I2C/SPI Bus Pirate TCP terminals for the device side.
+- **Bus**: I2C/SPI Bus Pirate TCP terminals and built-in device presets.
 - **Console** (always): USB CDC + UART, click to type into the firmware.
 
 The toolbar shows the selected board, a **Board…** button to return to the
 picker, the firmware path field, **Open…** (OS dialog), run/pause and reset.
+It also has a **Build** button for the optional Source/Build drawer; `--watch`
+reloads the firmware when the file changes on disk.
 `--tab` selects the initial tab, `--paused` loads without executing,
 `--logic-trigger`/`--logic-pause` arm the analyzer, and `--png out.png --run 0.6
 firmware.elf` renders a headless snapshot. **Cmd+Q** on macOS or **Ctrl+Q**
@@ -311,8 +320,8 @@ The user guide lives in [`docs/`](docs/README.md):
 
 - [`docs/cli.md`](docs/cli.md) — every flag, output contract and exit code
 - [`docs/peripherals.md`](docs/peripherals.md) — each peripheral from the CLI and the UI
-- [`docs/bus-pirate.md`](docs/bus-pirate.md) — Bus Pirate tokens and fake I2C/SPI peripherals
-- [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, Bus Pirate terminals
+- [`docs/bus-pirate.md`](docs/bus-pirate.md) — Bus Pirate tokens, built-in presets and fake I2C/SPI peripherals
+- [`docs/ui.md`](docs/ui.md) — board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer
 - [`docs/debug.md`](docs/debug.md) — Debug tab, breakpoints, watchpoints, memory and DWARF variables
 - [`docs/ci.md`](docs/ci.md) — running firmware in CI, input, expectations, signal checks, artifacts
 - [`docs/tinygo.md`](docs/tinygo.md) — install, TinyGo builds, drop-in Taskfile/Makefile targets
