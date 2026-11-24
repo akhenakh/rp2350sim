@@ -21,6 +21,7 @@ STATIC_IMAGES = SITE / "static" / "docs" / "images"
 # Order and display titles for the sidebar.
 PAGES = [
     ("README.md", "Documentation", 1),
+    ("install.md", "Installation", 2),
     ("videos.md", "Videos", 5),
     ("cli.md", "Command-line reference", 10),
     ("peripherals.md", "Peripherals from CLI and UI", 20),

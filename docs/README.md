@@ -31,6 +31,7 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 
 | Document | Contents |
 |---|---|
+| [install.md](install.md) | install the CLI and desktop UI on macOS, Arch, Linux or Windows |
 | [videos.md](videos.md) | AI-generated video tours of the simulator |
 | [cli.md](cli.md) | every command-line flag, output contract, exit codes, examples |
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
@@ -46,39 +47,9 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 
 ## Install
 
-On macOS Apple Silicon or Intel, install both programs with
-[Homebrew](https://brew.sh):
-
-```sh
-brew install akhenakh/tap/rp2350sim
-```
-
-On Arch-based Linux, install from the AUR with `yay` or `paru`:
-
-```sh
-yay -S rp2350sim
-# or
-paru -S rp2350sim
-```
-
-Prebuilt archives are attached to
-[GitHub Releases](https://github.com/akhenakh/rp2350sim/releases). Each archive
-contains `rp2350sim` and `rp2350sim-ui` (`.exe` on Windows), `LICENSE`,
-`README.md` and this `docs/` directory.
-
-| platform | archive |
-|---|---|
-| Linux (`amd64`, `arm64`) | `rp2350sim_<version>_linux_<arch>.tar.gz` |
-| macOS (`amd64`, `arm64`) | `rp2350sim_<version>_darwin_<arch>.tar.gz` |
-| Windows (`amd64`, `arm64`) | `rp2350sim_<version>_windows_<arch>.zip` |
-| checksums | `rp2350sim_<version>_checksums.txt` |
-
-Both programs report their build with `-version`. To install from source
-instead:
-
-```sh
-go install github.com/akhenakh/rp2350sim/cmd/rp2350sim@latest
-```
+Use Homebrew on macOS, the AUR on Arch, a prebuilt archive on Linux or
+Windows, or build from source. See the [installation guide](install.md) for the
+commands and release verification.
 
 ## Quick start
 
