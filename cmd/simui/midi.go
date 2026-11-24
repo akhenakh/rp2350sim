@@ -94,6 +94,9 @@ func midiPanel(snap MachineState) {
 // panicMIDI releases every note the UI thinks it pressed and sends All Notes
 // Off on every channel.
 func panicMIDI() {
+	// Make room for release messages even if the normal queue is full, then
+	// let SetBoard flush the whole sequence to the old transport.
+	emu.FlushMIDI()
 	for note := range midiHeld {
 		sendMIDI(midi.Message{Status: 0x80 | byte(midiChannel), Data: [2]byte{byte(note), 0}, Len: 3})
 	}

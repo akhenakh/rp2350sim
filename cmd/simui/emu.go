@@ -159,8 +159,13 @@ type Emu struct {
 	lastChipFW  uint64
 	errText     string
 	running     bool
-	console     []byte
-	consolePos  int64
+	// picker* preserves the user's execution state while the board picker owns
+	// the window, so selecting a board again resumes exactly as before.
+	pickerResume bool
+	pickerPaused bool
+	atPicker     bool
+	console      []byte
+	consolePos   int64
 	// usbInput holds host console bytes until the emulated CDC host is ready.
 	// UART input is delivered immediately; USB input is drained on run chunks.
 	usbInput []byte
@@ -306,6 +311,8 @@ func (e *Emu) SetBoard(b *BoardDef) {
 		e.stopLocked()
 		return
 	}
+	resume, paused, fromPicker := e.pickerResume, e.pickerPaused, e.atPicker
+	e.pickerResume, e.pickerPaused, e.atPicker = false, false, false
 	e.board = b
 	e.errText = ""
 	e.scopePins = b.ScopePins()
@@ -315,11 +322,26 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	} else if err := e.loadLocked(); err != nil {
 		e.errText = err.Error()
 	}
+	if fromPicker {
+		e.running = resume
+		if resume {
+			e.debugger.Resume()
+		} else if paused {
+			e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
+		}
+	}
 }
 
 // stopLocked releases host resources and leaves an idle, boardless chip for
 // the picker. The caller holds e.mu.
 func (e *Emu) stopLocked() {
+	e.pickerResume = e.running
+	e.pickerPaused = e.debugger != nil && e.debugger.Stopped
+	e.atPicker = true
+	var flash []byte
+	if e.chip != nil {
+		flash = e.chip.FlashCopy()
+	}
 	e.running = false
 	if e.debugger != nil && e.chip != nil {
 		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
@@ -353,6 +375,9 @@ func (e *Emu) stopLocked() {
 	e.usbInput = nil
 	e.initInputsLocked()
 	e.resetChip()
+	if flash != nil {
+		copy(e.chip.Flash, flash)
+	}
 	e.applyInputsLocked()
 	e.console = e.console[:0]
 	e.consolePos = 0

@@ -114,6 +114,32 @@ func TestSendInputQueuesUSBUntilReady(t *testing.T) {
 	}
 }
 
+func TestPickerRoundTripPreservesFirmwareAndRunState(t *testing.T) {
+	path := writeLoopFirmware(t)
+	e := &Emu{debugger: rp2350.NewDebugger(), chip: rp2350.New()}
+	if err := e.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	e.SetBoard(nil)
+	e.SetBoard(&BoardDef{ID: "new"})
+	if !e.running || e.debugger.Stopped {
+		t.Fatalf("running picker round trip did not resume: running=%v stopped=%v", e.running, e.debugger.Stopped)
+	}
+	if got := e.chip.BootCount(); got != 1 {
+		t.Fatalf("boot count after picker round trip = %d, want 1", got)
+	}
+	if got := e.chip.Flash[4]; got == 0xff {
+		t.Fatal("picker round trip discarded the loaded reset vector")
+	}
+
+	e.SetRunning(false)
+	e.SetBoard(nil)
+	e.SetBoard(&BoardDef{ID: "new"})
+	if e.running || !e.debugger.Stopped {
+		t.Fatalf("paused picker round trip lost pause: running=%v stopped=%v", e.running, e.debugger.Stopped)
+	}
+}
+
 func TestSetBoardNilStopsFirmwareAndClosesBridge(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
