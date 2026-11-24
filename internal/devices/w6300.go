@@ -764,20 +764,6 @@ func (w *W6300) rxAppend(n int, data []byte) {
 	s.irq |= w6IrRecv
 }
 
-// Close releases every host socket and invalidates outstanding dial/accept
-// callbacks. A W6300 attached to a UI board is discarded after this call.
-func (w *W6300) Close() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.closed {
-		return
-	}
-	w.closed = true
-	for n := range w.socks {
-		w.closeSocket(n)
-	}
-}
-
 func (w *W6300) closeSocket(n int) {
 	if n < 0 || n >= len(w.socks) || w.socks[n] == nil {
 		return
