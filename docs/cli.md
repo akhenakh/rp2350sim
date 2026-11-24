@@ -225,8 +225,8 @@ policy and the picobin/picotool signed table are not implemented.
 ## PSRAM
 
 QMI chip select 1 is an optional QSPI PSRAM device mapped at `0x11000000`,
-with uncached mirrors at `0x15000000`, `0x19000000` and `0x1d000000`. Attach
-one with `-psram`:
+with uncached mirrors at `0x15000000` and `0x1d000000`. The `0x19000000`
+window is cache maintenance, not data. Attach one with `-psram`:
 
 ```sh
 rp2350sim -fw firmware/c/build/psram.elf -seconds 2 \

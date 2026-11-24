@@ -92,7 +92,8 @@ The RP2350A QMI CS1 pin must be GP0, GP8 or GP19 (the RP2350B adds GP47).
 `-psram` writes the `FLASH_DEVINFO` boot-RAM field the SDK reads, sets up the
 QMI window and answers the APS6404 JEDEC ID. Window 1 is read-only until
 firmware enables `XIP_CTRL.WRITABLE_M1`; the uncached mirrors
-(`0x15000000`, `0x19000000`, `0x1d000000`) alias the same bytes. `latency` is
+(`0x15000000`, `0x1d000000`) alias the same bytes, while `0x19000000` is the
+cache-maintenance window (writes are operations, reads are not data). `latency` is
 the extra virtual time per access; raise it to model a slower part, or use 0
 for SRAM-like timing. The C example `firmware/c/psram` verifies the size and a
 1 MiB pattern.
