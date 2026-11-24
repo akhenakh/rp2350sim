@@ -45,7 +45,7 @@ func TestPSRAMSizeLimitAndDevinfo(t *testing.T) {
 		t.Fatalf("size = %d", got)
 	}
 	devinfo := c.Read16(bootramBase + bootramFlashDevinfo)
-	if want := uint16(9)<<12 | 19; devinfo != want {
+	if want := uint16(9)<<12 | 12<<8 | 19; devinfo != want {
 		t.Fatalf("FLASH_DEVINFO = %#x, want %#x", devinfo, want)
 	}
 	c.Write32(xipBase, xipCtrlWritableM1)
@@ -55,8 +55,8 @@ func TestPSRAMSizeLimitAndDevinfo(t *testing.T) {
 	}
 
 	c.ConfigurePSRAM(0, 0, 0)
-	if c.Read16(bootramBase+bootramFlashDevinfo) != 0 {
-		t.Fatal("devinfo was not cleared when PSRAM was removed")
+	if got := c.Read16(bootramBase + bootramFlashDevinfo); got != 12<<8 {
+		t.Fatalf("devinfo without PSRAM = %#x, want default CS0 size", got)
 	}
 }
 

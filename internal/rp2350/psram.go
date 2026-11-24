@@ -51,12 +51,7 @@ type qmiBlock struct {
 
 func newQMI() *qmiBlock {
 	q := &qmiBlock{block: newRegBlock(qmiBase, 0x1000)}
-	q.block.regs[0] = 0x01800000      // DIRECT_CSR reset
-	q.block.regs[0x20/4] = 0x40000004 // M1_TIMING reset
-	q.block.regs[0x24/4] = 0x00001000 // M1_RFMT reset
-	q.block.regs[0x28/4] = 0x0000a003 // M1_RCMD reset
-	q.block.regs[0x2c/4] = 0x00001000 // M1_WFMT reset
-	q.block.regs[0x30/4] = 0x0000a002 // M1_WCMD reset
+	q.resetRegisters()
 
 	q.block.readFn = func(c *Chip, off uint32) (uint32, bool) {
 		switch off {
@@ -126,19 +121,31 @@ func newQMI() *qmiBlock {
 	return q
 }
 
+func (q *qmiBlock) resetRegisters() {
+	q.block.regs[0] = 0x01800000      // DIRECT_CSR reset
+	q.block.regs[0x0c/4] = 0x40000004 // M0_TIMING reset
+	q.block.regs[0x10/4] = 0x00001000 // M0_RFMT reset
+	q.block.regs[0x14/4] = 0x0000a003 // M0_RCMD reset
+	q.block.regs[0x18/4] = 0x00001000 // M0_WFMT reset
+	q.block.regs[0x1c/4] = 0x0000a002 // M0_WCMD reset
+	q.block.regs[0x20/4] = 0x40000004 // M1_TIMING reset
+	q.block.regs[0x24/4] = 0x00001000 // M1_RFMT reset
+	q.block.regs[0x28/4] = 0x0000a003 // M1_RCMD reset
+	q.block.regs[0x2c/4] = 0x00001000 // M1_WFMT reset
+	q.block.regs[0x30/4] = 0x0000a002 // M1_WCMD reset
+	for i := range 8 {
+		q.block.regs[(0x34+uint32(i)*4)/4] = 0x04000000 + uint32(i)*0x400
+	}
+}
+
 func (q *qmiBlock) reset() {
 	q.enabled = false
 	q.idMode = false
 	q.idIndex = 0
 	q.rx = q.rx[:0]
-	q.block.regs[0] = 0x01800000
 	q.block.regs[0x04/4] = 0
 	q.block.regs[0x08/4] = 0
-	q.block.regs[0x20/4] = 0x40000004
-	q.block.regs[0x24/4] = 0x00001000
-	q.block.regs[0x28/4] = 0x0000a003
-	q.block.regs[0x2c/4] = 0x00001000
-	q.block.regs[0x30/4] = 0x0000a002
+	q.resetRegisters()
 }
 
 // newXIPCtrl models the cache control register that gates writes to window 1.
@@ -198,15 +205,15 @@ func psramDevinfoSize(size uint32) uint16 {
 // flash_devinfo accessors read it. The bootrom does this from OTP at reset on
 // real hardware.
 func (c *Chip) syncPSRAMDevinfo() {
-	if c.psramSize == 0 {
-		c.writeMMIO16(bootramBase+bootramFlashDevinfo, 0)
-		return
+	// CS0 is always the 16 MiB boot flash; CS1 is absent unless configured.
+	devinfo := uint16(12) << 8
+	if c.psramSize > 0 {
+		cs := uint16(c.psramCS)
+		if c.psramCS < 0 || c.psramCS > 63 {
+			cs = 0
+		}
+		devinfo |= psramDevinfoSize(c.psramSize)<<12 | cs
 	}
-	cs := uint16(c.psramCS)
-	if c.psramCS < 0 || c.psramCS > 63 {
-		cs = 0
-	}
-	devinfo := psramDevinfoSize(c.psramSize)<<12 | cs
 	c.writeMMIO16(bootramBase+bootramFlashDevinfo, devinfo)
 }
 

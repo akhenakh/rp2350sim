@@ -1208,6 +1208,34 @@ func (c *Chip) writeMMIO(addr, v uint32) {
 	c.unhandledWrite(addr, v)
 }
 
+// writeBootRAMAlias applies byte-strobed atomic writes to boot RAM. The SDK
+// updates FLASH_DEVINFO through a halfword XOR alias, so the operation must be
+// performed on the selected lanes rather than routed through the word policy.
+func (c *Chip) writeBootRAMAlias(addr, v uint32, size int) bool {
+	off, b, ok := c.aliasTarget(addr)
+	if !ok || b.base != bootramBase || (size != 1 && size != 2) {
+		return false
+	}
+	wordOff := off &^ 3
+	shift := (addr & 3) * 8
+	mask := uint32(0xff)
+	if size == 2 {
+		mask = 0xffff
+		shift = (addr & 2) * 8
+	}
+	next := b.read(c, wordOff)
+	switch {
+	case addr >= b.base+0x1000 && addr < b.base+0x2000:
+		next ^= (v & mask) << shift
+	case addr >= b.base+0x2000 && addr < b.base+0x3000:
+		next |= (v & mask) << shift
+	default:
+		next &^= (v & mask) << shift
+	}
+	b.write(c, wordOff, next)
+	return true
+}
+
 func (c *Chip) writeMMIO8(addr uint32, v uint8) {
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
 		off := (addr - SIOBase) &^ 3
@@ -1222,6 +1250,9 @@ func (c *Chip) writeMMIO8(addr uint32, v uint8) {
 		n := c.ppbForCore()
 		old := n.peek(off)
 		n.write(off, old&^(0xFF<<shift)|uint32(v)<<shift)
+		return
+	}
+	if c.writeBootRAMAlias(addr, uint32(v), 1) {
 		return
 	}
 	for _, b := range c.regs {
@@ -1253,6 +1284,9 @@ func (c *Chip) writeMMIO16(addr uint32, v uint16) {
 		n := c.ppbForCore()
 		old := n.peek(off)
 		n.write(off, old&^(0xFFFF<<shift)|uint32(v)<<shift)
+		return
+	}
+	if c.writeBootRAMAlias(addr, uint32(v), 2) {
 		return
 	}
 	for _, b := range c.regs {

@@ -80,7 +80,7 @@ func newResets(c *Chip) *regBlock {
 // ---- CLOCKS ----
 
 func newClocks(c *Chip) *regBlock {
-	b := newRegBlock(0x40010000, 0x100)
+	b := newRegBlock(0x40010000, 0x1000)
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
 		// The SELECTED register of each of the 10 clock muxes sits at 8 mod 12
 		// and is a one-hot of the glitchless source: bit 0 for the primary
@@ -98,7 +98,7 @@ func newClocks(c *Chip) *regBlock {
 			}
 			return 1 << (ctrl & 0x1), true
 		}
-		if off == 0xB0 || off == 0xB4 { // ENABLED0/1
+		if off == 0xBC || off == 0xC0 { // ENABLED0/1
 			return 0xFFFFFFFF, true
 		}
 		return 0, false
@@ -225,8 +225,11 @@ func newBootRAM(c *Chip) *regBlock {
 	// because XIP is always usable in this model.
 	b.regs[0] = 0x0000_4770
 	unclaimed := uint8(bootramUnclaimed)
+	var writeOnce [2]uint32
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
 		switch {
+		case off == bootramWriteOnce0 || off == bootramWriteOnce1:
+			return writeOnce[(off-bootramWriteOnce0)/4], true
 		case off == bootramLockStat:
 			return uint32(unclaimed), true
 		case off >= bootramLock0 && off < bootramLock0+bootramLockCount*4:
@@ -242,8 +245,7 @@ func newBootRAM(c *Chip) *regBlock {
 	b.writeFn = func(c *Chip, off, v uint32) {
 		switch {
 		case off == bootramWriteOnce0 || off == bootramWriteOnce1:
-			i := off / 4
-			b.regs[i] |= v
+			writeOnce[(off-bootramWriteOnce0)/4] |= v
 		case off == bootramLockStat:
 			unclaimed = uint8(v)
 		case off >= bootramLock0 && off < bootramLock0+bootramLockCount*4:
@@ -254,6 +256,7 @@ func newBootRAM(c *Chip) *regBlock {
 	b.resetFn = func(c *Chip) {
 		b.regs[0] = 0x0000_4770 // boot2 stub
 		unclaimed = bootramUnclaimed
+		writeOnce = [2]uint32{}
 	}
 	return b
 }
