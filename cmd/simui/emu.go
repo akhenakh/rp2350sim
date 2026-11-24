@@ -1502,7 +1502,27 @@ func (e *Emu) flushMIDILocked() {
 }
 
 func (e *Emu) loadLocked() error {
+	var backing []byte
+	if e.flashPath != "" {
+		data, err := os.ReadFile(e.flashPath)
+		switch {
+		case err == nil:
+			if len(data) > rp2350.FlashSize {
+				return fmt.Errorf("flash image is %d bytes, limit is %d", len(data), rp2350.FlashSize)
+			}
+			backing = data
+		case os.IsNotExist(err) && e.img != nil:
+			// A missing backing file is a fresh erased card when firmware is
+			// supplied, matching the headless runner.
+		default:
+			return fmt.Errorf("flash load: %w", err)
+		}
+	}
+
 	e.resetChip()
+	if backing != nil {
+		e.chip.LoadFlashImage(backing)
+	}
 	if e.img == nil {
 		e.applyInputsLocked()
 		return nil

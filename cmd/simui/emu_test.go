@@ -1,0 +1,118 @@
+package main
+
+import (
+	"debug/elf"
+	"encoding/binary"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
+)
+
+func TestLoadFirmwarePreservesFlashBacking(t *testing.T) {
+	const markerOffset = 0x10000
+	marker := []byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0}
+	backing := filepath.Join(t.TempDir(), "flash.bin")
+	data := make([]byte, markerOffset+len(marker))
+	for i := range data {
+		data[i] = 0xff
+	}
+	copy(data[markerOffset:], marker)
+	if err := os.WriteFile(backing, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fwPath := writeFlashELF(t)
+	e := newTestEmu()
+	e.SetFlashPath(backing)
+	if err := e.Load(fwPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.chip.Flash[markerOffset : markerOffset+len(marker)]; string(got) != string(marker) {
+		t.Fatalf("marker after ELF load = % x, want % x", got, marker)
+	}
+	if got := binary.LittleEndian.Uint32(e.chip.Flash[4:8]); got != rp2350.FlashBase+0x101 {
+		t.Fatalf("reset vector after ELF load = %#x", got)
+	}
+
+	e.SaveFlash()
+	saved, err := os.ReadFile(backing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved[markerOffset : markerOffset+len(marker)]; string(got) != string(marker) {
+		t.Fatalf("marker after save = % x, want % x", got, marker)
+	}
+	if got := binary.LittleEndian.Uint32(saved[4:8]); got != rp2350.FlashBase+0x101 {
+		t.Fatalf("saved reset vector = %#x", got)
+	}
+}
+
+func TestLoadFirmwareMissingFlashBackingStartsErased(t *testing.T) {
+	backing := filepath.Join(t.TempDir(), "missing.bin")
+	e := newTestEmu()
+	e.SetFlashPath(backing)
+	if err := e.Load(writeFlashELF(t)); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.chip.Flash[0x10000]; got != 0xff {
+		t.Fatalf("unused flash byte = %#x, want 0xff", got)
+	}
+	e.SaveFlash()
+	info, err := os.Stat(backing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != rp2350.FlashSize {
+		t.Fatalf("saved flash size = %d, want %d", info.Size(), rp2350.FlashSize)
+	}
+}
+
+func newTestEmu() *Emu {
+	e := &Emu{debugger: rp2350.NewDebugger()}
+	e.mu.Lock()
+	e.resetChip()
+	e.mu.Unlock()
+	return e
+}
+
+func writeFlashELF(t *testing.T) string {
+	t.Helper()
+	const headerSize = 52
+	const programHeaderSize = 32
+	segment := make([]byte, 256)
+	binary.LittleEndian.PutUint32(segment[0:4], rp2350.SRAMBase+0x1000)
+	binary.LittleEndian.PutUint32(segment[4:8], rp2350.FlashBase+0x101)
+
+	image := make([]byte, headerSize+programHeaderSize+len(segment))
+	copy(image[0:16], "\x7fELF")
+	image[4] = byte(elf.ELFCLASS32)
+	image[5] = byte(elf.ELFDATA2LSB)
+	image[6] = byte(elf.EV_CURRENT)
+	binary.LittleEndian.PutUint16(image[16:18], uint16(elf.ET_EXEC))
+	binary.LittleEndian.PutUint16(image[18:20], uint16(elf.EM_ARM))
+	binary.LittleEndian.PutUint32(image[20:24], uint32(elf.EV_CURRENT))
+	binary.LittleEndian.PutUint32(image[24:28], rp2350.FlashBase+0x101)
+	binary.LittleEndian.PutUint32(image[28:32], headerSize)
+	binary.LittleEndian.PutUint16(image[40:42], headerSize)
+	binary.LittleEndian.PutUint16(image[42:44], programHeaderSize)
+	binary.LittleEndian.PutUint16(image[44:46], 1)
+
+	ph := image[headerSize:]
+	binary.LittleEndian.PutUint32(ph[0:4], uint32(elf.PT_LOAD))
+	binary.LittleEndian.PutUint32(ph[4:8], headerSize+programHeaderSize)
+	binary.LittleEndian.PutUint32(ph[8:12], rp2350.FlashBase)
+	binary.LittleEndian.PutUint32(ph[12:16], rp2350.FlashBase)
+	binary.LittleEndian.PutUint32(ph[16:20], uint32(len(segment)))
+	binary.LittleEndian.PutUint32(ph[20:24], uint32(len(segment)))
+	binary.LittleEndian.PutUint32(ph[24:28], uint32(elf.PF_R|elf.PF_X))
+	binary.LittleEndian.PutUint32(ph[28:32], 4)
+	copy(image[headerSize+programHeaderSize:], segment)
+
+	path := filepath.Join(t.TempDir(), "firmware.elf")
+	if err := os.WriteFile(path, image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

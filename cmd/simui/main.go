@@ -3015,7 +3015,7 @@ func main() {
 		inputArgs = append(inputArgs, v)
 		return nil
 	})
-	flashPath := flag.String("flash", "", "raw flash backing image; self-updates are written back here")
+	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, console")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")
@@ -3069,7 +3069,10 @@ func main() {
 	usedFlash := false
 	if rest := flag.Args(); len(rest) > 0 {
 		fwPath = rest[0]
-		_ = emu.Load(fwPath)
+		if err := emu.Load(fwPath); err != nil {
+			fmt.Fprintln(os.Stderr, "firmware load:", err)
+			os.Exit(1)
+		}
 	} else if *flashPath != "" {
 		fwPath = *flashPath
 		if err := emu.LoadFlash(*flashPath); err != nil {

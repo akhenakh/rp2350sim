@@ -46,7 +46,7 @@ Startup flags:
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--paused` | load the firmware but do not execute until Run |
 | `--png PATH` | render one settled frame and exit (headless) |
-| `--flash PATH` | raw flash backing image; self-updates are written back here |
+| `--flash PATH` | raw flash backing image; loaded before firmware, and self-updates are written back here |
 | `--touch x,y` | inject a held touch at native panel coordinates |
 | `--touch-demo` | move a synthetic touch around the panel while the UI runs |
 | `--scope-zoom N`, `--scope-range V` | initial scope time zoom / full-scale volts |

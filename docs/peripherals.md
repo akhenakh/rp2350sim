@@ -453,9 +453,11 @@ rp2350sim -fw firmware/c/build/ota.elf -flash build/ota.bin -seconds 2 \
 rp2350sim -flash build/ota.bin -seconds 0.2 -quiet
 ```
 
-**UI.** Pass `--flash` to persist self-updates. After a reset the **Board**
-tab shows a banner naming the flash image, its boot number and entry point;
-the status line changes the ELF name to `(flash)`. `task ui:ota` and
+**UI.** Pass `--flash` to load and persist a raw backing image. When a firmware
+file is also supplied, the backing image is restored first and the firmware
+segments are applied over it; a missing backing file starts erased. After a
+reset the **Board** tab shows a banner naming the flash image, its boot number
+and entry point; the status line changes the ELF name to `(flash)`. `task ui:ota` and
 `task ui:ota-png` run/render the demo.
 
 ![Board banner after an OTA self-update](images/ota.png)
