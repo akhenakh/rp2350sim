@@ -564,7 +564,7 @@ func (c *Chip) writeDMA8(addr uint32, v uint8) {
 			c.OnWrite(addr, uint32(v), 1)
 		}
 		c.debugWrite(addr, 1)
-		c.invalidateMonitors(addr)
+		c.invalidateMonitors(addr, -1)
 		c.writeMMIO(addr&^3, uint32(v)*0x01010101)
 		return
 	}
@@ -577,7 +577,7 @@ func (c *Chip) writeDMA16(addr uint32, v uint16) {
 			c.OnWrite(addr, uint32(v), 2)
 		}
 		c.debugWrite(addr, 2)
-		c.invalidateMonitors(addr)
+		c.invalidateMonitors(addr, -1)
 		c.writeMMIO(addr&^3, uint32(v)*0x00010001)
 		return
 	}
