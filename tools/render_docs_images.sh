@@ -48,9 +48,9 @@ render pico2 otp 0.5 otp "$ROOT/firmware/c/build/otp.elf"
 render pico2 console 1 console "$ROOT/firmware/c/build/usbhello.elf"
 
 # Debug and Bus need extra flags; the picker has no board.
-"$UI" --board pico2 --tab debug --break debug_marker --run 0.7 \
-	--width 1280 --height 820 --png "$ROOT/$BUILD/docs-debug-2x.png" \
-	firmware/c/build/debug.elf >/dev/null
+"$UI" --board pico2 --tab debug --break debug_marker --debug-tab variables \
+	--run 0.7 --width 1280 --height 820 \
+	--png "$ROOT/$BUILD/docs-debug-2x.png" firmware/c/build/debug.elf >/dev/null
 ffmpeg -v error -y -i "$ROOT/$BUILD/docs-debug-2x.png" \
 	-vf scale=1280:820:flags=lanczos "$IMAGES/debug.png"
 

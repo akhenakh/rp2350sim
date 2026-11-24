@@ -42,7 +42,9 @@ rp2350sim -fw firmware.elf -seconds 2 -watch g_magic
     reads for ROM, flash, SRAM and PSRAM: it does not charge PSRAM latency and
     never reads a UART/SPI/I2C/FIFO register. **PC** and **SP** jump to the
     current locations.
-  - **Variables** evaluates the current function's locals and globals.
+  - **Variables** evaluates the current function's locals and global objects in
+    a scrollable list. All application globals are listed; underscore-prefixed
+    linker/runtime symbols are omitted.
 
 ## Variables and limitations
 

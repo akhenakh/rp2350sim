@@ -323,26 +323,33 @@ func debugVariables(s DebugSnapshot) {
 	Container(Attrs(Grow(1), Expand, Gap(3), Pad(10), Corners(6), Background(220, 12, 10, 1),
 		BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
 		Label("Variables", FontSize(14), FontWeight(700))
-		ScrollOnInput()
-		ScrollBars()
-		if len(s.Locals) == 0 {
-			Label("no locals at this PC", FontSize(11), TextColor(220, 6, 62, 1))
-		}
-		for _, v := range s.Locals {
-			debugVariableRow(v)
-		}
-		Label("Global objects", FontSize(12), FontWeight(600))
-		for n, v := range s.Globals {
-			if strings.HasPrefix(v.Name, "_") {
-				continue
+		// The list can be long (TinyGo runtimes expose dozens of globals), so
+		// the header stays fixed and only the rows scroll.
+		Container(Attrs(Grow(1), Expand, Clip, Viewport, Gap(2)), func() {
+			ScrollOnInput()
+			ScrollBars()
+			if len(s.Locals) == 0 {
+				Label("no locals at this PC", FontSize(11), TextColor(220, 6, 62, 1))
 			}
-			if n >= 40 {
-				Label(fmt.Sprintf("… %d more globals", len(s.Globals)-n), FontSize(10),
-					TextColor(220, 6, 62, 1))
-				break
+			for _, v := range s.Locals {
+				debugVariableRow(v)
 			}
-			debugVariableRow(v)
-		}
+			globals := 0
+			for _, v := range s.Globals {
+				if !strings.HasPrefix(v.Name, "_") {
+					globals++
+				}
+			}
+			Label(fmt.Sprintf("Global objects · %d", globals), FontSize(12), FontWeight(600))
+			for _, v := range s.Globals {
+				// Underscore-prefixed entries are linker/runtime symbols, not
+				// application globals.
+				if strings.HasPrefix(v.Name, "_") {
+					continue
+				}
+				debugVariableRow(v)
+			}
+		})
 	})
 }
 
