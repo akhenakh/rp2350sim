@@ -51,6 +51,22 @@ func TestDecodeUART(t *testing.T) {
 	}
 }
 
+func TestDecodeUARTDropsTruncatedFrame(t *testing.T) {
+	const baud = 115200
+	full := uartTrace(baud, 'A')
+	spb := float64(testSampleHz) / float64(baud)
+	cut := int(spb * 8) // before the last data bit and stop bit
+	if cut >= len(full) {
+		t.Fatal("invalid truncated trace length")
+	}
+	if frames := DecodeUART(full[:cut], 0, baud, testSampleHz); len(frames) != 0 {
+		t.Fatalf("truncated frame decoded: %+v", frames)
+	}
+	if frames := DecodeUART(append(full, full[:cut]...), 0, baud, testSampleHz); len(frames) != 1 || frames[0].Data != 'A' {
+		t.Fatalf("complete frame before truncated tail = %+v", frames)
+	}
+}
+
 // i2cTrace builds START, 9-bit address phase, 9-bit data phase and STOP.
 func i2cTrace(addr, data byte) []TraceSample {
 	const per = 20 // samples per SCL half period

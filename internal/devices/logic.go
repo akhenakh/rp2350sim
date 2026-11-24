@@ -10,7 +10,8 @@ type UARTFrame struct {
 
 // DecodeUART decodes an 8N1 UART stream from one trace channel. The line is
 // idle high; each frame starts on a falling edge and is sampled at the middle
-// of every bit. A frame with a low stop bit is dropped.
+// of every bit. A frame with a low stop bit or missing required samples is
+// dropped rather than completed with invented high bits.
 func DecodeUART(samples []TraceSample, ch int, baud, sampleHz float64) []UARTFrame {
 	if baud <= 0 || sampleHz <= 0 {
 		return nil
@@ -21,12 +22,12 @@ func DecodeUART(samples []TraceSample, ch int, baud, sampleHz float64) []UARTFra
 	}
 	var frames []UARTFrame
 	// at samples the level a number of bit periods after the start edge.
-	at := func(start int, bits float64) (bool, int) {
+	at := func(start int, bits float64) (bool, int, bool) {
 		idx := start + int(math.Round(bits*spb))
 		if idx < 0 || idx >= len(samples) {
-			return true, idx
+			return false, idx, false
 		}
-		return samples[idx].Bit(ch), idx
+		return samples[idx].Bit(ch), idx, true
 	}
 	for i := 1; i < len(samples); i++ {
 		falling := samples[i-1].Bit(ch) && !samples[i].Bit(ch)
@@ -34,19 +35,29 @@ func DecodeUART(samples []TraceSample, ch int, baud, sampleHz float64) []UARTFra
 			continue
 		}
 		// The start bit must be low at its middle, otherwise it is noise.
-		if high, _ := at(i, 0.5); high {
+		high, _, ok := at(i, 0.5)
+		if !ok {
+			return frames
+		}
+		if high {
 			continue
 		}
 		var b byte
 		last := i
 		for n := range 8 {
-			v, idx := at(i, 1.5+float64(n))
+			v, idx, ok := at(i, 1.5+float64(n))
+			if !ok {
+				return frames
+			}
 			if v {
 				b |= 1 << uint(n)
 			}
 			last = idx
 		}
-		stop, stopIdx := at(i, 9.5)
+		stop, stopIdx, ok := at(i, 9.5)
+		if !ok {
+			return frames
+		}
 		if stop {
 			frames = append(frames, UARTFrame{T: samples[i].T, Data: b})
 			if stopIdx > i {
