@@ -187,3 +187,37 @@ func TestBootselHeldAtReset(t *testing.T) {
 		t.Fatal("BOOTSEL reported at a reset without it held")
 	}
 }
+
+// TestQueuedEncoderSteps checks scripted encoder steps are delivered after
+// boot, spaced in virtual time, instead of as one invisible phase jump.
+func TestQueuedEncoderSteps(t *testing.T) {
+	e := NewEmu()
+	e.SetBoard(testInputsBoard())
+	e.mu.Lock()
+	e.chip.CPU0.Parked = true
+	e.chip.CPU1.Parked = true
+	e.mu.Unlock()
+	e.QueueEncoder("enc", 3)
+	e.RunFor(70 * 150_000) // 20 ms per step
+	s := e.Snapshot()
+	if got := s.Inputs["enc"].Phase; got != 3 {
+		t.Fatalf("queued encoder phase = %d, want 3", got)
+	}
+	// The steps produced distinct quadrature phases along the way: rewind a
+	// short run and check the first one landed at ~20 ms.
+	e = NewEmu()
+	e.SetBoard(testInputsBoard())
+	e.mu.Lock()
+	e.chip.CPU0.Parked = true
+	e.chip.CPU1.Parked = true
+	e.mu.Unlock()
+	e.QueueEncoder("enc", 1)
+	e.RunFor(10 * 150_000)
+	if got := e.Snapshot().Inputs["enc"].Phase; got != 0 {
+		t.Fatalf("encoder stepped before 20 ms: phase %d", got)
+	}
+	e.RunFor(10 * 150_000)
+	if got := e.Snapshot().Inputs["enc"].Phase; got != 1 {
+		t.Fatalf("encoder phase after 20 ms = %d, want 1", got)
+	}
+}

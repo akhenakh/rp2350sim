@@ -334,13 +334,7 @@ func applyInputSpecs(b *BoardDef) {
 				fmt.Fprintf(os.Stderr, "--input %q: %v\n", spec, err)
 				continue
 			}
-			step := 1
-			if n < 0 {
-				step, n = -1, -n
-			}
-			for range n {
-				emu.StepEncoder(id, step)
-			}
+			emu.QueueEncoder(id, n)
 		}
 	}
 }
@@ -572,7 +566,9 @@ func tabButton(label string, tab int) {
 
 func boardAndPins(snap MachineState) {
 	Container(Attrs(Row, Grow(1), Expand, Gap(14)), func() {
-		Container(Attrs(FixWidth(255), Gap(10)), func() {
+		Container(Attrs(FixWidth(255), Grow(1), Expand, Clip, Viewport, Gap(10)), func() {
+			ScrollOnInput()
+			ScrollBars()
 			boardPanel(snap)
 			inputsPanel(snap)
 		})
@@ -584,8 +580,7 @@ func boardAndPins(snap MachineState) {
 // authoritative button/switch/ADC state lives in Emu; these fields are the
 // drag accumulation and the value buffer ProcessSlider mutates.
 type inputView struct {
-	volts   float32
-	detents int
+	volts float32
 }
 
 var inputViews = map[string]*inputView{}
@@ -608,7 +603,7 @@ func snapInput(snap MachineState, id string) InputValue {
 func inputViewFor(id string, v InputValue) *inputView {
 	iv := inputViews[id]
 	if iv == nil {
-		iv = &inputView{volts: v.Volts, detents: int(v.Phase)}
+		iv = &inputView{volts: v.Volts}
 		inputViews[id] = iv
 	}
 	return iv
@@ -832,7 +827,6 @@ func inputADC(in InputDef, snap MachineState) {
 
 func inputEncoder(in InputDef, snap MachineState) {
 	st := snapInput(snap, in.ID)
-	iv := inputViewFor(in.ID, st)
 	delta := 0
 	Container(Attrs(Row, CrossMid, Gap(8), Pad(3), Corners(4), Background(220, 10, 20, 1),
 		BorderWidth(1), BorderColor(220, 8, 30, 1)), func() {
@@ -865,7 +859,7 @@ func inputEncoder(in InputDef, snap MachineState) {
 				drag.active = false
 			}
 			// Indicator dot: one quarter turn per quadrature phase.
-			ang := float64(iv.detents) * math.Pi / 8
+			ang := float64(st.Phase) * math.Pi / 8
 			dx := 21 + 12*math.Sin(ang) - 3
 			dy := 21 - 12*math.Cos(ang) - 3
 			Container(Attrs(Float(float32(dx), float32(dy)), FixSize(6, 6), Corners(3),
@@ -886,7 +880,6 @@ func inputEncoder(in InputDef, snap MachineState) {
 		})
 	})
 	if delta != 0 {
-		iv.detents += delta
 		emu.StepEncoder(in.ID, delta)
 		RequestNextFrame()
 	}

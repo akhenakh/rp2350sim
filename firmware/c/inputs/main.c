@@ -36,6 +36,10 @@ static void input_pin(uint pin) {
 	gpio_pull_up(pin);
 }
 
+static int pot_delta(uint16_t a, uint16_t b) {
+	return a > b ? a - b : b - a;
+}
+
 int main(void) {
 	stdio_init_all();
 
@@ -54,6 +58,7 @@ int main(void) {
 
 	uint8_t enc_prev = (gpio_get(ENC_A) << 1) | gpio_get(ENC_B);
 	int enc_count = 0;
+	int enc_count_prev = 0;
 	bool btn_prev = !gpio_get(BTN_PIN);
 	bool sw_prev = !gpio_get(SW_PIN);
 	bool boot_prev = (sio_hw->gpio_hi_in & SIO_GPIO_HI_IN_QSPI_CSN_BITS) == 0;
@@ -76,12 +81,17 @@ int main(void) {
 
 		gpio_put(LED_PIN, btn || sw);
 
+		// Ignore ADC jitter of a few LSBs; the pot is only a demo.
 		bool changed = btn != btn_prev || sw != sw_prev || boot != boot_prev ||
-			       pot != pot_prev;
+			       enc_count != enc_count_prev || pot_delta(pot, pot_prev) > 8;
 		if (changed || time_reached(next_beat)) {
 			printf("inputs: btn=%d sw=%d enc=%d boot=%d pot=%4u (%.2f V)\n",
 			       btn, sw, enc_count, boot, pot, pot * 3.3f / 4095.0f);
-			btn_prev, sw_prev, boot_prev, pot_prev = btn, sw, boot, pot;
+			btn_prev = btn;
+			sw_prev = sw;
+			boot_prev = boot;
+			pot_prev = pot;
+			enc_count_prev = enc_count;
 			next_beat = make_timeout_time_ms(1000);
 		}
 		sleep_ms(10);

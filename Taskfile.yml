@@ -35,6 +35,12 @@ tasks:
     cmds:
       - go test ./...
 
+  test:race:
+    desc: Run the unit tests with the Go race detector
+    cmds:
+      - go test -race ./...
+      - cd cmd/simui && go test -race ./...
+
   lint:
     desc: Static gates (golangci-lint with modernize, go fix diff) for every module
     cmds:
@@ -717,7 +723,7 @@ tasks:
     desc: Run the board-controls firmware with the default (released) inputs
     deps: [build, c:build]
     cmds:
-      - '{{.EMU}} -fw firmware/c/build/inputs.elf -seconds 1 -quiet -expect "inputs: btn=0 sw=0 enc=0 boot=0" -stop-on-expect'
+      - '{{.EMU}} -fw firmware/c/build/inputs.elf -seconds 1 -quiet -expect "inputs: btn=0 sw=0 enc=0 boot=0" -expect "0.00 V" -stop-on-expect'
 
   c:usbhello:
     desc: Run the Pico SDK USB CDC stdio hello world (TinyUSB)

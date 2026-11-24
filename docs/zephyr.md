@@ -48,11 +48,13 @@ cd ~/zephyrproject
   -expect "Hello World! rpi_pico2" -stop-on-expect
 ```
 
-`task zephyr:smoke` runs the validated set from `tools/zephyr-smoke.sh`; it
-expects the workspace at `$ZEPHYR_WORKSPACE` (default `~/zephyrproject`), the
-venv at `$ZEPHYR_VENV` (default `~/zephyr-venv`) and the SDK at
-`$ZEPHYR_SDK_INSTALL_DIR` (default `/opt/zephyr-sdk`). It is not part of
-`task ci` because it needs a full west workspace.
+`task zephyr:smoke` builds and runs hello, threads, blinky, philosophers, the
+FPU-sharing test and the kernel context/scheduler suites from
+`tools/zephyr-smoke.sh`; it expects the workspace at `$ZEPHYR_WORKSPACE`
+(default `~/zephyrproject`), the venv at `$ZEPHYR_VENV` (default
+`~/zephyr-venv`) and the SDK at `$ZEPHYR_SDK_INSTALL_DIR` (default
+`/opt/zephyr-sdk`). It is not part of `task ci` because it needs a full west
+workspace. Each run has a wall timeout so a hung build cannot block forever.
 
 ## Limits
 

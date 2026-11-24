@@ -93,10 +93,10 @@ works: `multicore_launch_core1` uses the same SIO FIFO handshake as TinyGo.
   `floatdemo` example asserts exact IEEE bit patterns.
 - Double-precision arithmetic goes through the RP2350 double coprocessor
   (DCP, CP4). `firmware/c/dcp` asserts the IEEE bit patterns for `+ - * /` and
-  `sqrt` through the SDK's canned sequences. Double varargs to `printf` (`%f`)
-  are still **not** correct: the model does not yet reproduce the SDK's
-  word-order path for variadic doubles. Print integer bit patterns instead of
-  `%f` until that lands.
+  `sqrt` through the SDK's canned sequences. A double `%f` value itself renders
+  correctly, but arguments **after** a variadic double can be misread (the
+  SDK's word-order path for doubles is not reproduced), so keep `%f` at the end
+  of a format string or print integer bit patterns.
 
 ## Debugging
 

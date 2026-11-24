@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -172,6 +173,10 @@ type Emu struct {
 	// resets and is shared by the panel and the board diagram.
 	inputs      map[string]InputValue
 	bootselHeld bool
+	// encQueue holds scripted encoder steps, applied one per interval so the
+	// firmware can sample the quadrature transitions after boot.
+	encQueue     map[string]int
+	encNextCycle uint64
 
 	ws      *devices.WS2812B
 	touch   *devices.CST816D
@@ -305,6 +310,8 @@ func (e *Emu) SetBoard(b *BoardDef) {
 // initInputsLocked resets the interactive controls to their board defaults.
 func (e *Emu) initInputsLocked() {
 	e.inputs = map[string]InputValue{}
+	e.encQueue = map[string]int{}
+	e.encNextCycle = 0
 	e.bootselHeld = false
 	if e.board == nil {
 		return
@@ -356,10 +363,14 @@ func (e *Emu) SetInput(id string, v InputValue) {
 }
 
 // StepEncoder advances a rotary encoder by one quadrature phase (+1 clockwise,
-// -1 counter-clockwise).
+// -1 counter-clockwise) immediately; the UI uses this per click/frame.
 func (e *Emu) StepEncoder(id string, delta int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.stepEncoderLocked(id, delta)
+}
+
+func (e *Emu) stepEncoderLocked(id string, delta int) {
 	in := e.inputDefLocked(id)
 	if in == nil || in.Kind != "encoder" {
 		return
@@ -368,6 +379,61 @@ func (e *Emu) StepEncoder(id string, delta int) {
 	v.Phase = uint8((int(v.Phase) + delta) & 3)
 	e.inputs[id] = v
 	e.applyInputsLocked()
+}
+
+// QueueEncoder schedules steps for a scripted run. They are delivered one per
+// 20 ms of virtual time so firmware that samples the quadrature lines after
+// boot sees each transition (a pre-boot phase jump would count nothing).
+func (e *Emu) QueueEncoder(id string, steps int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	in := e.inputDefLocked(id)
+	if in == nil || in.Kind != "encoder" || steps == 0 {
+		return
+	}
+	if e.encNextCycle == 0 && e.chip != nil {
+		e.encNextCycle = e.chip.Cycles + 20*cyclesPerMillisecond
+	}
+	e.encQueue[id] += steps
+}
+
+const cyclesPerMillisecond = 150_000
+
+// advanceScheduledInputsLocked delivers at most one queued encoder step per
+// interval. Called after each run chunk so UI and headless runs behave alike.
+func (e *Emu) advanceScheduledInputsLocked() {
+	if e.chip == nil || len(e.encQueue) == 0 {
+		return
+	}
+	if e.encNextCycle == 0 {
+		e.encNextCycle = e.chip.Cycles + 20*cyclesPerMillisecond
+	}
+	if e.chip.Cycles < e.encNextCycle {
+		return
+	}
+	ids := make([]string, 0, len(e.encQueue))
+	for id := range e.encQueue {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		n := e.encQueue[id]
+		if n == 0 {
+			delete(e.encQueue, id)
+			continue
+		}
+		delta := 1
+		if n < 0 {
+			delta = -1
+		}
+		e.stepEncoderLocked(id, delta)
+		e.encQueue[id] = n - delta
+		if e.encQueue[id] == 0 {
+			delete(e.encQueue, id)
+		}
+		e.encNextCycle = e.chip.Cycles + 20*cyclesPerMillisecond
+		return
+	}
 }
 
 // SetBootsel presses or releases the BOOTSEL button, pulling the QSPI chip
@@ -1563,6 +1629,7 @@ func (e *Emu) RunFor(cycles uint64) {
 	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped {
 		n := min(uint64(chunk), cycles)
 		e.chip.Run(n)
+		e.advanceScheduledInputsLocked()
 		e.flushMIDILocked()
 		e.checkScopeTriggerLocked()
 		cycles -= n
@@ -1614,6 +1681,7 @@ func (e *Emu) loop() {
 		boots := e.lastBoots
 		if running {
 			e.chip.Run(chunk)
+			e.advanceScheduledInputsLocked()
 			e.flushMIDILocked()
 			e.checkScopeTriggerLocked()
 			boots = e.chip.BootCount()

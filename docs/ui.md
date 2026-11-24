@@ -221,6 +221,9 @@ so a held BOOTSEL is visible to firmware but does not start picoboot.
 `--input ID=VALUE` sets controls before the first frame (repeatable), for
 screenshots and scripted demos: `on`/`off` for buttons, switches and BOOTSEL, a
 voltage for ADC inputs, and a signed step count for encoders (`enc1=+3`).
+Encoder steps from `--input` are queued and delivered one per 20 ms of virtual
+time, so firmware that samples the quadrature lines after boot counts them;
+interactive clicks apply immediately.
 
 `task ui:inputs` opens the `pico2-inputs` board with `firmware/c/inputs`, which
 prints the control state on the Console tab and mirrors the button/switch on

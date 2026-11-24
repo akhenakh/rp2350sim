@@ -290,7 +290,10 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   Reset; the board diagram button is momentary. Firmware reads the line through
   `SIO_GPIO_HI_IN` bit 27 (QSPI_CSN), as the TinyUSB BSP does, and the reset
   sample is recorded (`Chip.BootselAtBoot`). The synthetic bootrom does not
-  enter USB mass-storage/picoboot boot mode, so no disk appears.
+  enter USB mass-storage/picoboot boot mode, so no disk appears. On real
+  hardware a held BOOTSEL also jams QSPI CS and breaks XIP execution; the
+  emulator deliberately keeps flash readable so firmware that polls the pin
+  still runs.
 - **PIO OUT:** an empty OSR is refilled from the TX FIFO even when autopull is
   disabled, because TinyGo's `SetX`/`SetY` rely on it. Treat this as more
   permissive than hardware when porting hand-written PIO.

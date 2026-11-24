@@ -339,6 +339,7 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		contains "C RTOS context switch" "rtosctx ok a=5 b=5 nested=1 crit=1" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/inputs.elf" -seconds 0.5 -quiet 2>&1)
 		contains "C board inputs demo" "inputs: btn=0 sw=0 enc=0 boot=0" "$out"
+		contains "C board inputs float" "0.00 V" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/dcp.elf" -seconds 1 -quiet 2>&1)

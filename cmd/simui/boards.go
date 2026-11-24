@@ -572,10 +572,61 @@ func LoadBoards() ([]BoardDef, error) {
 		if b.Package == "qfn80" {
 			maxPin = 47
 		}
+		devicePins := map[int]string{}
+		addDevicePin := func(who string, pin int) {
+			if pin >= 0 {
+				devicePins[pin] = who
+			}
+		}
+		if d := b.LCD; d != nil {
+			addDevicePin("lcd cs", d.CS)
+			addDevicePin("lcd dc", d.DC)
+			addDevicePin("lcd rst", d.RST)
+			addDevicePin("lcd backlight", d.BacklightPin())
+		}
+		if d := b.Touch; d != nil {
+			addDevicePin("touch int", d.INT)
+			addDevicePin("touch rst", d.RSTPin())
+		}
+		if d := b.IMU; d != nil {
+			addDevicePin("imu int", d.INT)
+			addDevicePin("imu int2", d.INT2Pin())
+		}
+		if d := b.SD; d != nil {
+			addDevicePin("sd cs", d.CS)
+		}
+		if d := b.Ethernet; d != nil {
+			if d.Kind == "ch9120" {
+				addDevicePin("ch9120 cfg0", d.CFG0)
+				addDevicePin("ch9120 rst", d.RST)
+				addDevicePin("ch9120 tcpcs", d.TCPCS)
+			} else {
+				addDevicePin("ethernet cs", d.CS)
+			}
+		}
+		if d := b.WS2812; d != nil {
+			addDevicePin("ws2812", d.Pin)
+		}
+		if d := b.PSRAM; d != nil {
+			addDevicePin("psram cs", d.CS)
+		}
+		if d := b.Battery; d != nil {
+			addDevicePin("battery", d.Pin)
+		}
+		if d := b.Audio; d != nil {
+			addDevicePin("audio bclk", d.BCLK)
+			addDevicePin("audio lrclk", d.LRCLK)
+			addDevicePin("audio data", d.Data)
+			addDevicePin("audio clock", d.Clock)
+			addDevicePin("audio pwm", d.Pin)
+		}
 		usedPins := map[int]string{}
 		checkPin := func(who string, pin int) error {
 			if pin < 0 || pin > maxPin {
 				return fmt.Errorf("%s pin must be 0..%d", who, maxPin)
+			}
+			if owner, ok := devicePins[pin]; ok {
+				return fmt.Errorf("%s conflicts with %s on GP%d", who, owner, pin)
 			}
 			if prev, ok := usedPins[pin]; ok {
 				return fmt.Errorf("%s and %s both use GP%d", prev, who, pin)
@@ -635,8 +686,8 @@ func LoadBoards() ([]BoardDef, error) {
 				if err := checkPin(in.ID, in.Pin); err != nil {
 					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 				}
-				if in.Max <= in.Min {
-					in.Min, in.Max = 0, 3.3
+				if in.Max <= 0 {
+					in.Max = 3.3
 				}
 				in.Min = max(in.Min, 0)
 				in.Max = min(in.Max, 3.3)

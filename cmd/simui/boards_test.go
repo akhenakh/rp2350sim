@@ -260,3 +260,29 @@ func TestEmbeddedInputsBoard(t *testing.T) {
 		t.Fatalf("pico2 bootsel input = %+v", pico)
 	}
 }
+
+// TestBoardsADCAndDevicePinValidation covers the audit fixes: min-only ADC
+// ranges default max to 3.3 V, and an input may not claim a device pin.
+func TestBoardsADCAndDevicePinValidation(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: adc
+    inputs:
+      - { kind: adc, id: p, pin: 26, min: 1.0 }
+`)
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boards[0].Inputs[0]; got.Min != 1.0 || got.Max != 3.3 {
+		t.Fatalf("min-only ADC range = %v..%v, want 1..3.3", got.Min, got.Max)
+	}
+	writeBoards(t, `boards:
+  - id: clash
+    lcd: { spi: 0, cs: 17, dc: 16, rst: 20, width: 240, height: 135 }
+    inputs:
+      - { kind: button, id: b, pin: 17 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("input on the LCD chip select was accepted")
+	}
+}

@@ -61,7 +61,7 @@ zbuild() {
 run() {
 	local name=$1
 	shift
-	"$EMU" -fw "$OUT/$name/zephyr/zephyr.elf" -seconds 20 -quiet "$@" 2>&1
+	"$EMU" -fw "$OUT/$name/zephyr/zephyr.elf" -seconds 20 -wall-timeout 180s -quiet "$@" 2>&1
 }
 
 if zbuild hello zephyr/samples/hello_world; then
@@ -92,6 +92,27 @@ if zbuild fpu zephyr/tests/kernel/fpu_sharing/generic -- -DPI_NUM_ITERATIONS=500
 	contains "Zephyr FPU sharing" "PROJECT EXECUTION SUCCESSFUL" "$out"
 else
 	bad "Zephyr fpu_sharing build" "$(tail -20 "$OUT/fpu-build.log")"
+fi
+
+if zbuild context zephyr/tests/kernel/context; then
+	out=$(run context -seconds 10 -expect "PROJECT EXECUTION SUCCESSFUL" -stop-on-expect)
+	contains "Zephyr kernel context" "PROJECT EXECUTION SUCCESSFUL" "$out"
+else
+	bad "Zephyr context build" "$(tail -20 "$OUT/context-build.log")"
+fi
+
+if zbuild sched zephyr/tests/kernel/sched/schedule_api; then
+	out=$(run sched -seconds 25 -expect "PROJECT EXECUTION SUCCESSFUL" -stop-on-expect)
+	contains "Zephyr schedule_api" "PROJECT EXECUTION SUCCESSFUL" "$out"
+else
+	bad "Zephyr schedule_api build" "$(tail -20 "$OUT/sched-build.log")"
+fi
+
+if zbuild phil zephyr/samples/philosophers; then
+	out=$(run phil -seconds 1 -expect "Philosopher" -stop-on-expect)
+	contains "Zephyr philosophers" "Philosopher" "$out"
+else
+	bad "Zephyr philosophers build" "$(tail -20 "$OUT/phil-build.log")"
 fi
 
 if [ "$fail" -ne 0 ]; then
