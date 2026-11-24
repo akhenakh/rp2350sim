@@ -4,12 +4,14 @@ package rp2350
 // trigger (or expiry) resets the chip. The Pico SDK's watchdog_reboot writes
 // scratch registers and then either sets TRIGGER (delay 0) or ENABLE + LOAD.
 type watchdogBlock struct {
-	chip     *Chip
-	block    *regBlock
-	running  bool
-	deadline uint64 // virtual microseconds
-	load     uint32
-	reason   uint32
+	chip           *Chip
+	block          *regBlock
+	running        bool
+	deadline       uint64 // virtual microseconds
+	remaining      uint32
+	remainingValid bool
+	load           uint32
+	reason         uint32
 	// scratch survives a watchdog/chip reset in hardware; the SDK stores the
 	// "enabled reboot" marker in scratch[4].
 	scratch [8]uint32
@@ -36,6 +38,8 @@ func newWatchdog(c *Chip) *watchdogBlock {
 	w.block.resetFn = func(c *Chip) {
 		w.running = false
 		w.deadline = 0
+		w.remaining = 0
+		w.remainingValid = false
 		w.load = 0
 		for i := range w.scratch {
 			w.block.regs[(wdRegScratch+uint32(i)*4)/4] = w.scratch[i]
@@ -47,20 +51,24 @@ func newWatchdog(c *Chip) *watchdogBlock {
 func (w *watchdogBlock) read(c *Chip, off uint32) (uint32, bool) {
 	switch off {
 	case wdRegCtrl:
-		v := w.block.regs[0] & wdTimeMask
+		v := w.block.regs[0] &^ wdTimeMask
 		if w.running {
-			now := c.NowMicros()
-			remaining := uint32(0)
-			if w.deadline > now {
-				remaining = uint32(min(w.deadline-now, uint64(wdTimeMask)))
-			}
-			v |= wdCtrlEnable | remaining
+			v |= wdCtrlEnable | w.remainingAt(c.NowMicros())
+		} else if w.remainingValid {
+			v |= w.remaining
 		}
 		return v, true
 	case wdRegReason:
 		return w.reason, true
 	}
 	return 0, false
+}
+
+func (w *watchdogBlock) remainingAt(now uint64) uint32 {
+	if w.deadline <= now {
+		return 0
+	}
+	return uint32(min(w.deadline-now, uint64(wdTimeMask)))
 }
 
 func (w *watchdogBlock) write(c *Chip, off uint32, v uint32) {
@@ -74,21 +82,30 @@ func (w *watchdogBlock) write(c *Chip, off uint32, v uint32) {
 	case wdRegCtrl:
 		if v&wdCtrlTrigger != 0 {
 			w.running = false
+			w.remainingValid = false
 			w.block.regs[0] = 0
 			w.reason |= wdReasonForce
 			c.requestReset("watchdog", 0)
 			return
 		}
 		if v&wdCtrlEnable == 0 {
+			if w.running {
+				w.remaining = w.remainingAt(c.NowMicros())
+				w.remainingValid = true
+			}
 			w.running = false
 			w.block.regs[0] = v & wdTimeMask
 			return
 		}
-		delay := w.load
-		if delay == 0 {
-			delay = v & wdTimeMask
+		delay := w.remaining
+		if !w.remainingValid {
+			delay = w.load
+			if delay == 0 {
+				delay = v & wdTimeMask
+			}
 		}
 		w.running = true
+		w.remainingValid = false
 		w.deadline = c.NowMicros() + uint64(delay)
 		w.block.regs[0] = wdCtrlEnable | (v & wdTimeMask)
 	case wdRegLoad:
@@ -96,6 +113,9 @@ func (w *watchdogBlock) write(c *Chip, off uint32, v uint32) {
 		w.block.regs[wdRegLoad/4] = w.load
 		if w.running {
 			w.deadline = c.NowMicros() + uint64(w.load)
+		} else {
+			w.remaining = w.load
+			w.remainingValid = true
 		}
 	}
 }
@@ -105,6 +125,8 @@ func (w *watchdogBlock) tick(now uint64) {
 		return
 	}
 	w.running = false
+	w.remaining = 0
+	w.remainingValid = false
 	w.reason |= wdReasonTimer
 	w.chip.requestReset("watchdog", 0)
 }

@@ -49,6 +49,69 @@ func TestPOWMANAONTimer(t *testing.T) {
 	}
 }
 
+func TestPOWMANStopSamplesElapsedTime(t *testing.T) {
+	c := New()
+	writeAONValue(c, powmanBase+powmanSetTime0, 1000)
+	c.Write32(powmanBase+powmanTimer, powmanTimerRun)
+	c.Cycles += 5*cyclesPerMillisecond + cyclesPerMicrosecond/2
+	c.Write32(powmanBase+powmanTimer, 0)
+	if got := c.Read32(powmanBase + powmanReadLower); got != 1005 {
+		t.Fatalf("stopped time = %d, want 1005", got)
+	}
+	c.Cycles += 10 * cyclesPerMillisecond
+	if got := c.Read32(powmanBase + powmanReadLower); got != 1005 {
+		t.Fatalf("stopped time advanced to %d", got)
+	}
+}
+
+func TestPOWMANAlarmClearPreservesForcedINTF(t *testing.T) {
+	c := New()
+	writeAONValue(c, powmanBase+powmanAlarm0, 1)
+	c.Write32(powmanBase+powmanINTE, powmanIntTimer)
+	c.Write32(powmanBase+powmanINTF, powmanIntTimer)
+	c.Write32(powmanBase+powmanTimer, powmanTimerRun|powmanTimerAlarmEnab)
+	c.Cycles = 2 * cyclesPerMillisecond
+	c.powman.tick(c)
+	if c.Read32(powmanBase+powmanINTR)&powmanIntTimer == 0 {
+		t.Fatal("alarm did not fire")
+	}
+
+	c.Write32(powmanBase+powmanTimer, powmanTimerRun|powmanTimerAlarmEnab|powmanTimerFired)
+	if c.Read32(powmanBase+powmanINTR)&powmanIntTimer != 0 {
+		t.Fatal("raw alarm did not clear")
+	}
+	if c.Read32(powmanBase+powmanINTF)&powmanIntTimer == 0 {
+		t.Fatal("alarm clear cleared software-forced INTF")
+	}
+	if c.Read32(powmanBase+powmanINTS)&powmanIntTimer == 0 {
+		t.Fatal("forced interrupt missing from INTS")
+	}
+	if c.NVIC.pending[powmanIRQ/32]&(1<<uint(powmanIRQ%32)) == 0 {
+		t.Fatal("forced interrupt left IRQ deasserted")
+	}
+	c.Write32(powmanBase+powmanINTF, 0)
+	if c.NVIC.pending[powmanIRQ/32]&(1<<uint(powmanIRQ%32)) != 0 {
+		t.Fatal("IRQ remained pending after INTF was cleared")
+	}
+}
+
+func TestPOWMANIgnoresProtectedTimeWrites(t *testing.T) {
+	c := New()
+	writeAONValue(c, powmanBase+powmanSetTime0, 1000)
+	c.Write32(powmanBase+powmanTimer, powmanTimerRun)
+	c.Write32(powmanBase+powmanSetTime0+12, 2000)
+	if got := c.Read32(powmanBase + powmanSetTime0 + 12); got != 1000 {
+		t.Fatalf("SET_TIME changed while running: %d", got)
+	}
+
+	writeAONValue(c, powmanBase+powmanAlarm0, 1010)
+	c.Write32(powmanBase+powmanTimer, powmanTimerRun|powmanTimerAlarmEnab)
+	c.Write32(powmanBase+powmanAlarm0+12, 9999)
+	if got := c.Read32(powmanBase + powmanAlarm0 + 12); got != 1010 {
+		t.Fatalf("ALARM_TIME changed while enabled: %d", got)
+	}
+}
+
 // TestPOWMANClearAlias follows pico-sdk's powman_clear_bits path: the +0x3000
 // alias carries the password in the top half and must still update the timer
 // state and clear the ALARM latch.

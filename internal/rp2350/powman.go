@@ -121,21 +121,30 @@ func (p *powmanBlock) write(c *Chip, off, v uint32) {
 	switch off {
 	case powmanSetTime0, powmanSetTime0 + 4, powmanSetTime0 + 8, powmanSetTime0 + 12:
 		shift := (3 - (off-powmanSetTime0)/4) * 16
-		p.setTime = p.setTime&^(0xFFFF<<shift) | uint64(v&0xFFFF)<<shift
-		if !p.running {
+		if p.running {
+			// regBlock.write has already stored v; restore the protected field.
+			p.block.regs[off/4] = uint32(p.setTime>>shift) & 0xffff
+		} else {
+			p.setTime = p.setTime&^(0xFFFF<<shift) | uint64(v&0xFFFF)<<shift
 			p.timeBase = p.setTime
 		}
 	case powmanAlarm0, powmanAlarm0 + 4, powmanAlarm0 + 8, powmanAlarm0 + 12:
 		shift := (3 - (off-powmanAlarm0)/4) * 16
-		p.alarm = p.alarm&^(0xFFFF<<shift) | uint64(v&0xFFFF)<<shift
+		if p.alarmOn {
+			p.block.regs[off/4] = uint32(p.alarm>>shift) & 0xffff
+		} else {
+			p.alarm = p.alarm&^(0xFFFF<<shift) | uint64(v&0xFFFF)<<shift
+		}
 	case powmanTimer:
 		wasRunning := p.running
+		if wasRunning && v&powmanTimerRun == 0 {
+			// Sample before changing running: nowMS returns timeBase while stopped.
+			p.timeBase = p.nowMS(c)
+		}
 		p.running = v&powmanTimerRun != 0
 		if p.running && !wasRunning {
 			p.baseCyc = c.Cycles
 			p.timeBase = p.setTime
-		} else if !p.running && wasRunning {
-			p.timeBase = p.nowMS(c)
 		}
 		if v&powmanTimerClear != 0 {
 			p.timeBase = 0
@@ -146,10 +155,9 @@ func (p *powmanBlock) write(c *Chip, off, v uint32) {
 		if v&powmanTimerUseXOSC != 0 {
 			p.useXOSC = true
 		}
-		if v&powmanTimerFired != 0 { // write 1 to clear the fired alarm
+		if v&powmanTimerFired != 0 { // write 1 to clear the raw fired alarm
 			p.fired = false
 			p.intr &^= powmanIntTimer
-			p.force &^= powmanIntTimer
 		}
 	case powmanINTR:
 		// The timer and state raw bits are read-only; they clear when their
@@ -202,12 +210,10 @@ func (p *powmanBlock) clear(c *Chip, off, v uint32) {
 		return
 	case powmanTimer:
 		if v&powmanTimerFired != 0 {
-			// The SDK clears the alarm through this alias. ALARM is WC, so
-			// apply the clear here rather than relying on the zero it leaves
-			// in the register.
+			// The SDK clears the raw alarm through this alias. Software-forced
+			// INTF bits are independent and must remain set.
 			p.fired = false
 			p.intr &^= powmanIntTimer
-			p.force &^= powmanIntTimer
 		}
 	}
 	next := p.block.regs[off/4] &^ v
