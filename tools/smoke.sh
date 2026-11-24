@@ -82,6 +82,9 @@ contains "SD card identity" "SDHC/SDXC card" "$out"
 contains "SD FAT16 root directory" "file: hello world.txt 20 bytes" "$out"
 
 # --- multicore scheduler ----------------------------------------------------
+# pico2 defaults to the USB CDC console, so bytes printed before the host
+# enumerates are dropped exactly like on hardware. The completion line, printed
+# two 200 ms sleeps later, is the reliable proof that both cores ran tasks.
 out=$("$EMU" -fw "$BUILD/cores.elf" -seconds 1.5 2>&1)
 contains "core 1 runs tasks" "cores: done" "$out"
 contains "core 1 launched" '"core1_launches":1' "$out"
