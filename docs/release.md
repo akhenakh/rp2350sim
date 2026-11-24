@@ -61,8 +61,8 @@ commands.
 
 ## AUR
 
-The Arch package is published as `rp2350sim` in the AUR and builds both
-programs from the release source tarball. Install it with an AUR helper:
+The Arch package is `rp2350sim` in the AUR and builds both programs from the
+release source tarball. Install it with an AUR helper:
 
 ```sh
 yay -S rp2350sim
@@ -71,9 +71,9 @@ paru -S rp2350sim
 ```
 
 The package installs `/usr/bin/rp2350sim` and `/usr/bin/rp2350sim-ui`. The
-current PKGBUILD targets `v0.1.0`; after that tag is published, update its
-checksum with `updpkgsums` and regenerate `.SRCINFO` with
-`makepkg --printsrcinfo > .SRCINFO` before uploading.
+current PKGBUILD targets `v0.1.0` and carries the published source checksum.
+For a new release, bump `pkgver`, run `updpkgsums`, and regenerate `.SRCINFO`
+with `makepkg --printsrcinfo > .SRCINFO` before updating the AUR.
 
 ## Local checks
 
