@@ -53,7 +53,8 @@ type NVIC struct {
 	mpuCtrl uint32
 	mpuRnr  uint32
 	mpuRbar [mpuRegions]uint32
-	mpuRasr [mpuRegions]uint32
+	mpuRlar [mpuRegions]uint32
+	mpuMair [2]uint32
 
 	sauCtrl uint32
 	sauRnr  uint32
@@ -93,7 +94,8 @@ func (n *NVIC) reset() {
 	n.mpuCtrl = 0
 	n.mpuRnr = 0
 	n.mpuRbar = [mpuRegions]uint32{}
-	n.mpuRasr = [mpuRegions]uint32{}
+	n.mpuRlar = [mpuRegions]uint32{}
+	n.mpuMair = [2]uint32{}
 	n.sauCtrl = 0
 	n.sauRnr = 0
 	n.sauRbar = [mpuRegions]uint32{}
@@ -103,6 +105,9 @@ func (n *NVIC) reset() {
 	n.pendNMI = false
 	n.activeSys = 0
 	n.activeCount = 0
+	if cpu := n.cpu(); cpu != nil {
+		cpu.SleepOnExit = false
+	}
 	n.tick.reset()
 	n.syncActive()
 }
@@ -480,6 +485,12 @@ func (n *NVIC) read(off uint32) uint32 {
 		// SHCSR: report the active system exceptions alongside the stored
 		// enable/pending bits.
 		v := n.shcsr
+		if n.activeSys&(1<<excNMI) != 0 {
+			v |= 1 << 5 // NMIACT
+		}
+		if n.activeSys&(1<<excHardFault) != 0 {
+			v |= 1 << 2 // HARDFAULTACT
+		}
 		if n.activeSys&(1<<excSVCall) != 0 {
 			v |= 1 << 7 // SVCALLACT
 		}
@@ -509,17 +520,19 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off == 0xD9C:
 		return n.mpuRbar[n.mpuRnr%mpuRegions]
 	case off == 0xDA0:
-		return n.mpuRasr[n.mpuRnr%mpuRegions]
-	case off >= 0xDA4 && off < 0xDB0: // MPU_RBAR_A1..A3, RASR_A1..A3
-		i := (off - 0xDA4) / 8
-		if (off-0xDA4)%8 == 0 {
+		return n.mpuRlar[n.mpuRnr%mpuRegions]
+	case off >= 0xDA4 && off < 0xDC0: // MPU_RBAR_A1..A3, RLAR_A1..A3
+		i := (off - 0xDA4) / 4
+		if (off-0xDA4)&4 == 0 {
 			return n.mpuRbar[(n.mpuRnr+i)%mpuRegions]
 		}
-		return n.mpuRasr[(n.mpuRnr+i)%mpuRegions]
+		return n.mpuRlar[(n.mpuRnr+i)%mpuRegions]
+	case off == 0xDC0 || off == 0xDC4:
+		return n.mpuMair[(off-0xDC0)/4]
 	case off == 0xDD0:
 		return n.sauCtrl
-	case off == 0xDD4: // SAU_TYPE: no regions, the whole map is attributed
-		return 0
+	case off == 0xDD4:
+		return mpuRegions
 	case off == 0xDD8:
 		return n.sauRnr
 	case off == 0xDDC:
@@ -591,6 +604,10 @@ func (n *NVIC) write(off, v uint32) {
 		if v&(1<<31) != 0 { // NMIPENDSET
 			n.pendSystem(excNMI)
 		}
+		if v&(1<<30) != 0 { // PENDNMICLR
+			n.pendNMI = false
+			n.syncActive()
+		}
 		if v&(1<<28) != 0 { // PENDSVSET
 			n.pendSystem(excPendSV)
 		}
@@ -622,7 +639,10 @@ func (n *NVIC) write(off, v uint32) {
 			n.chip.resetCore(n.core)
 		}
 	case off == 0xD10:
-		n.scr = v
+		n.scr = v & 0x1E
+		if cpu != nil {
+			cpu.SleepOnExit = n.scr&(1<<1) != 0
+		}
 	case off == 0xD14:
 		n.ccr = (v & 0x0000051A) | 0x201
 	case off >= 0xD18 && off < 0xD24: // SHPR
@@ -642,30 +662,32 @@ func (n *NVIC) write(off, v uint32) {
 	case off == 0xD38:
 		n.bfar = v
 	case off == 0xD88: // CPACR
-		n.cpacr = v & 0x00F0_0000
+		n.cpacr = v & 0x00F0_FFFF
 	case off == 0xD94:
-		n.mpuCtrl = v
+		n.mpuCtrl = v & 7
 	case off == 0xD98:
-		n.mpuRnr = v & 0xFF
+		n.mpuRnr = v & 7
 	case off == 0xD9C:
 		n.mpuRbar[n.mpuRnr%mpuRegions] = v
 	case off == 0xDA0:
-		n.mpuRasr[n.mpuRnr%mpuRegions] = v
-	case off >= 0xDA4 && off < 0xDB0:
-		i := (off - 0xDA4) / 8
-		if (off-0xDA4)%8 == 0 {
+		n.mpuRlar[n.mpuRnr%mpuRegions] = v & 0xFFFFFFEF
+	case off >= 0xDA4 && off < 0xDC0:
+		i := (off - 0xDA4) / 4
+		if (off-0xDA4)&4 == 0 {
 			n.mpuRbar[(n.mpuRnr+i)%mpuRegions] = v
 		} else {
-			n.mpuRasr[(n.mpuRnr+i)%mpuRegions] = v
+			n.mpuRlar[(n.mpuRnr+i)%mpuRegions] = v & 0xFFFFFFEF
 		}
+	case off == 0xDC0 || off == 0xDC4:
+		n.mpuMair[(off-0xDC0)/4] = v
 	case off == 0xDD0:
-		n.sauCtrl = v
+		n.sauCtrl = v & 3
 	case off == 0xDD8:
 		n.sauRnr = v & 0xFF
 	case off == 0xDDC:
-		n.sauRbar[n.sauRnr%mpuRegions] = v
+		n.sauRbar[n.sauRnr%mpuRegions] = v & 0xFFFFFFE0
 	case off == 0xDE0:
-		n.sauRlar[n.sauRnr%mpuRegions] = v
+		n.sauRlar[n.sauRnr%mpuRegions] = v & 0xFFFFFFE3
 	case off == 0xF00: // STIR: v is an interrupt number
 		n.Pend(int(v & 0x1FF))
 	case off == 0xF34: // FPCCR

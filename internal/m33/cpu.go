@@ -111,6 +111,8 @@ type CPU struct {
 	// SleepOnEvent marks a WFE sleep, which SEV may wake. WFI sleeps only
 	// end on an interrupt.
 	SleepOnEvent bool
+	// SleepOnExit mirrors SCR.SLEEPONEXIT for this core.
+	SleepOnExit bool
 	// Parked keeps a core stopped until it is explicitly started (core 1
 	// bootrom wait loop).
 	Parked bool
@@ -191,6 +193,7 @@ func (c *CPU) Reset() {
 	c.IRQPending = false
 	c.Sleeping = false
 	c.SleepOnEvent = false
+	c.SleepOnExit = false
 	c.Halted = false
 	c.HaltReason = ""
 	c.Cycles = 0
@@ -444,6 +447,11 @@ func (c *CPU) condTrue(cond uint8) bool {
 
 // Exception enters handler mode for the given exception number.
 func (c *CPU) Exception(n uint32) {
+	vector := c.Bus.Read32(c.VectorBase() + 4*n)
+	if vector&1 == 0 {
+		c.Halt("INVSTATE: exception vector has Thumb bit clear")
+		return
+	}
 	fromThread := c.IPSR == 0
 	usePSP := fromThread && c.CONTROL&2 != 0
 	sp := c.MSP
@@ -539,8 +547,8 @@ func (c *CPU) Exception(n uint32) {
 	if c.Interrupts != nil {
 		c.Interrupts.ExceptionEntered(n)
 	}
-	// PC is loaded from the vector table, with the Thumb bit stripped.
-	c.R[15] = c.Bus.Read32(c.VectorBase()+4*n) &^ 1
+	// PC is loaded from the validated vector table, with the Thumb bit stripped.
+	c.R[15] = vector &^ 1
 }
 
 // flushLazy writes the pending lazy FP frame and updates the stacked
@@ -665,6 +673,8 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 			c.CONTROL &^= 2
 		}
 		c.R[13] = sp
+		c.Sleeping = c.SleepOnExit && !c.IRQPending
+		c.SleepOnEvent = false
 	} else {
 		// Returning to a preempted handler: the frame is on MSP.
 		c.R[13] = c.MSP

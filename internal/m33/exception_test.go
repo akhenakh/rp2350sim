@@ -1,6 +1,9 @@
 package m33
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // fakeIRQ is a minimal controller: the tests drive exception entry directly
 // and only check the entry/return notifications.
@@ -90,6 +93,33 @@ func TestSVCFromThreadUsesPSP(t *testing.T) {
 	}
 	if len(irq.returned) != 1 || irq.returned[0] != 11 {
 		t.Fatalf("returned = %v, want [11]", irq.returned)
+	}
+}
+
+func TestExceptionRejectsArmVector(t *testing.T) {
+	bus := codeBus()
+	const (
+		vtor    = 0x8000
+		handler = 0x9000
+		msp     = 0x7000
+	)
+	bus.Write32(vtor+4*11, handler) // Thumb bit deliberately clear
+	bus.Write32(msp-32, 0xA5A5A5A5)
+	c := New(bus)
+	c.VTOR = vtor
+	c.MSP = msp
+	c.R[13] = msp
+
+	c.Exception(11)
+
+	if !c.Halted || !strings.Contains(c.HaltReason, "INVSTATE") {
+		t.Fatalf("even vector: halted=%v reason=%q, want INVSTATE halt", c.Halted, c.HaltReason)
+	}
+	if c.IPSR != 0 || c.R[15] == handler || c.MSP != msp {
+		t.Fatalf("even vector changed exception state: IPSR=%d PC=%#x MSP=%#x", c.IPSR, c.R[15], c.MSP)
+	}
+	if got := bus.Read32(msp - 32); got != 0xA5A5A5A5 {
+		t.Fatalf("even vector stacked a frame before rejection: %#x", got)
 	}
 }
 

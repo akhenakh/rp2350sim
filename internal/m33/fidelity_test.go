@@ -263,6 +263,7 @@ func TestExceptionFrameAlignsAndStacksXPSR(t *testing.T) {
 func TestExceptionClearsMonitor(t *testing.T) {
 	bus := newTestBusAt(0, 1<<16)
 	c := New(bus)
+	bus.Write32(4*15, 0x101)
 	c.loadExclusive(0x400, 0, 4)
 	if !c.monitorValid {
 		t.Fatal("monitor not set by LDREX")

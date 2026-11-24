@@ -590,6 +590,148 @@ func TestCore1LaunchInitialisesMSP(t *testing.T) {
 	}
 }
 
+func TestICSRPENDNMICLR(t *testing.T) {
+	c := New()
+	c.Write32(SCSBase+0xD04, 1<<31)
+	if got := c.Read32(SCSBase + 0xD04); got&(1<<31) == 0 {
+		t.Fatal("NMIPENDSET did not set PENDNMISET")
+	}
+	c.Write32(SCSBase+0xD04, 1<<30)
+	if got := c.Read32(SCSBase + 0xD04); got&(1<<31) != 0 {
+		t.Fatal("PENDNMICLR did not clear the pending NMI")
+	}
+	if c.NVIC.pendNMI || c.CPU0.IRQPending {
+		t.Fatal("PENDNMICLR left NMI controller state active")
+	}
+}
+
+func TestMPURegisterLayout(t *testing.T) {
+	c := New()
+	c.Write32(SCSBase+0xD88, 0x00F0FFFF)
+	if got := c.Read32(SCSBase + 0xD88); got != 0x00F0FFFF {
+		t.Fatalf("CPACR = %#x, want all documented fields", got)
+	}
+	c.Write32(SCSBase+0xD94, 0xFFFFFFFF)
+	if got := c.Read32(SCSBase + 0xD94); got != 7 {
+		t.Fatalf("MPU_CTRL = %#x, want 7", got)
+	}
+	c.Write32(SCSBase+0xD98, 0xFF)
+	if got := c.Read32(SCSBase + 0xD98); got != 7 {
+		t.Fatalf("MPU_RNR = %#x, want 7", got)
+	}
+	c.Write32(SCSBase+0xD9C, 0x12345678)
+	c.Write32(SCSBase+0xDA0, 0xFFFFFFEF)
+	if got := c.Read32(SCSBase + 0xD9C); got != 0x12345678 {
+		t.Fatalf("MPU_RBAR = %#x", got)
+	}
+	if got := c.Read32(SCSBase + 0xDA0); got != 0xFFFFFFEF {
+		t.Fatalf("MPU_RLAR = %#x", got)
+	}
+
+	aliases := []struct {
+		off   uint32
+		value uint32
+	}{
+		{0xDA4, 0x20000021}, // RBAR_A1, region 0
+		{0xDA8, 0x200001E1}, // RLAR_A1, region 0
+		{0xDAC, 0x20000241}, // RBAR_A2, region 1
+		{0xDB0, 0x20000301}, // RLAR_A2, region 1
+		{0xDB4, 0x20000461}, // RBAR_A3, region 2
+		{0xDB8, 0x20000581}, // RLAR_A3, region 2
+	}
+	for _, a := range aliases {
+		c.Write32(SCSBase+a.off, a.value)
+		if got := c.Read32(SCSBase + a.off); got != a.value {
+			t.Fatalf("MPU alias %#x = %#x, want %#x", a.off, got, a.value)
+		}
+	}
+	c.Write32(SCSBase+0xDC0, 0x44332211)
+	c.Write32(SCSBase+0xDC4, 0x88776655)
+	if got := c.Read32(SCSBase + 0xDC0); got != 0x44332211 {
+		t.Fatalf("MPU_MAIR0 = %#x", got)
+	}
+	if got := c.Read32(SCSBase + 0xDC4); got != 0x88776655 {
+		t.Fatalf("MPU_MAIR1 = %#x", got)
+	}
+}
+
+func TestSAURegisterLayout(t *testing.T) {
+	c := New()
+	if got := c.Read32(SCSBase + 0xDD4); got != 8 {
+		t.Fatalf("SAU_TYPE = %#x, want 8 regions", got)
+	}
+	c.Write32(SCSBase+0xDD0, 0xFFFFFFFF)
+	if got := c.Read32(SCSBase + 0xDD0); got != 3 {
+		t.Fatalf("SAU_CTRL = %#x, want 3", got)
+	}
+	c.Write32(SCSBase+0xDD8, 0x1FF)
+	if got := c.Read32(SCSBase + 0xDD8); got != 0xFF {
+		t.Fatalf("SAU_RNR = %#x, want 0xff", got)
+	}
+	c.Write32(SCSBase+0xDDC, 0x12345678)
+	c.Write32(SCSBase+0xDE0, 0xFFFFFFFF)
+	if got := c.Read32(SCSBase + 0xDDC); got != 0x12345660 {
+		t.Fatalf("SAU_RBAR = %#x, want aligned base", got)
+	}
+	if got := c.Read32(SCSBase + 0xDE0); got != 0xFFFFFFE3 {
+		t.Fatalf("SAU_RLAR = %#x, want documented fields", got)
+	}
+}
+
+func TestSHCSRActiveStates(t *testing.T) {
+	c := New()
+	cases := []struct {
+		exc  uint32
+		bit  uint32
+		name string
+	}{
+		{excNMI, 5, "NMIACT"},
+		{excHardFault, 2, "HARDFAULTACT"},
+		{excSVCall, 7, "SVCALLACT"},
+		{excPendSV, 10, "PENDSVACT"},
+		{excSysTick, 11, "SYSTICKACT"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c.NVIC.activeSys = 0
+			c.NVIC.ExceptionEntered(tc.exc)
+			if got := c.Read32(SCSBase + 0xD24); got&(1<<tc.bit) == 0 {
+				t.Fatalf("SHCSR = %#x, want %s", got, tc.name)
+			}
+		})
+	}
+}
+
+func TestSleepOnExit(t *testing.T) {
+	c := New()
+	const (
+		vtor = 0x20000000
+		code = 0x20001000
+		psp  = 0x20006020
+	)
+	trapCore(c, vtor, code)
+	excHandler(c, vtor, excSVCall)
+	c.CPU0.CONTROL = 2
+	c.CPU0.PSP = psp
+	c.CPU0.R[13] = psp
+	c.Write16(code, 0xDF00) // svc #0
+	c.Write32(SCSBase+0xD10, 1<<1)
+
+	c.Step()
+	if c.CPU0.IPSR != excSVCall {
+		t.Fatalf("SVC did not enter handler mode: IPSR=%d", c.CPU0.IPSR)
+	}
+	c.Step() // bx lr
+	if c.CPU0.IPSR != 0 || !c.CPU0.Sleeping || c.CPU0.SleepOnEvent {
+		t.Fatalf("return-to-thread: IPSR=%d sleeping=%v eventSleep=%v", c.CPU0.IPSR, c.CPU0.Sleeping, c.CPU0.SleepOnEvent)
+	}
+	c.Write32(SCSBase+0x100, 1) // enable IRQ 0
+	c.NVIC.Pend(0)
+	if c.CPU0.Sleeping {
+		t.Fatal("SLEEPONEXIT sleeper did not wake on an interrupt")
+	}
+}
+
 // TestFPCCRResetAndFPCARWindow checks the PPB view of the per-core FP context
 // registers.
 func TestFPCCRResetAndFPCARWindow(t *testing.T) {
