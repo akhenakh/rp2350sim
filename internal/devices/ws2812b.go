@@ -71,6 +71,10 @@ func (w *WS2812B) Tick() {
 
 func (w *WS2812B) latch() {
 	n := len(w.bits) / 24
+	if n == 0 {
+		w.bits = w.bits[:0]
+		return
+	}
 	colors := make([]color.RGBA, 0, n)
 	for i := range n {
 		var g, r, b uint8

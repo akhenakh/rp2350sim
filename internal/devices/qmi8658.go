@@ -72,6 +72,7 @@ func (m *QMI8658) reset() {
 	m.readPtr = 0
 	m.writeBase = true
 	m.ready = false
+	m.lastTick = m.Chip.Cycles
 	m.driveINT(false)
 }
 
@@ -99,14 +100,16 @@ func (m *QMI8658) Enabled() (accel, gyro bool) {
 // deterministic in virtual time.
 func (m *QMI8658) Tick() {
 	now := m.Chip.Cycles
+	accel, gyro := m.Enabled()
+	if !accel && !gyro {
+		m.lastTick = now
+		m.clearReady()
+		return
+	}
 	if now < m.lastTick+m.Interval {
 		return
 	}
 	m.lastTick = now
-	accel, gyro := m.Enabled()
-	if !accel && !gyro {
-		return
-	}
 	m.ready = true
 	m.driveINT(true)
 }
@@ -232,6 +235,13 @@ func (m *QMI8658) Write(b byte) {
 		return
 	}
 	m.regs[m.readPtr] = b
+	if m.readPtr == qmiCTRL7 {
+		accel, gyro := m.Enabled()
+		if !accel && !gyro {
+			m.lastTick = m.Chip.Cycles
+			m.clearReady()
+		}
+	}
 	m.readPtr++
 }
 

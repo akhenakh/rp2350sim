@@ -39,16 +39,21 @@ type CST816D struct {
 	readPtr   byte
 	writeBase bool // the next write is a register pointer, not data
 	touchRead bool
+	resetting bool
 
-	x, y    int
-	pressed bool
-	gesture byte
+	x, y           int
+	pressed        bool
+	touchPending   bool
+	gesture        byte
+	gesturePending bool
 
-	// A touch injected while the shared reset line is asserted is replayed
-	// when the controller leaves reset.
-	wantValid    bool
-	wantX, wantY int
-	wantPressed  bool
+	// Inputs injected while the shared reset line is asserted are replayed
+	// independently when the controller leaves reset.
+	wantValid        bool
+	wantX, wantY     int
+	wantPressed      bool
+	wantGesture      byte
+	wantGestureValid bool
 }
 
 // NewCST816D creates a touch controller wired to the given reset and interrupt
@@ -78,13 +83,37 @@ func (d *CST816D) reset() {
 	d.touchRead = false
 	d.x, d.y = 0, 0
 	d.pressed = false
+	d.touchPending = false
 	d.gesture = 0
+	d.gesturePending = false
 	d.driveINT(false)
 }
 
 // inReset reports whether the shared reset line is holding the chip down.
 func (d *CST816D) inReset() bool {
 	return resetAsserted(d.Chip, d.RST)
+}
+
+// syncReset applies reset-line transitions even when no I2C access is active.
+// Pending host input survives reset and is replayed on the release edge.
+func (d *CST816D) syncReset() bool {
+	if d.inReset() {
+		if !d.resetting {
+			d.resetting = true
+			d.reset()
+		}
+		d.driveINT(false)
+		return true
+	}
+	if d.resetting {
+		d.resetting = false
+		d.applyPending()
+	}
+	return false
+}
+
+func (d *CST816D) updateINT() {
+	d.driveINT(d.touchPending || d.gesturePending)
 }
 
 // SetTouch injects a touch point in panel coordinates. A press or a move
@@ -102,9 +131,9 @@ func (d *CST816D) SetTouch(x, y int, pressed bool) {
 	if y >= d.Height {
 		y = d.Height - 1
 	}
-	d.wantValid = true
-	d.wantX, d.wantY, d.wantPressed = x, y, pressed
-	if d.inReset() {
+	if d.syncReset() {
+		d.wantValid = true
+		d.wantX, d.wantY, d.wantPressed = x, y, pressed
 		return
 	}
 	changed := pressed != d.pressed || x != d.x || y != d.y
@@ -112,26 +141,31 @@ func (d *CST816D) SetTouch(x, y int, pressed bool) {
 	if !pressed {
 		if d.pressed {
 			d.pressed = false
+			d.touchPending = false
 			d.writePoint()
-			d.driveINT(false)
+			d.updateINT()
 		}
 		return
 	}
 	d.pressed = true
 	if changed {
+		d.touchPending = true
 		d.writePoint()
-		d.driveINT(true)
+		d.updateINT()
 	}
 }
 
 // SetGesture records a gesture identifier (0 means none) for the next read.
 func (d *CST816D) SetGesture(g byte) {
-	if d.inReset() {
+	if d.syncReset() {
+		d.wantGesture = g
+		d.wantGestureValid = true
 		return
 	}
 	d.gesture = g
 	d.regs[cstGestureID] = g
-	d.driveINT(true)
+	d.gesturePending = g != 0
+	d.updateINT()
 }
 
 // Last returns the current injected point and whether a finger is down.
@@ -175,29 +209,27 @@ func (d *CST816D) driveINT(high bool) {
 // BeginTransaction starts a new I2C transfer. The register pointer is kept
 // because a write of the pointer is followed by a repeated-start read.
 func (d *CST816D) BeginTransaction() {
-	if d.inReset() {
-		d.reset()
-	} else if d.wantValid {
-		d.applyWant()
-	}
+	d.syncReset()
 	d.writeBase = true
 	d.touchRead = false
 }
 
-// applyWant replays a touch that arrived while reset was asserted.
-func (d *CST816D) applyWant() {
-	if !d.wantValid {
-		return
+// applyPending replays input that arrived while reset was asserted.
+func (d *CST816D) applyPending() {
+	if d.wantValid {
+		d.wantValid = false
+		d.x, d.y = d.wantX, d.wantY
+		d.pressed = d.wantPressed
+		d.touchPending = d.pressed
+		d.writePoint()
 	}
-	d.wantValid = false
-	d.x, d.y = d.wantX, d.wantY
-	d.pressed = d.wantPressed
-	d.writePoint()
-	if d.pressed {
-		d.driveINT(true)
-	} else {
-		d.driveINT(false)
+	if d.wantGestureValid {
+		d.wantGestureValid = false
+		d.gesture = d.wantGesture
+		d.regs[cstGestureID] = d.gesture
+		d.gesturePending = d.gesture != 0
 	}
+	d.updateINT()
 }
 
 // EndTransaction completes the transfer. Reading the point consumes the INT
@@ -206,15 +238,15 @@ func (d *CST816D) applyWant() {
 func (d *CST816D) EndTransaction() {
 	if d.touchRead {
 		d.touchRead = false
-		d.driveINT(false)
+		d.touchPending = false
+		d.updateINT()
 	}
 	d.writeBase = true
 }
 
 // Write receives the register pointer followed by data bytes.
 func (d *CST816D) Write(b byte) {
-	if d.inReset() {
-		d.reset()
+	if d.syncReset() {
 		return
 	}
 	if d.writeBase {
@@ -227,24 +259,34 @@ func (d *CST816D) Write(b byte) {
 }
 
 // Read returns the pointed register and advances the pointer. Reading any part
-// of the point marks the report consumed.
+// of the point marks the touch report consumed; gesture reports are consumed
+// independently by reading the gesture register.
 func (d *CST816D) Read() byte {
-	if d.inReset() {
-		d.reset()
+	if d.syncReset() {
 		return 0
 	}
 	if d.readPtr >= cstFingerNum && d.readPtr <= cstYposL {
 		d.touchRead = true
 	}
 	v := d.regs[d.readPtr]
+	if d.readPtr == cstGestureID && d.gesturePending {
+		d.gesturePending = false
+		d.gesture = 0
+		d.regs[cstGestureID] = 0
+		d.updateINT()
+	}
 	d.readPtr++
 	return v
 }
 
-// Tick replays a pending injection once the shared reset line is released.
-// Firmware often resets the panel after the host has already queued a touch.
+// Tick applies reset-line transitions every cycle and replays pending input
+// once the shared reset line is released.
 func (d *CST816D) Tick() {
-	if d.wantValid && !d.inReset() {
-		d.applyWant()
+	if d.syncReset() {
+		d.driveINT(false)
+		return
+	}
+	if d.wantValid || d.wantGestureValid {
+		d.applyPending()
 	}
 }

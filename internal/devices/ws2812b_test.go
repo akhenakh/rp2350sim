@@ -69,3 +69,13 @@ func TestWS2812BDecode(t *testing.T) {
 		}
 	}
 }
+
+func TestWS2812BIgnoresIncompleteFrame(t *testing.T) {
+	c := rp2350.New()
+	w := NewWS2812B(c, 0)
+	w.bits = make([]byte, 23)
+	w.latch()
+	if w.Frames() != 0 || len(w.Colors()) != 0 {
+		t.Fatalf("incomplete frame latched: frames=%d colors=%v", w.Frames(), w.Colors())
+	}
+}

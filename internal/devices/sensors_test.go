@@ -189,3 +189,104 @@ func TestCST816DPressDuringReset(t *testing.T) {
 		t.Fatalf("finger count = %d, want 1", got)
 	}
 }
+
+func TestCST816DResetEveryTick(t *testing.T) {
+	c := rp2350.New()
+	d := NewCST816D(c, 0x15, 20, 29)
+	d.SetTouch(10, 20, true)
+	i2cWriteReg(d, cstDisSleep, 1)
+	if !c.Pins.Level(29) {
+		t.Fatal("INT is low before reset")
+	}
+
+	c.Pins.OE |= 1 << 20
+	c.Pins.Out &^= 1 << 20 // assert reset without an I2C access
+	d.Tick()
+	if c.Pins.Level(29) {
+		t.Fatal("INT stayed high while reset was held")
+	}
+	d.SetTouch(30, 40, true)
+	c.Pins.Out |= 1 << 20 // release reset
+	d.Tick()
+	if !c.Pins.Level(29) {
+		t.Fatal("queued touch was not replayed on release")
+	}
+	if got := i2cReadReg(d, cstDisSleep); got != 0 {
+		t.Fatalf("reset retained DisAutoSleep=%#x", got)
+	}
+}
+
+func TestCST816DGestureReportIndependent(t *testing.T) {
+	c := rp2350.New()
+	d := NewCST816D(c, 0x15, 20, 29)
+	d.SetTouch(10, 20, true)
+	d.SetGesture(0x01)
+
+	d.BeginTransaction()
+	d.Write(cstFingerNum)
+	d.BeginTransaction()
+	if got := d.Read(); got != 1 {
+		t.Fatalf("finger count = %d", got)
+	}
+	d.EndTransaction()
+	if !c.Pins.Level(29) {
+		t.Fatal("reading the point consumed the gesture interrupt")
+	}
+	if got := i2cReadReg(d, cstGestureID); got != 0x01 {
+		t.Fatalf("gesture = %#x, want 0x01", got)
+	}
+	if c.Pins.Level(29) {
+		t.Fatal("INT stayed high after the gesture was read")
+	}
+	if got := d.Gesture(); got != 0 {
+		t.Fatalf("consumed gesture = %#x, want 0", got)
+	}
+	if got := i2cReadReg(d, cstGestureID); got != 0 {
+		t.Fatalf("gesture register was not consumed: %#x", got)
+	}
+}
+
+func TestCST816DZeroGestureDoesNotAssertINT(t *testing.T) {
+	c := rp2350.New()
+	d := NewCST816D(c, 0x15, 20, 29)
+	d.SetGesture(0)
+	if c.Pins.Level(29) {
+		t.Fatal("zero gesture asserted INT")
+	}
+}
+
+func TestQMI8658ResetRestartsSampleInterval(t *testing.T) {
+	c := rp2350.New()
+	m := NewQMI8658(c, 0x6B, 14, -1)
+	i2cWriteReg(m, qmiCTRL7, 0x03)
+	c.Cycles = 100
+	i2cWriteReg(m, qmiReset, 0xB0)
+	i2cWriteReg(m, qmiCTRL7, 0x03)
+
+	c.Cycles += m.Interval - 1
+	m.Tick()
+	if c.Pins.Level(14) || m.ready {
+		t.Fatal("sample interval restarted before a full interval elapsed")
+	}
+	c.Cycles++
+	m.Tick()
+	if !c.Pins.Level(14) || !m.ready {
+		t.Fatal("sample interval did not restart after a full interval")
+	}
+}
+
+func TestQMI8658DisableClearsDataReady(t *testing.T) {
+	c := rp2350.New()
+	m := NewQMI8658(c, 0x6B, 14, -1)
+	i2cWriteReg(m, qmiCTRL7, 0x03)
+	c.Cycles = m.Interval
+	m.Tick()
+	if !c.Pins.Level(14) || !m.ready {
+		t.Fatal("sample did not assert data ready")
+	}
+
+	i2cWriteReg(m, qmiCTRL7, 0)
+	if c.Pins.Level(14) || m.ready || m.status() != 0 {
+		t.Fatal("disabling both sensors left data-ready or INT asserted")
+	}
+}
