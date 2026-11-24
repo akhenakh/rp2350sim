@@ -1,25 +1,49 @@
 package rp2350
 
-// pwmBlock models the RP2350 PWM block: eight slices, each with a counter, a
-// wrap value and two compare channels. Counters are derived from the virtual
-// clock on the way in, and pins whose function select is PWM are driven from
-// the resulting duty cycle.
+import "math/bits"
+
+// pwmBlock models the RP2350 PWM block. Counter and divider state advances
+// per system clock; pin levels are resolved from that state between register
+// ticks so fast outputs do not alias to the microsecond peripheral clock.
 type pwmBlock struct {
 	chip    *Chip
 	block   *regBlock
-	lastNow uint64
+	slices  [pwmSlices]pwmSliceState
+	enabled uint16
+}
+
+type pwmSliceState struct {
+	ctr         uint16
+	cc          uint32
+	top         uint16
+	divCounter  uint16
+	fracPhase   uint8
+	phaseDown   bool
+	phaseHold   bool
+	phaseRetard bool
+	previousB   bool
 }
 
 const (
-	pwmBase    = 0x400A8000
-	pwmStride  = 0x14
-	pwmSlices  = 12
-	pwmFuncSel = 4
+	pwmBase     = 0x400A8000
+	pwmStride   = 0x14
+	pwmSlices   = 12
+	pwmFuncSel  = 4
+	pwmGlobalEN = 0xF0
+
+	pwmCSREN      = 1 << 0
+	pwmCSRCorrect = 1 << 1
+	pwmCSRAInv    = 1 << 2
+	pwmCSRBInv    = 1 << 3
+	pwmCSRPhRet   = 1 << 6
+	pwmCSRPhAdv   = 1 << 7
 )
 
 func newPWM(c *Chip) *pwmBlock {
 	p := &pwmBlock{chip: c, block: newRegBlock(pwmBase, 0x1000)}
 	p.block.resetFn = func(c *Chip) { p.reset() }
+	p.block.readFn = p.read
+	p.block.writeFn = p.write
 	p.reset()
 	return p
 }
@@ -37,92 +61,278 @@ func pinSlice(pin int) int {
 // programmed TOP of 0 is legal and must not be rewritten.
 func (p *pwmBlock) reset() {
 	clear(p.block.regs)
-	p.lastNow = 0
+	p.slices = [pwmSlices]pwmSliceState{}
+	p.enabled = 0
 	for slice := range pwmSlices {
+		p.block.regs[(slice*pwmStride+0x04)/4] = 0x10
 		p.block.regs[(slice*pwmStride+0x10)/4] = 0xFFFF
+		p.slices[slice].top = 0xFFFF
 	}
 }
 
-// tick updates slice counters and PWM-driven pins from the microsecond clock.
-func (p *pwmBlock) tick(now uint64) {
-	if now == p.lastNow {
-		return // counters only need microsecond resolution
+func (p *pwmBlock) read(c *Chip, off uint32) (uint32, bool) {
+	if off == pwmGlobalEN {
+		return uint32(p.enabled), true
 	}
-	p.lastNow = now
-	for slice := range pwmSlices {
-		csr := p.block.regs[(slice*pwmStride+0)/4]
-		if csr&1 == 0 { // CSR_EN
+	if off >= pwmGlobalEN {
+		return 0, false
+	}
+	slice := int(off / pwmStride)
+	if slice >= pwmSlices {
+		return 0, false
+	}
+	switch off % pwmStride {
+	case 0x00:
+		return p.block.regs[off/4], true
+	case 0x04:
+		return p.block.regs[off/4] & 0xFFF, true
+	case 0x08:
+		return uint32(p.slices[slice].ctr), true
+	case 0x0C:
+		return p.block.regs[off/4], true
+	case 0x10:
+		return p.block.regs[off/4] & 0xFFFF, true
+	}
+	return 0, false
+}
+
+func (p *pwmBlock) write(c *Chip, off, v uint32) {
+	if off == pwmGlobalEN {
+		for slice := range pwmSlices {
+			csr := p.block.regs[slice*pwmStride/4]
+			csr = csr&^1 | (v>>uint(slice))&1
+			p.block.regs[slice*pwmStride/4] = csr
+			p.applyEnable(slice, csr&pwmCSREN != 0)
+		}
+		p.block.regs[off/4] = uint32(p.enabled)
+		return
+	}
+	if off >= pwmGlobalEN {
+		return
+	}
+	slice := int(off / pwmStride)
+	if slice >= pwmSlices {
+		return
+	}
+	switch off % pwmStride {
+	case 0x00:
+		p.writeCSR(slice, v)
+	case 0x04:
+		p.block.regs[off/4] = v & 0xFFF
+		s := &p.slices[slice]
+		s.fracPhase = 0
+		if p.enabled&(1<<uint(slice)) != 0 {
+			s.divCounter = uint16(pwmDividerPeriod(p.block.regs[off/4], &s.fracPhase) - 1)
+		}
+	case 0x08:
+		s := &p.slices[slice]
+		s.ctr = uint16(v)
+		s.phaseHold = false
+		s.phaseDown = false
+		p.block.regs[off/4] = uint32(s.ctr)
+	case 0x0C:
+		p.block.regs[off/4] = v
+		if p.enabled&(1<<uint(slice)) == 0 {
+			p.slices[slice].cc = v
+		}
+	case 0x10:
+		top := uint16(v)
+		p.block.regs[off/4] = uint32(top)
+		if p.enabled&(1<<uint(slice)) == 0 {
+			p.slices[slice].top = top
+		}
+	}
+}
+
+func (p *pwmBlock) writeCSR(slice int, v uint32) {
+	advance, retard := v&pwmCSRPhAdv, v&pwmCSRPhRet
+	oldMode := (p.block.regs[slice*pwmStride/4] >> 4) & 3
+	csr := v & 0xFF &^ (pwmCSRPhAdv | pwmCSRPhRet)
+	p.block.regs[slice*pwmStride/4] = csr
+	p.applyEnable(slice, csr&pwmCSREN != 0)
+	if csr&pwmCSREN == 0 {
+		return
+	}
+	if oldMode == 0 && (csr>>4)&3 != 0 {
+		p.slices[slice].previousB = p.pwmBLevel(slice)
+	}
+	if advance != 0 && !pwmFullSpeed(p.block.regs[slice*pwmStride/4+1]) {
+		p.advance(slice)
+	}
+	if retard != 0 {
+		p.slices[slice].phaseRetard = true
+		p.block.regs[slice*pwmStride/4] |= pwmCSRPhRet
+	}
+}
+
+func (p *pwmBlock) applyEnable(slice int, enable bool) {
+	bit := uint16(1) << uint(slice)
+	wasEnabled := p.enabled&bit != 0
+	if enable {
+		p.enabled |= bit
+		if !wasEnabled {
+			s := &p.slices[slice]
+			s.fracPhase = 0
+			s.divCounter = uint16(pwmDividerPeriod(p.block.regs[slice*pwmStride/4+1], &s.fracPhase) - 1)
+			s.previousB = p.pwmBLevel(slice)
+			s.phaseRetard = false
+			p.block.regs[slice*pwmStride/4] &^= pwmCSRPhRet
+		}
+	} else {
+		p.enabled &^= bit
+		p.slices[slice].phaseRetard = false
+		p.block.regs[slice*pwmStride/4] &^= pwmCSRPhRet
+	}
+	p.updatePinDrive(slice)
+}
+
+func pwmFullSpeed(div uint32) bool {
+	return div>>4 == 1 && div&0xF == 0
+}
+
+// pwmDividerPeriod advances the first-order fractional accumulator and returns
+// the number of selected input clocks until the next counter enable pulse.
+func pwmDividerPeriod(div uint32, phase *uint8) int {
+	integer := int(div >> 4)
+	if integer == 0 {
+		integer = 256
+	}
+	sum := int(*phase) + int(div&0xF)
+	*phase = uint8(sum & 0xF)
+	return integer + sum/16
+}
+
+func (p *pwmBlock) busy() bool {
+	return p.enabled != 0
+}
+
+// tick advances every enabled slice once for this system clock.
+func (p *pwmBlock) tick() {
+	mask := p.enabled
+	for mask != 0 {
+		slice := bits.TrailingZeros16(mask)
+		mask &^= 1 << uint(slice)
+		s := &p.slices[slice]
+		csr := p.block.regs[slice*pwmStride/4]
+		event := true
+		if mode := (csr >> 4) & 3; mode != 0 {
+			b := p.pwmBLevel(slice)
+			switch mode {
+			case 1:
+				event = b
+			case 2:
+				event = b && !s.previousB
+			case 3:
+				event = !b && s.previousB
+			}
+			s.previousB = b
+		}
+		if !event {
 			continue
 		}
-		div := p.block.regs[(slice*pwmStride+4)/4]
-		div16 := (div>>4)*16 + (div & 0xF)
-		if div16 == 0 {
-			div16 = 16 // DIV_INT 0 is clamped to 1 by the hardware
+		if s.divCounter != 0 {
+			s.divCounter--
+			continue
 		}
-		top := p.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
-		ctr := pwmCounter(now*(sysClkHz/1_000_000), div16, top)
-		p.block.regs[(slice*pwmStride+8)/4] = uint32(ctr)
-
-		cc := p.block.regs[(slice*pwmStride+0x0C)/4]
-		for pin := range 48 {
-			if int(p.chip.Pins.Func[pin]) != pwmFuncSel {
-				continue
-			}
-			if pinSlice(pin) != slice {
-				continue
-			}
-			var level bool
-			if pin&1 == 0 {
-				level = ctr < uint64(cc&0xFFFF)
-			} else {
-				level = ctr < uint64(cc>>16)
-			}
-			// A_INV/B_INV are bits 2/3: even pins are channel A, odd B.
-			if csr&(0x4<<uint(pin&1)) != 0 {
-				level = !level
-			}
-			p.chip.Pins.setOutput(pin, level)
-			p.chip.Pins.setOE(pin, true)
+		div := p.block.regs[slice*pwmStride/4+1]
+		s.divCounter = uint16(pwmDividerPeriod(div, &s.fracPhase) - 1)
+		if s.phaseRetard {
+			s.phaseRetard = false
+			p.block.regs[slice*pwmStride/4] &^= pwmCSRPhRet
+			continue
 		}
+		p.advance(slice)
 	}
 }
 
-// pwmCounter is the slice counter after cycles cycles of the 150 MHz clock.
-// The microsecond tick and the per-cycle pin sampler share it so both agree.
-func pwmCounter(cycles uint64, div16, top uint32) uint64 {
-	// DIV holds the integer divider in the high nibble and the fractional
-	// part in sixteenths in the low nibble, so one counter step takes
-	// div16/16 CPU cycles.
-	return ((cycles * 16) / uint64(div16)) % uint64(top+1)
+func (p *pwmBlock) advance(slice int) {
+	s := &p.slices[slice]
+	csr := p.block.regs[slice*pwmStride/4]
+	if csr&pwmCSRCorrect == 0 {
+		if s.ctr >= s.top {
+			s.ctr = 0
+			s.cc = p.block.regs[slice*pwmStride/4+3]
+			s.top = uint16(p.block.regs[slice*pwmStride/4+4])
+		} else {
+			s.ctr++
+		}
+	} else if !s.phaseDown {
+		if s.phaseHold {
+			s.phaseHold = false
+			s.phaseDown = true
+		} else if s.ctr < s.top {
+			s.ctr++
+			if s.ctr == s.top {
+				s.phaseHold = true
+			}
+		} else {
+			s.phaseHold = true
+		}
+	} else if s.phaseHold {
+		s.phaseHold = false
+		s.phaseDown = false
+		s.cc = p.block.regs[slice*pwmStride/4+3]
+		s.top = uint16(p.block.regs[slice*pwmStride/4+4])
+	} else if s.ctr > 0 {
+		s.ctr--
+		if s.ctr == 0 {
+			s.phaseHold = true
+		}
+	} else {
+		s.phaseHold = true
+	}
+	p.block.regs[slice*pwmStride/4+2] = uint32(s.ctr)
 }
 
-// pinLevel resolves a PWM-driven pin at the current cycle. The microsecond
-// tick still maintains the counter register and the pin latch, but sampling a
-// scope trace needs the edges that fall between two ticks.
+func (p *pwmBlock) pwmBLevel(slice int) bool {
+	for pin := 1; pin < len(p.chip.Pins.Func); pin += 2 {
+		if int(p.chip.Pins.Func[pin]) == pwmFuncSel && pinSlice(pin) == slice && p.chip.Pins.rawLevel(pin) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *pwmBlock) updatePinDrive(slice int) {
+	enabled := p.enabled&(1<<uint(slice)) != 0
+	csr := p.block.regs[slice*pwmStride/4]
+	inputB := enabled && (csr>>4)&3 != 0
+	for pin := range len(p.chip.Pins.Func) {
+		if int(p.chip.Pins.Func[pin]) != pwmFuncSel || pinSlice(pin) != slice {
+			continue
+		}
+		if !enabled || inputB && pin&1 != 0 {
+			p.chip.Pins.setOutput(pin, false)
+			p.chip.Pins.setOE(pin, false)
+			continue
+		}
+		level, _ := p.pinLevel(pin)
+		p.chip.Pins.setOutput(pin, level)
+		p.chip.Pins.setOE(pin, true)
+	}
+}
+
+// pinLevel resolves a PWM-driven pin from the current cycle-accurate state.
 func (p *pwmBlock) pinLevel(pin int) (bool, bool) {
 	if pin < 0 || pin > 47 || int(p.chip.Pins.Func[pin]) != pwmFuncSel {
 		return false, false
 	}
 	slice := pinSlice(pin)
-	csr := p.block.regs[(slice*pwmStride+0)/4]
-	if csr&1 == 0 { // CSR_EN
+	csr := p.block.regs[slice*pwmStride/4]
+	if csr&pwmCSREN == 0 {
 		return false, false
 	}
-	div := p.block.regs[(slice*pwmStride+4)/4]
-	div16 := (div>>4)*16 + (div & 0xF)
-	if div16 == 0 {
-		div16 = 16
+	if (csr>>4)&3 != 0 && pin&1 != 0 {
+		return false, false
 	}
-	top := p.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
-	ctr := pwmCounter(p.chip.Cycles, div16, top)
-	cc := p.block.regs[(slice*pwmStride+0x0C)/4]
+	s := &p.slices[slice]
 	var level bool
 	if pin&1 == 0 {
-		level = ctr < uint64(cc&0xFFFF)
+		level = uint32(s.ctr) < s.cc&0xFFFF
 	} else {
-		level = ctr < uint64(cc>>16)
+		level = uint32(s.ctr) < s.cc>>16
 	}
-	if csr&(0x4<<uint(pin&1)) != 0 {
+	if csr&(pwmCSRAInv<<uint(pin&1)) != 0 {
 		level = !level
 	}
 	return level, true
@@ -147,27 +357,20 @@ func (c *Chip) PinBrightness(pin int) float32 {
 		return 0
 	}
 	slice := pinSlice(pin)
-	csr := c.pwm.block.regs[(slice*pwmStride+0)/4]
-	if csr&1 == 0 {
+	csr := c.pwm.block.regs[slice*pwmStride/4]
+	if csr&pwmCSREN == 0 || (csr>>4)&3 != 0 && pin&1 != 0 {
 		return 0
 	}
-	top := c.pwm.block.regs[(slice*pwmStride+0x10)/4] & 0xFFFF
-	cc := c.pwm.block.regs[(slice*pwmStride+0x0C)/4]
+	s := &c.pwm.slices[slice]
 	var cmp uint32
 	if pin&1 == 0 {
-		cmp = cc & 0xFFFF
+		cmp = s.cc & 0xFFFF
 	} else {
-		cmp = cc >> 16
+		cmp = s.cc >> 16
 	}
-	duty := float32(cmp) / float32(top+1)
-	if csr&(0x4<<uint(pin&1)) != 0 {
+	duty := float32(cmp) / float32(uint32(s.top)+1)
+	if csr&(pwmCSRAInv<<uint(pin&1)) != 0 {
 		duty = 1 - duty
 	}
-	if duty < 0 {
-		duty = 0
-	}
-	if duty > 1 {
-		duty = 1
-	}
-	return duty
+	return min(max(duty, 0), 1)
 }

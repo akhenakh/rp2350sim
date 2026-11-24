@@ -77,25 +77,27 @@ func TestPWMInversionAndSliceMap(t *testing.T) {
 	const pin = 15
 	c.Pins.Func[pin] = pwmFuncSel
 	base := uint32(pwmBase + 7*pwmStride)
-	c.Write32(base+0x00, 1)   // EN
 	c.Write32(base+0x10, 999) // TOP
 	c.Write32(base+0x0C, 250<<16)
+	c.Write32(base+0x00, 1) // EN
 	if got := c.PinBrightness(pin); got < 0.24 || got > 0.26 {
 		t.Fatalf("plain duty = %v", got)
 	}
-	// DIVMODE (bit 4) must not invert.
+	// DIVMODE level mode turns B into an input, so it is no longer a PWM output.
 	c.Write32(base+0x00, 1|1<<4)
-	if got := c.PinBrightness(pin); got < 0.24 || got > 0.26 {
-		t.Fatalf("DIVMODE changed the duty: %v", got)
+	if got := c.PinBrightness(pin); got != 0 {
+		t.Fatalf("DIVMODE B-input brightness: %v", got)
 	}
 	c.Write32(base+0x00, 1|1<<3) // B_INV
 	if got := c.PinBrightness(pin); got < 0.74 || got > 0.76 {
 		t.Fatalf("B_INV duty = %v, want ~0.75", got)
 	}
-	// TOP=0 is a one-cycle period, not 0xFFFF.
-	c.Write32(base+0x00, 1)
+	// TOP=0 is a one-cycle period, not 0xFFFF. Program the double-buffered
+	// registers while the slice is stopped.
+	c.Write32(base+0x00, 0)
 	c.Write32(base+0x10, 0)
 	c.Write32(base+0x0C, 0)
+	c.Write32(base+0x00, 1)
 	if got := c.PinBrightness(pin); got != 0 {
 		t.Fatalf("TOP=0 duty = %v, want 0", got)
 	}

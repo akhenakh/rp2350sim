@@ -9,9 +9,9 @@ func TestPinBrightness(t *testing.T) {
 	const pin = 15 // PWM slice 7, channel B
 	c.Pins.Func[pin] = pwmFuncSel
 	base := uint32(pwmBase + 7*pwmStride)
-	c.Write32(base+0x00, 1)       // enable
 	c.Write32(base+0x10, 999)     // TOP
 	c.Write32(base+0x0C, 500<<16) // CC B = 500
+	c.Write32(base+0x00, 1)       // enable
 	if got := c.PinBrightness(pin); got < 0.49 || got > 0.51 {
 		t.Fatalf("PWM brightness = %v, want ~0.5", got)
 	}

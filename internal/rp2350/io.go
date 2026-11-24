@@ -199,7 +199,17 @@ func (io *ioBank) init(c *Chip) {
 	io.bank0.writeFn = func(c *Chip, off, v uint32) {
 		if off >= 0x04 && off < 0x04+8*48 && (off-0x04)%8 == 0 {
 			pin := int((off - 0x04) / 8)
+			old := c.Pins.Func[pin]
 			c.Pins.Func[pin] = uint8(v & 0x1F)
+			if c.pwm != nil {
+				if old == pwmFuncSel && c.Pins.Func[pin] != pwmFuncSel {
+					c.Pins.setOutput(pin, false)
+					c.Pins.setOE(pin, false)
+				}
+				if c.Pins.Func[pin] == pwmFuncSel {
+					c.pwm.updatePinDrive(pinSlice(pin))
+				}
+			}
 		}
 	}
 	io.pads.writeFn = func(c *Chip, off, v uint32) {

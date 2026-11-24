@@ -351,6 +351,9 @@ func (c *Chip) canIdleSkip() bool {
 	if c.dma != nil && c.dma.busy() {
 		return false
 	}
+	if c.pwm != nil && c.pwm.busy() {
+		return false
+	}
 	if c.pioActive != 0 || len(c.CycleHooks) != 0 {
 		return false
 	}
@@ -460,6 +463,9 @@ func (c *Chip) tickPeripherals() {
 	for i := range c.tmr {
 		c.tmr[i].tick(c.Cycles)
 	}
+	if c.pwm != nil && c.pwm.busy() {
+		c.pwm.tick()
+	}
 	// Slow peripherals run once per microsecond. Tick every boundary crossed
 	// since the last call: a PSRAM latency charge can advance Cycles
 	// mid-instruction, and skipping a boundary would delay an alarm by a whole
@@ -467,9 +473,6 @@ func (c *Chip) tickPeripherals() {
 	for c.Cycles >= c.nextMicros {
 		c.lastMicros++
 		t := c.lastMicros
-		if c.pwm != nil {
-			c.pwm.tick(t)
-		}
 		if c.wd != nil {
 			c.wd.tick(t)
 		}

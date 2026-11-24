@@ -60,17 +60,16 @@ func TestADCPackageMapping(t *testing.T) {
 
 func TestPWMCounterAdvances(t *testing.T) {
 	c := New()
-	// Slice 0: enable, divide by 1, top 999, compare A = 500.
-	c.Write32(pwmBase+0x00, 1)
+	// Slice 0: divide by 1, top 999, compare A = 500, then enable.
+	c.Pins.Func[0] = pwmFuncSel // A pin on slice 0 channel A is GPIO0
 	c.Write32(pwmBase+0x10, 999)
 	c.Write32(pwmBase+0x0C, 500)
-	// A pin on slice 0 channel A is GPIO0.
-	c.Pins.Func[0] = pwmFuncSel
+	c.Write32(pwmBase+0x00, 1)
 	const cycles = 300150 // just over 2ms of virtual time
 	for range cycles {
 		c.Step()
 	}
-	// The last microsecond tick saw 2001us at 150MHz with a divide-by-1 clock.
+	// The cycle-accurate counter has advanced 300150 counts modulo 1000.
 	want := uint32(150)
 	if ctr := c.Read32(pwmBase + 8); ctr != want {
 		t.Fatalf("CTR = %d, want %d", ctr, want)
