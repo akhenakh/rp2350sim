@@ -1,6 +1,11 @@
 package rp2350
 
-import "testing"
+import (
+	"encoding/binary"
+	"testing"
+
+	"github.com/akhenakh/rp2350sim/internal/m33"
+)
 
 // The Pico SDK reads the bootrom lookup pointer from 0x16 and calls it. Keep the
 // table and the LDRH path honest: a regression here makes every C image fault in
@@ -17,8 +22,14 @@ func TestBootROMTable(t *testing.T) {
 	if lookup&^1 >= ROMSize {
 		t.Fatalf("lookup pointer %#x is outside the ROM", lookup)
 	}
-	if got := c.Read32(bootromMagicOffset); got != bootromMagic {
-		t.Fatalf("magic = %#x, want %#x", got, bootromMagic)
+	if got := c.Read32(bootromMagicOffset); got != bootromMagic|uint32(bootromVersion)<<24 {
+		t.Fatalf("magic/version = %#x, want %#x", got, bootromMagic|uint32(bootromVersion)<<24)
+	}
+	if got := c.ROM[bootromMagicOffset : bootromMagicOffset+3]; got[0] != 'M' || got[1] != 'u' || got[2] != 2 {
+		t.Fatalf("magic bytes = % x", got)
+	}
+	if got := c.ROM[bootromMagicOffset+3]; got != bootromVersion {
+		t.Fatalf("version byte = %#x, want %#x", got, bootromVersion)
 	}
 }
 
@@ -95,5 +106,124 @@ func TestBootromRebootDelayIsMilliseconds(t *testing.T) {
 	want := uint64(3) * cyclesPerMillisecond
 	if got := c.pendingResetAt - c.Cycles; got != want {
 		t.Fatalf("reboot delay = %d cycles, want %d", got, want)
+	}
+}
+
+func TestBootROMGetSysInfoBootRandom(t *testing.T) {
+	c := New()
+	const out = SRAMBase + 0x100
+	cpu := c.CPU0
+	cpu.R[0], cpu.R[1], cpu.R[2] = out, 5, sysInfoBootRandom
+	c.rom.stubGetSysInfo(c, cpu)
+	if cpu.R[0] != 5 {
+		t.Fatalf("get_sys_info returned %d words, want 5", cpu.R[0])
+	}
+	if got := c.Read32(out); got != sysInfoBootRandom {
+		t.Fatalf("selector mask = %#x, want %#x", got, sysInfoBootRandom)
+	}
+}
+
+func TestBootROMFlashAlignment(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*Chip, *m33.CPU)
+	}{
+		{name: "erase offset", setup: func(c *Chip, cpu *m33.CPU) {
+			cpu.R[0], cpu.R[1] = 1, 4096
+			c.rom.stubFlashErase(c, cpu)
+		}},
+		{name: "erase size", setup: func(c *Chip, cpu *m33.CPU) {
+			cpu.R[0], cpu.R[1] = 0, 1
+			c.rom.stubFlashErase(c, cpu)
+		}},
+		{name: "program offset", setup: func(c *Chip, cpu *m33.CPU) {
+			cpu.R[0], cpu.R[1], cpu.R[2] = 1, SRAMBase+0x100, 256
+			c.rom.stubFlashProgram(c, cpu)
+		}},
+		{name: "program size", setup: func(c *Chip, cpu *m33.CPU) {
+			cpu.R[0], cpu.R[1], cpu.R[2] = 0, SRAMBase+0x100, 1
+			c.rom.stubFlashProgram(c, cpu)
+		}},
+		{name: "flash_op erase", setup: func(c *Chip, cpu *m33.CPU) {
+			cpu.R[0], cpu.R[1], cpu.R[2] = 0, 1, 4096
+			c.rom.stubFlashOp(c, cpu)
+		}},
+		{name: "flash_op program", setup: func(c *Chip, cpu *m33.CPU) {
+			cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3] = 1<<16, 0, 1, SRAMBase+0x100
+			c.rom.stubFlashOp(c, cpu)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New()
+			tt.setup(c, c.CPU0)
+			if got := c.CPU0.R[0]; got != bootromErrBadAlignment {
+				t.Fatalf("result = %d, want BOOTROM_ERROR_BAD_ALIGNMENT", got)
+			}
+		})
+	}
+
+	c := New()
+	c.CPU0.R[0], c.CPU0.R[1], c.CPU0.R[2], c.CPU0.R[3] = 2<<16, 1, 1, SRAMBase+0x100
+	c.rom.stubFlashOp(c, c.CPU0)
+	if got := c.CPU0.R[0]; got != bootromOK {
+		t.Fatalf("unaligned flash_op read = %d, want OK", got)
+	}
+}
+
+func TestBootROMRuntimeToStorageAddress(t *testing.T) {
+	c := New()
+	cpu := c.CPU0
+	cpu.R[0] = FlashBase + 0x1234
+	c.rom.stubFlashRuntimeToStorageAddr(c, cpu)
+	if cpu.R[0] != 0x1234 {
+		t.Fatalf("flat translation = %#x, want 0x1234", cpu.R[0])
+	}
+	for _, addr := range []uint32{FlashBase - 1, FlashBase + FlashSize, SRAMBase} {
+		cpu.R[0] = addr
+		c.rom.stubFlashRuntimeToStorageAddr(c, cpu)
+		if cpu.R[0] != bootromErrInvalidAddr {
+			t.Fatalf("translation of %#x = %#x", addr, cpu.R[0])
+		}
+	}
+
+	c = buildPartitionFlash(t, 0)
+	c.Boot() // slot B at storage offset 0x300000
+	cpu = c.CPU0
+	cpu.R[0] = FlashBase + 0x1234
+	c.rom.stubFlashRuntimeToStorageAddr(c, cpu)
+	if cpu.R[0] != 0x301234 {
+		t.Fatalf("partition translation = %#x, want 0x301234", cpu.R[0])
+	}
+	cpu.R[0] = FlashBase + c.partSize
+	c.rom.stubFlashRuntimeToStorageAddr(c, cpu)
+	if cpu.R[0] != bootromErrInvalidAddr {
+		t.Fatalf("partition boundary translation = %#x", cpu.R[0])
+	}
+}
+
+func TestBootROMRebootNoReturnParksUntilReset(t *testing.T) {
+	c := New()
+	binary.LittleEndian.PutUint32(c.Flash[0:], SRAMBase+0x1000)
+	binary.LittleEndian.PutUint32(c.Flash[4:], FlashBase+0x101)
+	copy(c.Flash[0x100:], []byte{0xfe, 0xe7}) // b .
+	c.Boot()
+	cpu := c.CPU0
+	const sentinel = SRAMBase + 0x200
+	cpu.R[0], cpu.R[1], cpu.R[14] = rebootNoReturnOnSuccess, 3, sentinel
+	addr := c.rom.funcs[romCode("RB")]
+	if !c.rom.exec(c, cpu, addr) {
+		t.Fatal("reboot ROM hook was not handled")
+	}
+	if !cpu.Parked || !c.pendingReset {
+		t.Fatal("NO_RETURN_ON_SUCCESS did not park the caller and request reset")
+	}
+	c.Step()
+	if cpu.R[15] != sentinel {
+		t.Fatalf("parked caller executed: PC = %#x", cpu.R[15])
+	}
+	c.Run(3 * cyclesPerMillisecond)
+	if c.BootCount() != 2 || cpu.Parked {
+		t.Fatalf("caller was not released by reset: boots=%d parked=%v", c.BootCount(), cpu.Parked)
 	}
 }

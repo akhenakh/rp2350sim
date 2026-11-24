@@ -28,7 +28,8 @@ const (
 	bootromSyntheticStride   = 4
 	bootromDataBase          = 0x7800
 	bootromFuncTableData     = 0x7c00
-	bootromMagic             = 0x5a5a_5a5a
+	bootromMagic             = 0x0002754d // 'M', 'u', 0x02
+	bootromVersion           = 3
 	sysInfoBootRandom        = 0x0010
 	bootromOK                = 0
 	bootromErrNotPermitted   = ^uint32(3)  // -4
@@ -38,6 +39,7 @@ const (
 	bootromErrInvalidState   = ^uint32(11) // -12
 	bootromErrUnsupportedMod = ^uint32(17) // -18
 	bootromRebootReason      = "bootrom reboot requested"
+	rebootNoReturnOnSuccess  = 0x0100
 )
 
 // romStub is called with the CPU at the synthetic address. It reads arguments
@@ -74,7 +76,7 @@ func installBootROM(c *Chip) *bootROM {
 		c.ROM[off+2] = byte(v >> 16)
 		c.ROM[off+3] = byte(v >> 24)
 	}
-	put32(bootromMagicOffset, bootromMagic)
+	put32(bootromMagicOffset, bootromMagic|uint32(bootromVersion)<<24)
 	// ROM_DATA_FLASH_DEVINFO16_PTR is a pointer literal to the boot RAM copy
 	// of the flash/PSRAM device sizes. The SDK dereferences it during PSRAM
 	// initialisation and flash programming.
@@ -111,9 +113,9 @@ func installBootROM(c *Chip) *bootROM {
 	b.addFunc("EX", b.stubOK)      // exit XIP
 	b.addFunc("IF", b.stubOK)      // connect internal flash
 	b.addFunc("FO", b.stubFlashOp) // flash op
-	b.addFunc("FA", b.stubOK)      // runtime to storage address
-	b.addFunc("RA", b.stubOK)      // reset address translation
-	b.addFunc("XM", b.stubOK)      // select XIP read mode
+	b.addFunc("FA", b.stubFlashRuntimeToStorageAddr)
+	b.addFunc("RA", b.stubOK) // reset address translation
+	b.addFunc("XM", b.stubOK) // select XIP read mode
 
 	// Partition and secure-boot services are not modelled; report them as
 	// unsupported rather than returning garbage.
@@ -277,8 +279,8 @@ func (b *bootROM) stubReverse(c *Chip, cpu *m33.CPU) {
 func (b *bootROM) stubGetSysInfo(c *Chip, cpu *m33.CPU) {
 	out, size, kind := cpu.R[0], cpu.R[1], cpu.R[2]
 	if kind == sysInfoBootRandom && size >= 5 {
-		// result[0] is a length word; the SDK copies result[1:5].
-		c.Write32(out, 4)
+		// Word 0 reports the supported selector mask, followed by four words.
+		c.Write32(out, sysInfoBootRandom)
 		seed := uint32(c.Cycles) ^ 0x9e3779b9
 		for i := range uint32(4) {
 			seed = seed*1664525 + 1013904223
@@ -315,6 +317,9 @@ func (b *bootROM) stubReboot(c *Chip, cpu *m33.CPU) {
 	c.Logger.Debug("bootrom reboot", slog.Uint64("delay_ms", uint64(delayMS)))
 	c.requestReset("bootrom", uint64(delayMS)*cyclesPerMillisecond)
 	cpu.R[0] = bootromOK
+	if flags&rebootNoReturnOnSuccess != 0 {
+		cpu.Parked = true
+	}
 }
 
 func (b *bootROM) stubUSBBoot(c *Chip, cpu *m33.CPU) {
@@ -401,6 +406,10 @@ func (b *bootROM) stubOTPAccess(c *Chip, cpu *m33.CPU) {
 // command are advisory because every erase here produces 0xFF.
 func (b *bootROM) stubFlashErase(c *Chip, cpu *m33.CPU) {
 	offset, count := cpu.R[0], cpu.R[1]
+	if offset%4096 != 0 || count%4096 != 0 {
+		cpu.R[0] = bootromErrBadAlignment
+		return
+	}
 	if !c.eraseFlashRange(offset, count) {
 		c.Logger.Warn("bootrom flash erase out of range",
 			slog.String("offset", fmtHex(offset)), slog.Uint64("bytes", uint64(count)))
@@ -415,6 +424,10 @@ func (b *bootROM) stubFlashProgram(c *Chip, cpu *m33.CPU) {
 	offset, src, count := cpu.R[0], cpu.R[1], cpu.R[2]
 	if count == 0 {
 		cpu.R[0] = bootromOK
+		return
+	}
+	if offset%256 != 0 || count%256 != 0 {
+		cpu.R[0] = bootromErrBadAlignment
 		return
 	}
 	if count > uint32(len(c.Flash)) || offset > uint32(len(c.Flash))-count {
@@ -455,11 +468,19 @@ func (b *bootROM) stubFlashOp(c *Chip, cpu *m33.CPU) {
 	}
 	switch op {
 	case 0: // erase
+		if addr%4096 != 0 || size%4096 != 0 {
+			cpu.R[0] = bootromErrBadAlignment
+			return
+		}
 		if !c.eraseFlashRange(addr, size) {
 			cpu.R[0] = bootromErrInvalidAddr
 			return
 		}
 	case 1: // program
+		if addr%256 != 0 || size%256 != 0 {
+			cpu.R[0] = bootromErrBadAlignment
+			return
+		}
 		data := make([]byte, size)
 		for i := range data {
 			data[i] = c.Read8(buf + uint32(i))
@@ -477,4 +498,15 @@ func (b *bootROM) stubFlashOp(c *Chip, cpu *m33.CPU) {
 		return
 	}
 	cpu.R[0] = bootromOK
+}
+
+// stubFlashRuntimeToStorageAddr translates one runtime XIP address through the
+// booted partition mapping. The result is a flash storage offset.
+func (b *bootROM) stubFlashRuntimeToStorageAddr(c *Chip, cpu *m33.CPU) {
+	off, ok := c.flashIndex(cpu.R[0], 0)
+	if !ok {
+		cpu.R[0] = bootromErrInvalidAddr
+		return
+	}
+	cpu.R[0] = off
 }

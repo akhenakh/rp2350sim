@@ -65,10 +65,12 @@ func TestBootROMFlashServices(t *testing.T) {
 	}
 
 	// RP copies from a buffer in SRAM and clears bits only.
-	copy(c.SRAM[0x100:], []byte{0x12, 0x34, 0x56, 0x78})
+	data := make([]byte, 256)
+	copy(data, []byte{0x12, 0x34, 0x56, 0x78})
+	copy(c.SRAM[0x100:], data)
 	cpu.R[0] = 0x20000
 	cpu.R[1] = SRAMBase + 0x100
-	cpu.R[2] = 4
+	cpu.R[2] = uint32(len(data))
 	call("RP")
 	if cpu.R[0] != bootromOK {
 		t.Fatalf("RP = %d", cpu.R[0])
