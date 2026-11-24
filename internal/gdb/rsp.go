@@ -129,10 +129,15 @@ func (s *Server) Serve(ln net.Listener) error {
 				return err
 			}
 		}
-		s.logf("gdb client connected", "remote", conn.RemoteAddr().String())
 		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			_ = conn.Close()
+			return nil
+		}
 		s.conn = conn
 		s.mu.Unlock()
+		s.logf("gdb client connected", "remote", conn.RemoteAddr().String())
 		s.handle(conn)
 		s.mu.Lock()
 		s.conn = nil
@@ -163,11 +168,14 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handle(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
 	defer s.t.Continue() // never leave the machine frozen after a disconnect
 
 	st := &connState{conn: conn, t: s.t, logf: s.logf, reader: bufio.NewReader(conn), done: make(chan struct{})}
-	defer close(st.done)
+	defer func() {
+		_ = conn.Close()
+		close(st.done)
+		st.wait.Wait()
+	}()
 	// GDB's "target remote" stops the target on attach.
 	core := 0
 	if c, _, _, _, ok := s.t.Stopped(); ok {
@@ -207,9 +215,11 @@ type connState struct {
 	writeMu sync.Mutex
 	// runMu guards running/gen. A continue starts one waiter goroutine which
 	// sends the stop reply; the reader stays free for the 0x03 interrupt.
-	runMu   sync.Mutex
-	running bool
-	gen     uint64
+	runMu    sync.Mutex
+	running  bool
+	gen      uint64
+	stopOnce *sync.Once // one stop reply per run, shared with interrupt handling
+	wait     sync.WaitGroup
 
 	// sel is the selected thread for step/registers (Hc/Hg), 0-based. The
 	// stop waiter updates it while the packet reader may be handling Ctrl-C,
@@ -248,16 +258,7 @@ func (st *connState) readPacket() (string, error) {
 			continue
 		case 0x03: // Ctrl-C: asynchronous interrupt
 			st.logf("gdb interrupt")
-			st.runMu.Lock()
-			running := st.running
-			st.runMu.Unlock()
-			if running {
-				_ = st.t.Halt(int(st.sel.Load()))
-			} else {
-				// GDB expects a stop reply even when the target is already
-				// stopped; otherwise it waits for one that never comes.
-				st.send(st.stopReply())
-			}
+			st.interrupt()
 			continue
 		case '$':
 			var payload []byte
@@ -335,17 +336,15 @@ func (st *connState) command(pkt string) (stop bool, err error) {
 	case strings.HasPrefix(pkt, "vCont;"):
 		st.vCont(pkt)
 	case pkt == "vCtrlC":
-		_ = st.t.Halt(int(st.sel.Load()))
-		st.setRunning(false)
-		st.send(st.stopReply())
+		st.interrupt()
 	case pkt == "c" || strings.HasPrefix(pkt, "C"):
 		st.startRun()
 	case pkt == "s" || strings.HasPrefix(pkt, "S"):
+		st.stopWaiter()
 		if err := st.t.Step(int(st.sel.Load())); err != nil {
 			st.send("E" + err.Error())
 			break
 		}
-		st.setRunning(false)
 		st.send(st.stopReply())
 	case strings.HasPrefix(pkt, "Z"), strings.HasPrefix(pkt, "z"):
 		st.breakpoint(pkt)
@@ -366,15 +365,21 @@ func (st *connState) command(pkt string) (stop bool, err error) {
 	case strings.HasPrefix(pkt, "qRcmd,"):
 		st.remoteCommand(pkt)
 	case pkt == "D":
-		st.setRunning(false)
+		st.stopWaiter()
 		st.t.Continue()
 		st.send("OK")
 		return true, nil
 	case pkt == "k":
+		st.stopWaiter()
 		st.t.Continue()
 		st.send("OK")
 		return true, nil
 	case pkt == "R":
+		st.stopWaiter()
+		if err := st.t.Reset(); err != nil {
+			st.send("E" + err.Error())
+			break
+		}
 		st.send("OK")
 	default:
 		st.send("")
@@ -459,16 +464,14 @@ func (st *connState) vCont(pkt string) {
 			st.startRun()
 			return
 		case 't':
-			_ = st.t.Halt(core)
-			st.setRunning(false)
-			st.send(st.stopReply())
+			st.interruptCore(core)
 			return
 		case 's', 'S':
+			st.stopWaiter()
 			if err := st.t.Step(core); err != nil {
 				st.send("E" + err.Error())
 				return
 			}
-			st.setRunning(false)
 			st.send(st.stopReply())
 			return
 		}
@@ -476,10 +479,18 @@ func (st *connState) vCont(pkt string) {
 	st.send("")
 }
 
-func (st *connState) setRunning(v bool) {
+// stopWaiter cancels the current run's asynchronous stop reply. The caller
+// sends its own reply (step, reset or detach), so the waiter must stay silent.
+func (st *connState) stopWaiter() {
 	st.runMu.Lock()
-	st.running = v
+	once := st.stopOnce
+	st.running = false
+	st.gen++
+	st.stopOnce = nil
 	st.runMu.Unlock()
+	if once != nil {
+		once.Do(func() {})
+	}
 }
 
 func (st *connState) startRun() {
@@ -491,9 +502,39 @@ func (st *connState) startRun() {
 	st.running = true
 	st.gen++
 	gen := st.gen
+	once := &sync.Once{}
+	st.stopOnce = once
 	st.runMu.Unlock()
 	st.t.Continue()
-	go st.waitStop(gen)
+	st.wait.Add(1)
+	go func() {
+		defer st.wait.Done()
+		st.waitStop(gen)
+	}()
+}
+
+func (st *connState) interrupt() {
+	st.interruptCore(int(st.sel.Load()))
+}
+
+func (st *connState) interruptCore(core int) {
+	_ = st.t.Halt(core)
+	st.runMu.Lock()
+	once := st.stopOnce
+	st.running = false
+	st.runMu.Unlock()
+	if once == nil {
+		st.send(st.stopReply())
+		return
+	}
+	// The stop waiter and Ctrl-C share one notification. Whichever observes
+	// the halt first replies; the other must not emit a duplicate packet.
+	once.Do(func() { st.send(st.stopReply()) })
+	st.runMu.Lock()
+	if st.stopOnce == once {
+		st.stopOnce = nil
+	}
+	st.runMu.Unlock()
 }
 
 func (st *connState) waitStop(gen uint64) {
@@ -501,15 +542,24 @@ func (st *connState) waitStop(gen uint64) {
 		core, _, _, _, ok := st.t.Stopped()
 		if ok {
 			st.runMu.Lock()
-			if st.gen != gen {
+			if st.gen != gen || !st.running {
 				st.runMu.Unlock()
 				return
 			}
+			once := st.stopOnce
 			st.running = false
+			st.runMu.Unlock()
+			if once == nil {
+				once = &sync.Once{}
+			}
+			once.Do(func() { st.send(st.stopReply()) })
+			st.runMu.Lock()
+			if st.gen == gen && st.stopOnce == once {
+				st.stopOnce = nil
+			}
 			st.runMu.Unlock()
 			st.sel.Store(int32(core))
 			st.logf("gdb stopped", "core", core)
-			st.send(st.stopReply())
 			return
 		}
 		if !st.waitTick() {
@@ -771,6 +821,7 @@ func (st *connState) remoteCommand(pkt string) {
 	}
 	switch fields[0] {
 	case "reset":
+		st.stopWaiter()
 		if err := st.t.Reset(); err != nil {
 			st.send("E" + err.Error())
 			return

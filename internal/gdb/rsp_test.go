@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type fakeTarget struct {
+	mu      sync.Mutex
 	mem     []byte
 	regs    [2][]uint32
 	bp      map[uint32]bool
@@ -19,6 +21,7 @@ type fakeTarget struct {
 	pc      uint32
 	core    int
 	steps   int
+	resets  int
 }
 
 func newFakeTarget() *fakeTarget {
@@ -32,6 +35,8 @@ func newFakeTarget() *fakeTarget {
 }
 
 func (f *fakeTarget) ReadMemory(addr uint32, size int) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if addr+uint32(size) > uint32(len(f.mem)) {
 		return nil, errors.New("unmapped")
 	}
@@ -41,6 +46,8 @@ func (f *fakeTarget) ReadMemory(addr uint32, size int) ([]byte, error) {
 }
 
 func (f *fakeTarget) WriteMemory(addr uint32, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if addr+uint32(len(data)) > uint32(len(f.mem)) {
 		return errors.New("unmapped")
 	}
@@ -49,6 +56,8 @@ func (f *fakeTarget) WriteMemory(addr uint32, data []byte) error {
 }
 
 func (f *fakeTarget) ReadRegisters(core int) ([]uint32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if core < 0 || core > 1 {
 		return nil, errors.New("bad core")
 	}
@@ -56,6 +65,8 @@ func (f *fakeTarget) ReadRegisters(core int) ([]uint32, error) {
 }
 
 func (f *fakeTarget) WriteRegister(core int, reg int, v uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if core < 0 || core > 1 || reg < 0 || reg >= RegisterCount {
 		return errors.New("bad register")
 	}
@@ -66,12 +77,20 @@ func (f *fakeTarget) WriteRegister(core int, reg int, v uint32) error {
 func (f *fakeTarget) NumCores() int { return 2 }
 
 func (f *fakeTarget) Stopped() (int, uint32, string, uint32, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.core, f.pc, f.reason, 0, f.stopped
 }
 
-func (f *fakeTarget) Continue() { f.stopped = false }
+func (f *fakeTarget) Continue() {
+	f.mu.Lock()
+	f.stopped = false
+	f.mu.Unlock()
+}
 
 func (f *fakeTarget) Step(core int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.steps++
 	f.core = core
 	f.pc += 2
@@ -81,20 +100,46 @@ func (f *fakeTarget) Step(core int) error {
 }
 
 func (f *fakeTarget) Halt(core int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.core = core
 	f.stopped = true
 	f.reason = "interrupt"
 	return nil
 }
 
-func (f *fakeTarget) AddBreakpoint(addr uint32) error    { f.bp[addr] = true; return nil }
-func (f *fakeTarget) RemoveBreakpoint(addr uint32) error { delete(f.bp, addr); return nil }
+func (f *fakeTarget) AddBreakpoint(addr uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bp[addr] = true
+	return nil
+}
+func (f *fakeTarget) RemoveBreakpoint(addr uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.bp, addr)
+	return nil
+}
 func (f *fakeTarget) AddWatchpoint(addr uint32, n int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.watch[addr] = n
 	return nil
 }
-func (f *fakeTarget) RemoveWatchpoint(addr uint32) error { delete(f.watch, addr); return nil }
-func (f *fakeTarget) Reset() error                       { f.stopped = true; f.reason = "reset"; return nil }
+func (f *fakeTarget) RemoveWatchpoint(addr uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.watch, addr)
+	return nil
+}
+func (f *fakeTarget) Reset() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resets++
+	f.stopped = true
+	f.reason = "reset"
+	return nil
+}
 
 func readReply(t *testing.T, r *bufio.Reader) string {
 	t.Helper()
@@ -232,6 +277,49 @@ func TestRSPPackets(t *testing.T) {
 
 	if got, stop := command(t, st, r, "D"); got != "OK" || !stop {
 		t.Fatalf("D = %q stop=%v", got, stop)
+	}
+}
+
+func TestRSPVCtrlCSendsOneStopReply(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	ft := newFakeTarget()
+	ft.stopped = false
+	st := &connState{conn: server, reader: bufio.NewReader(server), t: ft, done: make(chan struct{}), logf: func(string, ...any) {}}
+	r := bufio.NewReader(client)
+	st.startRun()
+	defer func() {
+		close(st.done)
+		st.wait.Wait()
+	}()
+
+	reply, _ := command(t, st, r, "vCtrlC")
+	if !strings.HasPrefix(reply, "T02") {
+		t.Fatalf("vCtrlC reply = %q", reply)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := r.ReadByte(); err == nil {
+		t.Fatalf("duplicate stop reply byte %#x", b)
+	} else if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+		t.Fatalf("reading duplicate stop reply: %v", err)
+	}
+}
+
+func TestRSPResetRestartsTarget(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	ft := newFakeTarget()
+	st := &connState{conn: server, reader: bufio.NewReader(server), t: ft}
+	r := bufio.NewReader(client)
+	if reply, _ := command(t, st, r, "R"); reply != "OK" {
+		t.Fatalf("R reply = %q", reply)
+	}
+	if ft.resets != 1 || !ft.stopped || ft.reason != "reset" {
+		t.Fatalf("reset state: resets=%d stopped=%v reason=%q", ft.resets, ft.stopped, ft.reason)
 	}
 }
 

@@ -442,25 +442,42 @@ func main() {
 	if !*core1 {
 		c.CPU1.Parked = true
 	}
+	var debugMu sync.Mutex
+	var gdbSrv *gdb.Server
+	var gdbDone chan struct{}
 	flashPath := *flashOut
 	if flashPath == "" {
 		flashPath = *flashIn
 	}
 	savedWrites := ^uint64(0)
 	saveFlash := func() {
-		if flashPath == "" || c.FlashWrites() == savedWrites {
+		if flashPath == "" {
 			return
 		}
-		if err := os.WriteFile(flashPath, c.FlashCopy(), 0o644); err != nil {
+		debugMu.Lock()
+		writes := c.FlashWrites()
+		if writes == savedWrites {
+			debugMu.Unlock()
+			return
+		}
+		data := c.FlashCopy()
+		debugMu.Unlock()
+		if err := os.WriteFile(flashPath, data, 0o644); err != nil {
 			log.Error("flash save", slog.String("path", flashPath), slog.Any("err", err))
 			return
 		}
-		savedWrites = c.FlashWrites()
+		debugMu.Lock()
+		unchanged := c.FlashWrites() == writes
+		debugMu.Unlock()
+		if !unchanged {
+			return // a newer flash snapshot still needs saving
+		}
+		savedWrites = writes
 		if !*quiet {
 			log.Info("flash saved",
 				slog.String("path", flashPath),
-				slog.Int("bytes", len(c.Flash)),
-				slog.Uint64("writes", c.FlashWrites()))
+				slog.Int("bytes", len(data)),
+				slog.Uint64("writes", writes))
 		}
 	}
 	lastBoot := c.BootCount()
@@ -1006,14 +1023,21 @@ func main() {
 	// Console input: USB CDC is flow-controlled by the emulated host, UART0 is
 	// queue-safe, so stdin and -input feed both without disturbing the CPU.
 	var usbPending []byte
-	flushUSB := func() {
+	flushUSBLocked := func() {
 		for len(usbPending) > 0 && c.USBCDCReady() {
 			n := min(len(usbPending), 64)
 			c.SendUSBCDC(usbPending[:n])
 			usbPending = usbPending[n:]
 		}
 	}
+	flushUSB := func() {
+		debugMu.Lock()
+		defer debugMu.Unlock()
+		flushUSBLocked()
+	}
 	queueConsole := func(data []byte) {
+		debugMu.Lock()
+		defer debugMu.Unlock()
 		c.SendUART(0, data)
 		usbPending = append(usbPending, data...)
 		if len(usbPending) > 8192 {
@@ -1021,7 +1045,7 @@ func main() {
 			log.Warn("USB console input queue full, dropping oldest bytes", slog.Int("dropped", dropped))
 			usbPending = append([]byte(nil), usbPending[len(usbPending)-4096:]...)
 		}
-		flushUSB()
+		flushUSBLocked()
 	}
 
 	var stdinMu sync.Mutex
@@ -1109,7 +1133,6 @@ func main() {
 		*allowHalt = true
 	}
 	netLog := &networkReporter{log: log}
-	var debugMu sync.Mutex
 	if *gdbAddr != "" {
 		c.Debug = rp2350.NewDebugger()
 		tgt := &gdbTarget{chip: c, mu: &debugMu}
@@ -1123,7 +1146,10 @@ func main() {
 				log.Info(msg, args...)
 			}
 		})
+		gdbSrv = srv
+		gdbDone = make(chan struct{})
 		go func() {
+			defer close(gdbDone)
 			if err := srv.Serve(ln); err != nil {
 				log.Error("gdb server", slog.Any("err", err))
 			}
@@ -1144,23 +1170,29 @@ func main() {
 			// budget; run like a real board until the user stops or detaches.
 			runCycles = 1 << 62
 		}
+		const chunk = 1_000_000
 		if len(inputData) > 0 {
-			warm := min(inputCycles, runCycles)
-			if warm > 0 {
-				c.Run(warm)
-				runCycles -= warm
-				flushUSB()
-				if *stdinFlag {
-					drainStdin()
+			warmLeft := min(inputCycles, runCycles)
+			var warmed uint64
+			for warmLeft > 0 {
+				n := min(warmLeft, chunk)
+				debugMu.Lock()
+				ran := c.Run(n)
+				debugMu.Unlock()
+				if ran == 0 {
+					break // a GDB halt parks the warm-up without consuming budget
 				}
+				warmed += ran
+				warmLeft -= ran
+			}
+			runCycles -= warmed
+			flushUSB()
+			if *stdinFlag {
+				drainStdin()
 			}
 			queueConsole(inputData)
 		}
-		const chunk = 1_000_000
 		for runCycles > 0 {
-			if c.CPU0.Halted || c.CPU1.Halted || c.Halted {
-				break
-			}
 			if *stopExpect && expects.all {
 				break
 			}
@@ -1170,20 +1202,31 @@ func main() {
 			}
 			n := min(runCycles, chunk)
 			debugMu.Lock()
+			if c.CPU0.Halted || c.CPU1.Halted || c.Halted {
+				debugMu.Unlock()
+				break
+			}
 			done := c.Run(n)
 			if midiBr != nil {
 				midiBr.tick()
 			}
 			stopped := c.Debug != nil && c.Debug.Stopped
+			boots := c.BootCount()
+			var resetReason string
+			var resetEntry uint32
+			if boots != lastBoot {
+				resetReason = c.LastResetReason()
+				resetEntry = c.BootEntry()
+			}
 			debugMu.Unlock()
 			runCycles -= done
 			netLog.report(w5500, w6300, ch9120)
-			if b := c.BootCount(); b != lastBoot {
-				lastBoot = b
+			if boots != lastBoot {
+				lastBoot = boots
 				log.Info("reset",
-					slog.Uint64("boot", b),
-					slog.String("reason", c.LastResetReason()),
-					slog.String("entry", hex(c.BootEntry())))
+					slog.Uint64("boot", boots),
+					slog.String("reason", resetReason),
+					slog.String("entry", hex(resetEntry)))
 				saveFlash()
 			}
 			flushUSB()
@@ -1201,7 +1244,9 @@ func main() {
 		if len(inputData) > 0 {
 			warm := min(inputCycles, uint64(*sampleN)*10_000_000)
 			if warm > 0 {
+				debugMu.Lock()
 				c.Run(warm)
+				debugMu.Unlock()
 				flushUSB()
 				if *stdinFlag {
 					drainStdin()
@@ -1243,6 +1288,12 @@ func main() {
 				drainStdin()
 			}
 		}
+	}
+	if gdbSrv != nil {
+		if err := gdbSrv.Close(); err != nil {
+			log.Warn("gdb close", slog.Any("err", err))
+		}
+		<-gdbDone
 	}
 	netLog.report(w5500, w6300, ch9120)
 	saveFlash()
