@@ -221,37 +221,64 @@ func (t *trngBlock) clear(c *Chip, off, v uint32) {
 
 // SHA-256 is the RP2350 hardware hash block at 0x400F8000.
 const shaBase = 0x400F8000
+const shaDigestCycles = 57
 
 type shaBlock struct {
-	block *regBlock
-	input [64]byte
-	used  int
-	h     [8]uint32
-	valid bool
-	bswap bool
+	block    *regBlock
+	input    [64]byte
+	used     int
+	word     uint32
+	wordUsed int
+	h        [8]uint32
+	valid    bool
+	ready    bool
+	pending  bool
+	readyAt  uint64
+	err      bool
+	bswap    bool
+	dmaSize  uint32
 }
 
 func newSHA() *shaBlock {
-	s := &shaBlock{block: newRegBlock(shaBase, 0x100), bswap: true}
+	s := &shaBlock{block: newRegBlock(shaBase, 0x100)}
 	s.block.readFn = s.read
 	s.block.writeFn = s.write
 	s.block.writeSizeFn = s.writeSize
 	s.block.resetFn = func(c *Chip) { s.reset() }
+	s.reset()
 	return s
 }
 
 func (s *shaBlock) reset() {
-	s.used = 0
-	s.h = sha256IV
-	s.valid = false
+	s.input = [64]byte{}
+	s.used, s.word, s.wordUsed = 0, 0, 0
+	s.h = [8]uint32{}
+	s.valid, s.ready = true, true
+	s.pending, s.readyAt = false, 0
+	s.err = false
 	s.bswap = true
+	s.dmaSize = 2
+}
+
+func (s *shaBlock) start() {
+	s.input = [64]byte{}
+	s.used, s.word, s.wordUsed = 0, 0, 0
+	s.h = sha256IV
+	s.valid, s.ready = true, true
+	s.pending, s.readyAt = false, 0
 }
 
 func (s *shaBlock) csr() uint32 {
-	var v uint32 = 1 << 1 // WDATA_RDY
-	v |= 2 << 8           // DMA_SIZE = word
+	var v uint32
+	if s.ready {
+		v |= 1 << 1 // WDATA_RDY
+	}
+	v |= s.dmaSize << 8
 	if s.bswap {
 		v |= 1 << 12
+	}
+	if s.err {
+		v |= 1 << 4
 	}
 	if s.valid {
 		v |= 1 << 2 // SUM_VLD
@@ -259,7 +286,19 @@ func (s *shaBlock) csr() uint32 {
 	return v
 }
 
+func (s *shaBlock) tick(c *Chip) {
+	if !s.pending || c.Cycles < s.readyAt {
+		return
+	}
+	sha256Compress(&s.h, s.input[:])
+	s.used = 0
+	s.pending = false
+	s.ready = true
+	s.valid = true
+}
+
 func (s *shaBlock) read(c *Chip, off uint32) (uint32, bool) {
+	s.tick(c)
 	switch {
 	case off == 0:
 		return s.csr(), true
@@ -273,55 +312,84 @@ func (s *shaBlock) write(c *Chip, off, v uint32) {
 	switch off {
 	case 0:
 		if v&1 != 0 { // START
-			s.used = 0
-			s.h = sha256IV
-			s.valid = false
+			s.start()
+		}
+		if v&(1<<4) != 0 { // ERR_WDATA_NOT_RDY is write-1-to-clear.
+			s.err = false
 		}
 		s.bswap = v&(1<<12) != 0
-		// START and the status bits are self-clearing in the register file.
+		s.dmaSize = (v >> 8) & 3
 	case 4: // WDATA
-		s.pushWord(v)
+		s.writeWord(c, v)
 	}
 }
 
-// writeSize handles byte/halfword DMA writes to WDATA. TinyUSB-style DMA
-// streams SHA data one byte at a time; appending the transfer's bytes keeps
-// the message in memory order regardless of the CPU store width.
+// writeSize accumulates byte and halfword writes into little-endian message
+// words. BSWAP is applied only when the completed word is committed.
 func (s *shaBlock) writeSize(c *Chip, addr uint32, v uint32, size int) bool {
 	if addr < shaBase+4 || addr >= shaBase+8 {
 		return false
 	}
+	var data [2]byte
+	n := 0
 	switch size {
 	case 1:
-		s.pushBytes([]byte{byte(v)})
+		data[0] = byte(v)
+		n = 1
 	case 2:
-		s.pushBytes([]byte{byte(v), byte(v >> 8)})
+		data[0] = byte(v)
+		data[1] = byte(v >> 8)
+		n = 2
 	default:
 		return false
+	}
+	if !s.ready {
+		s.err = true
+		return true
+	}
+	s.valid = false
+	for _, b := range data[:n] {
+		if !s.ready {
+			break
+		}
+		s.word |= uint32(b) << uint(s.wordUsed*8)
+		s.wordUsed++
+		if s.wordUsed == 4 {
+			s.commitWord(c, s.word)
+			s.word, s.wordUsed = 0, 0
+		}
 	}
 	return true
 }
 
-func (s *shaBlock) pushWord(v uint32) {
+func (s *shaBlock) writeWord(c *Chip, v uint32) {
+	if !s.ready {
+		s.err = true
+		return
+	}
+	s.valid = false
+	if s.wordUsed != 0 {
+		// Silicon drops a word write that jumps over a partial subword
+		// accumulator. Firmware is required not to mix widths in a block.
+		return
+	}
+	s.commitWord(c, v)
+}
+
+func (s *shaBlock) commitWord(c *Chip, v uint32) {
 	var b [4]byte
 	if s.bswap {
 		binary.LittleEndian.PutUint32(b[:], v)
 	} else {
 		binary.BigEndian.PutUint32(b[:], v)
 	}
-	s.pushBytes(b[:])
-}
-
-func (s *shaBlock) pushBytes(b []byte) {
-	s.valid = false
-	for _, v := range b {
-		s.input[s.used] = v
-		s.used++
-		if s.used == 64 {
-			sha256Compress(&s.h, s.input[:])
-			s.used = 0
-			s.valid = true
-		}
+	copy(s.input[s.used:], b[:])
+	s.used += 4
+	if s.used == len(s.input) {
+		s.pending = true
+		s.ready = false
+		s.readyAt = c.Cycles + shaDigestCycles
+		s.valid = false
 	}
 }
 

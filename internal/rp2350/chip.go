@@ -487,6 +487,9 @@ func (c *Chip) tickPeripherals() {
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
 	}
+	if c.sha != nil {
+		c.sha.tick(c)
+	}
 	if c.hstx != nil {
 		c.hstx.tick()
 	}
