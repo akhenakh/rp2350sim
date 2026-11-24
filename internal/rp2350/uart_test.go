@@ -60,6 +60,19 @@ func TestUARTSingleEntryOverrun(t *testing.T) {
 	}
 }
 
+func TestUARTECRPreservesOverrunInterrupt(t *testing.T) {
+	c := New()
+	const base = 0x40070000
+	c.SendUART(0, []byte{0x11, 0x22})
+	c.Write32(base+0x04, 1<<3) // UARTECR before the emulator polls the event
+	if got := c.Read32(base + 0x04); got != 0 {
+		t.Fatalf("UARTECR did not clear UARTRSR: %#x", got)
+	}
+	if got := c.Read32(base + 0x3c); got&(1<<10) == 0 {
+		t.Fatalf("UARTECR cleared the overrun interrupt: %#x", got)
+	}
+}
+
 func TestUARTFIFOCapacityAndRXInterrupt(t *testing.T) {
 	c := New()
 	const base = 0x40070000

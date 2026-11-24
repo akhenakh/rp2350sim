@@ -205,8 +205,8 @@ func (u *uartBlock) send(data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	depth := int(u.rxDepth.Load())
 	u.rxMu.Lock()
+	depth := int(u.rxDepth.Load())
 	for _, b := range data {
 		if len(u.rx) < depth {
 			u.rx = append(u.rx, b)
