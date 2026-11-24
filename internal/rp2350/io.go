@@ -279,27 +279,49 @@ type sioBlock struct {
 
 	spinlock uint32
 
-	// Core 1 bootrom launch sequence state.
-	launchSeq   []uint32
+	// Core 1 bootrom launch handshake state. The bootrom waits for a first
+	// word of 0 or 1, then accepts VTOR, SP and entry; a 0 anywhere restarts
+	// the sequence and other junk before the 1 is discarded.
+	launchState int
+	launchVTOR  uint32
+	launchSP    uint32
+	launchEntry uint32
 	core1Parked bool
 	Pushes      uint64
 	Launches    uint64
 }
 
+// Bootrom handshake states. Any 0 restarts the sequence, matching the
+// receive_and_check_zero loop in the RP2350 bootrom.
+const (
+	launchWaitPrefix = iota
+	launchWaitVTOR
+	launchWaitSP
+	launchWaitEntry
+)
+
 func (s *sioBlock) init(c *Chip) {
-	s.core1Parked = true
-	s.launchSeq = s.launchSeq[:0]
+	s.resetLaunch()
 }
 
 func (s *sioBlock) reset() {
 	s.fifo[0] = s.fifo[0][:0]
 	s.fifo[1] = s.fifo[1][:0]
 	s.spinlock = 0
-	s.launchSeq = s.launchSeq[:0]
-	s.core1Parked = true
+	s.resetLaunch()
 	s.fifoWOF = [2]bool{}
 	s.fifoROE = [2]bool{}
 	s.doorbellIn = [2]uint32{}
+}
+
+// resetLaunch parks core 1 in the bootrom handshake and drops a partial
+// launch sequence, so a core reset cannot resume mid-sequence.
+func (s *sioBlock) resetLaunch() {
+	s.launchState = launchWaitPrefix
+	s.launchVTOR = 0
+	s.launchSP = 0
+	s.launchEntry = 0
+	s.core1Parked = true
 }
 
 // peek returns SIO state without FIFO-pop or spinlock-acquire side effects.
@@ -483,21 +505,7 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 			s.fifoWOF[0] = true
 		}
 		s.syncFIFOIRQ(c, 0)
-		s.launchSeq = append(s.launchSeq, v)
-		if len(s.launchSeq) == 6 {
-			vt := s.launchSeq[3]
-			sp := s.launchSeq[4]
-			entry := s.launchSeq[5]
-			s.launchSeq = s.launchSeq[:0]
-			s.core1Parked = false
-			s.Launches++
-			c.CPU1.Parked = false
-			c.CPU1.VTOR = vt &^ 0x7F
-			c.CPU1.MSP = sp
-			c.CPU1.R[13] = sp
-			c.CPU1.R[15] = entry &^ 1
-			c.CPU1.R[14] = 0
-		}
+		s.launchStep(c, v)
 		return
 	}
 	dst := 1 - from
@@ -508,6 +516,68 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 	}
 	s.fifo[dst] = append(s.fifo[dst], v)
 	s.syncFIFOIRQ(c, dst)
+}
+
+// launchStep advances the core 1 bootrom handshake. The bootrom drains its
+// mailbox and echoes 0 while waiting for the first word; a 1 then selects the
+// launch sequence (VTOR, SP, entry). A 0 at any later point restarts the
+// handshake, so a truncated or misaligned sequence never launches core 1.
+func (s *sioBlock) launchStep(c *Chip, v uint32) {
+	switch s.launchState {
+	case launchWaitPrefix:
+		if v == 1 {
+			s.launchState = launchWaitVTOR
+		}
+	case launchWaitVTOR:
+		if v == 0 {
+			s.launchState = launchWaitPrefix
+			return
+		}
+		s.launchVTOR = v
+		s.launchState = launchWaitSP
+	case launchWaitSP:
+		if v == 0 {
+			s.launchState = launchWaitPrefix
+			return
+		}
+		s.launchSP = v
+		s.launchState = launchWaitEntry
+	case launchWaitEntry:
+		if v == 0 {
+			s.launchState = launchWaitPrefix
+			return
+		}
+		s.launchEntry = v
+		s.launchState = launchWaitPrefix
+		s.core1Parked = false
+		s.Launches++
+		c.CPU1.Parked = false
+		c.CPU1.VTOR = s.launchVTOR &^ 0x7F
+		c.CPU1.MSP = s.launchSP
+		c.CPU1.R[13] = s.launchSP
+		c.CPU1.R[15] = s.launchEntry &^ 1
+		c.CPU1.R[14] = 0
+	}
+}
+
+// flushFIFOs drops both mailboxes and their sticky errors, then republishes
+// the FIFO IRQ state. Core 1 consumes no data when it is reset.
+func (s *sioBlock) flushFIFOs(c *Chip) {
+	s.fifo[0] = s.fifo[0][:0]
+	s.fifo[1] = s.fifo[1][:0]
+	s.fifoWOF = [2]bool{}
+	s.fifoROE = [2]bool{}
+	s.syncFIFOIRQ(c, 0)
+	s.syncFIFOIRQ(c, 1)
+}
+
+// restartCore1 models the bootrom on a core released from reset: it drains its
+// own mailbox, parks in the launch handshake and pushes a single 0 to core 0.
+func (s *sioBlock) restartCore1(c *Chip) {
+	s.flushFIFOs(c)
+	s.resetLaunch()
+	s.fifo[0] = append(s.fifo[0], 0)
+	s.syncFIFOIRQ(c, 0)
 }
 
 func (s *sioBlock) syncFIFOIRQ(c *Chip, core int) {

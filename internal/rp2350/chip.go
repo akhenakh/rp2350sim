@@ -242,6 +242,7 @@ func New() *Chip {
 	c.CPU1.Interrupts = c.ppb[1]
 
 	c.addRegBlock(newResets(c))
+	c.addRegBlock(newPSM(c))
 	c.addRegBlock(newClocks(c))
 	c.addRegBlock(newXOSC(c))
 	c.addRegBlock(newPLL(c, 0x40050000))
@@ -706,7 +707,7 @@ func (c *Chip) resetCore(core int) {
 		cpu.SetVectorTable(FlashBase)
 	} else {
 		cpu.Parked = true
-		c.sio.core1Parked = true
+		c.sio.resetLaunch()
 	}
 	c.Halted = c.CPU0.Halted || c.CPU1.Halted
 }

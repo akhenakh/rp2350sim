@@ -277,7 +277,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   cores). The default TinyGo tasks scheduler is single-core. The SCS page is
   banked per core: VTOR, NVIC enable/pending/priority state, SysTick and the
   system-exception pending bits are private, and shared peripheral IRQs are
-  replicated to both cores.
+  replicated to both cores. The launch handshake validates the bootrom's
+  0/0/1 prefix and resyncs on a truncated sequence, and PSM.FRCE_OFF.PROC1
+  hard-resets core 1 for `multicore_reset_core1`.
 - **Exceptions and nesting:** preemptive priority nesting, 4 priority bits,
   tail-chaining, PendSV, SysTick (CPU clock and 1 MHz reference), SVC (with
   HardFault escalation when masked), NMI, PRIMASK/FAULTMASK/BASEPRI and the
