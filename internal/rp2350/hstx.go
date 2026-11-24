@@ -1,6 +1,9 @@
 package rp2350
 
-import "image"
+import (
+	"image"
+	"math/bits"
+)
 
 // HSTX is the RP2350 high-speed serial transmit block: a command expander and
 // TMDS encoder fed from a 32-bit FIFO (0x50600000). This model decodes the
@@ -17,11 +20,21 @@ const (
 	hstxBit0        = 0x04
 	hstxExpandShift = 0x24
 	hstxExpandTMDS  = 0x28
+	hstxFIFOData    = 0x04
+)
+
+const (
+	hstxCSRReset         = 1<<28 | 5<<16 | 6<<8
+	hstxCSRMask          = 0xFF1F1F73
+	hstxExpandShiftReset = 1<<24 | 1<<8
+	hstxExpandShiftMask  = 0x1F1F1F1F
+	hstxExpandTMDSMask   = 0x00FFFFFF
+	hstxFIFODepth        = 8
 )
 
 const (
 	hstxModeIdle = iota
-	hstxModeRawWait
+	hstxModeRaw
 	hstxModeTMDS
 )
 
@@ -30,20 +43,27 @@ type hstxBlock struct {
 	fifo *regBlock
 
 	csr       uint32
-	expand    uint32
 	shift     uint32
 	expandTMD uint32
 
-	mode      int
-	remaining int
-	line      []byte
-	lines     [][]byte
-	frame     []byte
-	frameW    int
-	frameH    int
-	height    int
-	activeW   int
-	serial    uint64
+	fifoData  [hstxFIFODepth]uint32
+	fifoHead  int
+	fifoLevel int
+	wof       bool
+
+	mode         int
+	remaining    int // -1 means the command count is infinite
+	repeat       bool
+	repeatLoaded bool
+	repeatWord   uint32
+	line         []byte
+	lines        [][]byte
+	frame        []byte
+	frameW       int
+	frameH       int
+	height       int
+	activeW      int
+	serial       uint64
 }
 
 func newHSTX() *hstxBlock {
@@ -51,68 +71,171 @@ func newHSTX() *hstxBlock {
 		ctrl: newRegBlock(hstxCtrlBase, 0x1000),
 		fifo: newRegBlock(hstxFIFOBase, 0x1000),
 	}
+	h.ctrl.readFn = func(c *Chip, off uint32) (uint32, bool) {
+		switch off {
+		case hstxCSR:
+			return h.csr, true
+		case hstxExpandShift:
+			return h.shift, true
+		case hstxExpandTMDS:
+			return h.expandTMD, true
+		}
+		return 0, false
+	}
 	h.ctrl.writeFn = func(c *Chip, off, v uint32) {
 		switch off {
 		case hstxCSR:
-			h.csr = v
+			wasEnabled := h.csr&1 != 0
+			h.csr = v & hstxCSRMask
+			if wasEnabled && h.csr&1 == 0 {
+				h.resetExpander()
+			}
 		case hstxExpandShift:
-			h.shift = v
+			h.shift = v & hstxExpandShiftMask
 		case hstxExpandTMDS:
-			h.expandTMD = v
+			h.expandTMD = v & hstxExpandTMDSMask
 		}
 	}
 	h.fifo.readFn = func(c *Chip, off uint32) (uint32, bool) {
-		if off == 0 { // STAT: empty, level 0
-			return 1 << 9, true
+		switch off {
+		case 0:
+			return h.stat(), true
+		case hstxFIFOData:
+			return 0, true
 		}
 		return 0, false
 	}
 	h.fifo.writeFn = func(c *Chip, off, v uint32) {
-		if off == 4 {
+		switch off {
+		case 0:
+			if v&(1<<10) != 0 {
+				h.wof = false
+			}
+		case hstxFIFOData:
 			h.push(v)
 		}
 	}
 	h.ctrl.resetFn = func(c *Chip) { h.reset() }
 	h.fifo.resetFn = func(c *Chip) { h.reset() }
+	h.reset()
 	return h
 }
 
 func (h *hstxBlock) reset() {
-	h.csr, h.expand, h.shift, h.expandTMD = 0, 0, 0, 0
-	h.mode, h.remaining = hstxModeIdle, 0
+	h.csr = hstxCSRReset
+	h.shift = hstxExpandShiftReset
+	h.expandTMD = 0
+	h.fifoHead, h.fifoLevel = 0, 0
+	h.wof = false
+	h.resetExpander()
 	h.line = h.line[:0]
 	h.lines = h.lines[:0]
 	h.frame = h.frame[:0]
 	h.frameW, h.frameH = 0, 0
 	h.height, h.activeW = 0, 0
+	h.serial = 0
+}
+
+func (h *hstxBlock) resetExpander() {
+	h.mode, h.remaining = hstxModeIdle, 0
+	h.repeat, h.repeatLoaded = false, false
+	h.repeatWord = 0
+	h.line = h.line[:0]
+}
+
+func (h *hstxBlock) stat() uint32 {
+	var v uint32
+	if h.fifoLevel == 0 {
+		v |= 1 << 9
+	}
+	if h.fifoLevel == hstxFIFODepth {
+		v |= 1 << 8
+	}
+	if h.wof {
+		v |= 1 << 10
+	}
+	return v | uint32(h.fifoLevel)
+}
+
+func (h *hstxBlock) active() bool {
+	if h.csr&1 == 0 {
+		return false
+	}
+	if h.fifoLevel != 0 {
+		return true
+	}
+	return h.csr&(1<<1) != 0 && h.mode != hstxModeIdle && h.repeat && h.repeatLoaded && h.remaining != 0
+}
+
+func (h *hstxBlock) push(v uint32) {
+	if h.fifoLevel == hstxFIFODepth {
+		h.wof = true
+		return
+	}
+	h.fifoData[(h.fifoHead+h.fifoLevel)%hstxFIFODepth] = v
+	h.fifoLevel++
+}
+
+func (h *hstxBlock) pop() uint32 {
+	v := h.fifoData[h.fifoHead]
+	h.fifoHead = (h.fifoHead + 1) % hstxFIFODepth
+	h.fifoLevel--
+	return v
 }
 
 // pixelBits is the sum of the three TMDS lane widths. The register fields
 // store (bits - 1), so RGB332 is 2+3+3 = 8 bits.
 func (h *hstxBlock) pixelBits() int {
-	bits := int((h.expandTMD>>5)&7) + int((h.expandTMD>>13)&7) + int((h.expandTMD>>21)&7) + 3
-	if bits < 1 || bits > 32 {
+	n := int((h.expandTMD>>5)&7) + int((h.expandTMD>>13)&7) + int((h.expandTMD>>21)&7) + 3
+	if n < 1 || n > 32 {
 		return 8
 	}
-	return bits
+	return n
 }
 
-func (h *hstxBlock) push(v uint32) {
-	switch h.mode {
-	case hstxModeRawWait:
-		h.mode = hstxModeIdle
-		return
-	case hstxModeTMDS:
-		h.consumePixels(v)
+func (h *hstxBlock) tick() {
+	if h.csr&1 == 0 {
 		return
 	}
+	if h.csr&(1<<1) != 0 && h.mode != hstxModeIdle && h.repeat && h.repeatLoaded {
+		h.output(h.repeatWord)
+		h.rotateRepeat()
+		return
+	}
+	if h.fifoLevel == 0 {
+		return
+	}
+	v := h.pop()
+	if h.csr&(1<<1) == 0 {
+		return
+	}
+	if h.mode == hstxModeIdle {
+		h.command(v)
+		return
+	}
+	if h.repeat {
+		h.repeatWord = v
+		h.repeatLoaded = true
+	}
+	h.output(v)
+	h.rotateRepeat()
+}
+
+func (h *hstxBlock) command(v uint32) {
 	cmd := (v >> 12) & 0xF
 	count := int(v & 0xFFF)
-	switch cmd {
-	case 0x0, 0x1: // RAW, RAW_REPEAT
-		h.mode = hstxModeRawWait
-	case 0x2, 0x3: // TMDS, TMDS_REPEAT
-		if h.activeW != count {
+	if count == 0 {
+		count = -1
+	}
+	h.repeat = cmd&1 != 0
+	h.repeatLoaded = false
+	h.remaining = count
+	switch cmd & 0xE {
+	case 0x0: // RAW, RAW_REPEAT
+		h.mode = hstxModeRaw
+	case 0x2: // TMDS, TMDS_REPEAT
+		h.mode = hstxModeTMDS
+		if count > 0 && h.activeW != count {
 			// The active width changed (a mode switch): relearn the frame
 			// height and start the current frame again.
 			h.activeW = count
@@ -120,27 +243,86 @@ func (h *hstxBlock) push(v uint32) {
 			h.lines = h.lines[:0]
 		}
 		h.line = h.line[:0]
-		h.remaining = count
-		h.mode = hstxModeTMDS
+	default:
+		h.mode, h.remaining = hstxModeIdle, 0
+		h.repeat = false
 	}
 }
 
-// consumePixels takes the bytes of one packed pixel word. HSTX packs pixels
-// least-significant byte first; 8-bit RGB332 stores four per word, RGB565 two.
-func (h *hstxBlock) consumePixels(v uint32) {
-	bits := h.pixelBits()
-	perWord := max(32/bits, 1)
-	bytesPer := (bits + 7) / 8
-	for i := 0; i < perWord && h.remaining > 0; i++ {
-		var px [4]byte
-		for b := 0; b < bytesPer && b < 4; b++ {
-			px[b] = byte(v >> uint(i*bytesPer*8+b*8))
+func (h *hstxBlock) output(v uint32) {
+	switch h.mode {
+	case hstxModeRaw:
+		if h.remaining > 0 {
+			h.remaining--
+			if h.remaining == 0 {
+				h.endCommand()
+			}
 		}
-		h.line = append(h.line, px[:bytesPer]...)
-		h.remaining--
+	case hstxModeTMDS:
+		h.consumePixels(v)
 	}
-	if h.remaining <= 0 {
-		h.mode = hstxModeIdle
+}
+
+func (h *hstxBlock) rotateRepeat() {
+	if !h.repeat || h.mode == hstxModeIdle {
+		return
+	}
+	shift := int((h.shift >> 16) & 0x1F)
+	if h.mode == hstxModeRaw {
+		shift = int(h.shift & 0x1F)
+	}
+	h.repeatWord = bits.RotateLeft32(h.repeatWord, -shift)
+}
+
+func (h *hstxBlock) endCommand() {
+	h.mode, h.remaining = hstxModeIdle, 0
+	h.repeat, h.repeatLoaded = false, false
+	h.repeatWord = 0
+}
+
+func (h *hstxBlock) lane(v uint32, rot, width uint32) uint32 {
+	return bits.RotateLeft32(v, int(rot)) & ((1 << width) - 1)
+}
+
+// decodePixel reconstructs the packed little-endian pixel from the three TMDS
+// lane inputs. The lane rotations select each component from the expander word.
+func (h *hstxBlock) decodePixel(v uint32) uint32 {
+	n0 := (h.expandTMD >> 5) & 7
+	n1 := (h.expandTMD >> 13) & 7
+	n2 := (h.expandTMD >> 21) & 7
+	n0++
+	n1++
+	n2++
+	r := h.lane(v, h.expandTMD&0x1F, n0)
+	g := h.lane(v, (h.expandTMD>>8)&0x1F, n1)
+	b := h.lane(v, (h.expandTMD>>16)&0x1F, n2)
+	total := n0 + n1 + n2
+	return r<<(total-n0) | g<<(total-n0-n1) | b
+}
+
+// consumePixels takes the pixels of one expander output word. HSTX packs
+// pixels least-significant byte first; 8-bit RGB332 stores four per word,
+// RGB565 two. ENC_SHIFT selects the next pixel within the word.
+func (h *hstxBlock) consumePixels(v uint32) {
+	if h.remaining == 0 {
+		return
+	}
+	pixelBits := h.pixelBits()
+	perWord := max(32/pixelBits, 1)
+	bytesPer := (pixelBits + 7) / 8
+	encShift := int((h.shift >> 16) & 0x1F)
+	for i := 0; i < perWord && h.remaining != 0; i++ {
+		data := bits.RotateLeft32(v, -i*encShift)
+		px := h.decodePixel(data)
+		for b := 0; b < bytesPer; b++ {
+			h.line = append(h.line, byte(px>>uint(b*8)))
+		}
+		if h.remaining > 0 {
+			h.remaining--
+		}
+	}
+	if h.remaining == 0 {
+		h.endCommand()
 		h.lines = append(h.lines, append([]byte(nil), h.line...))
 		if h.height > 0 && len(h.lines) >= h.height {
 			h.finalize()

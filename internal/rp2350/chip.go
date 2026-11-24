@@ -365,6 +365,9 @@ func (c *Chip) canIdleSkip() bool {
 			return false
 		}
 	}
+	if c.hstx != nil && c.hstx.active() {
+		return false
+	}
 	for _, u := range c.uart {
 		if u != nil && u.irqPending.Load() {
 			return false
@@ -483,6 +486,9 @@ func (c *Chip) tickPeripherals() {
 	}
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
+	}
+	if c.hstx != nil {
+		c.hstx.tick()
 	}
 	// Host input and the USB host state machine are asynchronous to the
 	// instruction stream; polling every 8 cycles costs nothing observable and
