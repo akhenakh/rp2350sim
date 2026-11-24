@@ -8,6 +8,7 @@ import (
 
 func TestWS2812BRewindDropsPartialFrame(t *testing.T) {
 	c := rp2350.New()
+	configurePin(c, 0)
 	w := NewWS2812B(c, 0)
 	setLevel := func(high bool) {
 		const bit = uint64(1)

@@ -20,6 +20,7 @@ func (c *Chip) pioWrite(off uint32, v uint32) { c.Write32(pioBase0+off, v) }
 // configureWS2812 sets up PIO0 state machine 0 to drive GP0 with the program
 // above, mirroring what piolib.NewWS2812B does.
 func configureWS2812(c *Chip, clkdivWhole uint32) {
+	configurePads(c)
 	for i, instr := range ws2812Program {
 		c.pioWrite(0x48+uint32(i)*4, uint32(instr))
 	}

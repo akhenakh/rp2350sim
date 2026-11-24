@@ -22,6 +22,7 @@ var ws2812Program = [8]uint16{
 
 func setupWS2812PIO(c *rp2350.Chip) {
 	const base = 0x50200000
+	configurePin(c, 0)
 	for i, instr := range ws2812Program {
 		c.Write32(base+0x48+uint32(i)*4, uint32(instr))
 	}

@@ -20,6 +20,7 @@ func TestBootselDrivesQSPICSN(t *testing.T) {
 	// GPIO32-47 stay in the low half.
 	c.SetBootsel(false)
 	c.Pins.SetExternal(40, true)
+	configurePads(c)
 	if got := c.Read32(SIOBase + 0x08); got&(1<<27) == 0 || got&(1<<8) == 0 {
 		t.Fatalf("GPIO_HI_IN = %#x, want CSN high and GP40 high", got)
 	}

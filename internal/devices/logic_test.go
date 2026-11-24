@@ -208,6 +208,7 @@ func TestSignalSourceSine(t *testing.T) {
 		t.Fatal("analog source not applied")
 	}
 	// A driven pin overrides the external source.
+	configurePin(c, 26)
 	c.Pins.OE |= 1 << 26
 	c.Pins.Out |= 1 << 26
 	if v := c.Pins.Voltage(26); v != 3.3 {

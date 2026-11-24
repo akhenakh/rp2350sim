@@ -11,6 +11,10 @@ import (
 func lcdTestWrite(c *rp2350.Chip, d *devices.ST7789, command bool, data ...byte) {
 	const cs = uint64(1 << 9)
 	const dc = uint64(1 << 8)
+	for _, pin := range []uint32{8, 9} {
+		// Clear pad isolation and enable the input, as firmware does.
+		c.Write32(0x40038004+4*pin, 0x056)
+	}
 	c.Pins.OE |= cs | dc
 	c.Pins.Out &^= cs
 	if command {

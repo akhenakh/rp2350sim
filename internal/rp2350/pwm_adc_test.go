@@ -60,6 +60,7 @@ func TestADCPackageMapping(t *testing.T) {
 
 func TestPWMCounterAdvances(t *testing.T) {
 	c := New()
+	configurePads(c)
 	// Slice 0: divide by 1, top 999, compare A = 500, then enable.
 	c.Pins.Func[0] = pwmFuncSel // A pin on slice 0 channel A is GPIO0
 	c.Write32(pwmBase+0x10, 999)

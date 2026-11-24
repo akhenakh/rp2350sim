@@ -7,6 +7,19 @@ type PinState struct {
 	PullUp   [48]bool
 	PullDown [48]bool
 
+	// PADS_BANK0 controls. padIE gates the pad's digital input back to the
+	// peripherals; padISO isolates the pad and holds the output enable,
+	// output level and pull-up state captured when isolation was asserted;
+	// padOD forces the output buffer off with priority over every peripheral.
+	padIE  uint64
+	padOD  uint64
+	padISO uint64
+
+	// latched controls presented to pads whose ISO bit is set.
+	latchedOut    uint64
+	latchedOE     uint64
+	latchedPullUp uint64
+
 	// Bit-parallel summaries used by PIO's always-on input synchronizers.
 	pullUpMask uint64
 	pwmPins    uint64
@@ -46,6 +59,12 @@ func (p *PinState) reset() {
 	p.PullDown = [48]bool{}
 	p.pullUpMask = 0
 	p.pwmPins = 0
+	p.padIE = 0
+	p.padOD = 0
+	p.padISO = 1<<48 - 1
+	p.latchedOut = 0
+	p.latchedOE = 0
+	p.latchedPullUp = 0
 	for i := range p.PullDown {
 		p.PullDown[i] = true
 	}
@@ -54,12 +73,13 @@ func (p *PinState) reset() {
 	}
 }
 
-// Level returns the resolved level of a pin.
+// Level returns the resolved level of a pin on the wire. Pad isolation holds
+// the latched output and pull state, and output disable releases the pad.
 func (p *PinState) Level(pin int) bool {
 	if pin < 0 || pin > 47 {
 		return false
 	}
-	if p.LevelOverride != nil {
+	if p.LevelOverride != nil && !p.isolated(pin) && p.outputEnabled(pin) {
 		if level, ok := p.LevelOverride(pin); ok {
 			return level
 		}
@@ -67,15 +87,80 @@ func (p *PinState) Level(pin int) bool {
 	return p.rawLevel(pin)
 }
 
-func (p *PinState) rawLevel(pin int) bool {
-	bit := uint64(1) << uint(pin)
-	if p.OE&bit != 0 {
-		return p.Out&bit != 0
+// PadInput reports the digital value the pad presents to the peripheral input
+// mux. A pad with input enable clear reads low, as on hardware.
+func (p *PinState) PadInput(pin int) bool {
+	if pin < 0 || pin > 47 || p.padIE&(uint64(1)<<uint(pin)) == 0 {
+		return false
 	}
+	return p.Level(pin)
+}
+
+func (p *PinState) isolated(pin int) bool {
+	return p.padISO&(uint64(1)<<uint(pin)) != 0
+}
+
+// outputEnabled reports whether the pad's output buffer drives the wire,
+// honoring the isolation latch and PADS_BANK0.OD.
+func (p *PinState) outputEnabled(pin int) bool {
+	bit := uint64(1) << uint(pin)
+	if p.padOD&bit != 0 {
+		return false
+	}
+	if p.padISO&bit != 0 {
+		return p.latchedOE&bit != 0
+	}
+	return p.OE&bit != 0
+}
+
+func (p *PinState) outputLevel(pin int) bool {
+	bit := uint64(1) << uint(pin)
+	if p.padISO&bit != 0 {
+		return p.latchedOut&bit != 0
+	}
+	return p.Out&bit != 0
+}
+
+func (p *PinState) pullUpEnabled(pin int) bool {
+	if p.isolated(pin) {
+		return p.latchedPullUp&(uint64(1)<<uint(pin)) != 0
+	}
+	return p.PullUp[pin]
+}
+
+// padView applies the isolation latches and output disable to a set of pad
+// control signals.
+func (p *PinState) padView(out, oe, pullUp uint64) (uint64, uint64, uint64) {
+	if p.padISO != 0 {
+		out = (out &^ p.padISO) | (p.latchedOut & p.padISO)
+		oe = (oe &^ p.padISO) | (p.latchedOE & p.padISO)
+		pullUp = (pullUp &^ p.padISO) | (p.latchedPullUp & p.padISO)
+	}
+	return out, oe &^ p.padOD, pullUp
+}
+
+// latchPad captures the controls presented to a pad when isolation is
+// asserted.
+func (p *PinState) latchPad(pin int) {
+	bit := uint64(1) << uint(pin)
+	p.latchedOut = (p.latchedOut &^ bit) | (p.Out & bit)
+	p.latchedOE = (p.latchedOE &^ bit) | (p.OE & bit)
+	if p.PullUp[pin] {
+		p.latchedPullUp |= bit
+	} else {
+		p.latchedPullUp &^= bit
+	}
+}
+
+func (p *PinState) rawLevel(pin int) bool {
+	if p.outputEnabled(pin) {
+		return p.outputLevel(pin)
+	}
+	bit := uint64(1) << uint(pin)
 	if p.ExtValid&bit != 0 {
 		return p.ExtLevel&bit != 0
 	}
-	return p.PullUp[pin]
+	return p.pullUpEnabled(pin)
 }
 
 // Voltage returns the pin voltage for the scope: the chip's driven level when
@@ -85,8 +170,7 @@ func (p *PinState) Voltage(pin int) float32 {
 	if pin < 0 || pin > 47 {
 		return 0
 	}
-	bit := uint64(1) << uint(pin)
-	if p.LevelOverride != nil {
+	if p.LevelOverride != nil && !p.isolated(pin) && p.outputEnabled(pin) {
 		if level, ok := p.LevelOverride(pin); ok {
 			if level {
 				return 3.3
@@ -94,8 +178,8 @@ func (p *PinState) Voltage(pin int) float32 {
 			return 0
 		}
 	}
-	if p.OE&bit != 0 {
-		if p.Out&bit != 0 {
+	if p.outputEnabled(pin) {
+		if p.outputLevel(pin) {
 			return 3.3
 		}
 		return 0
@@ -198,9 +282,11 @@ type ioBank struct {
 	pads  *regBlock
 }
 
+const padsBase = 0x40038000
+
 func (io *ioBank) init(c *Chip) {
 	io.bank0 = newRegBlock(0x40028000, 0x1000)
-	io.pads = newRegBlock(0x40038000, 0x1000)
+	io.pads = newRegBlock(padsBase, 0x1000)
 
 	io.bank0.writeFn = func(c *Chip, off, v uint32) {
 		if off >= 0x04 && off < 0x04+8*48 && (off-0x04)%8 == 0 {
@@ -227,16 +313,38 @@ func (io *ioBank) init(c *Chip) {
 	io.pads.writeFn = func(c *Chip, off, v uint32) {
 		if off >= 0x04 && off < 0x04+4*48 && (off-0x04)%4 == 0 {
 			pin := int((off - 0x04) / 4)
-			before := c.Pins.Level(pin)
-			c.Pins.PullUp[pin] = v&(1<<3) != 0
-			c.Pins.PullDown[pin] = v&(1<<2) != 0
 			bit := uint64(1) << uint(pin)
-			if c.Pins.PullUp[pin] {
-				c.Pins.pullUpMask |= bit
-			} else {
-				c.Pins.pullUpMask &^= bit
+			p := c.Pins
+			before := p.Level(pin)
+			// Asserting isolation latches the controls currently presented
+			// to the pad before this write's new values take effect.
+			if p.padISO&bit == 0 && v&(1<<8) != 0 {
+				p.latchPad(pin)
 			}
-			c.Pins.notifyChange(pin, before)
+			if v&(1<<6) != 0 {
+				p.padIE |= bit
+			} else {
+				p.padIE &^= bit
+			}
+			if v&(1<<7) != 0 {
+				p.padOD |= bit
+			} else {
+				p.padOD &^= bit
+			}
+			if v&(1<<8) != 0 {
+				p.padISO |= bit
+			} else {
+				p.padISO &^= bit
+			}
+			p.PullUp[pin] = v&(1<<3) != 0
+			p.PullDown[pin] = v&(1<<2) != 0
+			if p.PullUp[pin] {
+				p.pullUpMask |= bit
+			} else {
+				p.pullUpMask &^= bit
+			}
+			c.pioInputValid = false
+			p.notifyChange(pin, before)
 		}
 	}
 	// IO_BANK0 CTRL resets to FUNCSEL=NULL (0x1F), matching PinState.Func.
@@ -247,11 +355,18 @@ func (io *ioBank) init(c *Chip) {
 	}
 	io.pads.resetFn = func(c *Chip) {
 		c.Pins.pullUpMask = 0
+		c.Pins.padIE = 0
+		c.Pins.padOD = 0
+		c.Pins.padISO = 1<<48 - 1
+		c.Pins.latchedOut = 0
+		c.Pins.latchedOE = 0
+		c.Pins.latchedPullUp = 0
 		for pin := range 48 {
 			io.pads.regs[(0x04+pin*4)/4] = 0x116
 			c.Pins.PullUp[pin] = false
 			c.Pins.PullDown[pin] = true
 		}
+		c.pioInputValid = false
 	}
 }
 
@@ -592,7 +707,7 @@ func (s *sioBlock) syncFIFOIRQ(c *Chip, core int) {
 func (p *PinState) inputWord(base int) uint32 {
 	var v uint32
 	for i := range 32 {
-		if p.Level(base + i) {
+		if p.PadInput(base + i) {
 			v |= 1 << uint(i)
 		}
 	}
@@ -612,12 +727,17 @@ func (p *PinState) levelWith(out, oe uint64, pin int) bool {
 }
 
 // pinsChanged notifies the board model about levels that changed because the
-// output latch or output enable changed.
+// output latch or output enable changed. A pad whose isolation latch holds the
+// controls or whose output is disabled cannot change on the wire.
 func (c *Chip) pinsChanged(oldOut, oldOE uint64) {
 	if c.Pins.OnChange == nil {
 		return
 	}
 	for pin := range 48 {
+		bit := uint64(1) << uint(pin)
+		if c.Pins.padISO&bit != 0 || c.Pins.padOD&bit != 0 {
+			continue
+		}
 		if c.Pins.LevelOverride != nil {
 			// A peripheral (PWM) owns this pin's level; an SIO write does not
 			// change what is on the wire.

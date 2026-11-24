@@ -6,6 +6,7 @@ func pwmTestChip() *Chip {
 	c := New()
 	c.CPU0.Parked = true
 	c.CPU1.Parked = true
+	configurePads(c)
 	return c
 }
 

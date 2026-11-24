@@ -6,6 +6,7 @@ import "testing"
 // and falls back to the plain output level.
 func TestPinBrightness(t *testing.T) {
 	c := New()
+	configurePads(c)
 	const pin = 15 // PWM slice 7, channel B
 	c.Pins.Func[pin] = pwmFuncSel
 	base := uint32(pwmBase + 7*pwmStride)

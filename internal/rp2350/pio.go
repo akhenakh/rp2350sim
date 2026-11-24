@@ -1021,7 +1021,7 @@ func (s *pioSM) readPin(offset int) bool {
 	offset &= 31
 	pin := s.p.pinAt(offset)
 	if s.p.inputBypass&(1<<uint(offset)) != 0 {
-		return s.p.chip.Pins.Level(pin)
+		return s.p.chip.Pins.PadInput(pin)
 	}
 	return s.p.inputSync2&(1<<uint(pin)) != 0
 }
@@ -1032,7 +1032,7 @@ func (s *pioSM) readAbsolutePin(pin int) bool {
 	}
 	offset := pin - s.p.gpioBase()
 	if offset >= 0 && offset < 32 && s.p.inputBypass&(1<<uint(offset)) != 0 {
-		return s.p.chip.Pins.Level(pin)
+		return s.p.chip.Pins.PadInput(pin)
 	}
 	return s.p.inputSync2&(1<<uint(pin)) != 0
 }
@@ -1514,7 +1514,8 @@ func (s *pioSM) execSet(instr uint16) {
 
 func (c *Chip) pioInputLevels() uint64 {
 	p := c.Pins
-	pulls, pwmPins := p.pullUpMask, p.pwmPins
+	out, oe, pulls := p.Out, p.OE, p.pullUpMask
+	pwmPins := p.pwmPins
 	if !c.pioInputValid {
 		// Tests and board models may initialise pin arrays directly before
 		// the first PIO tick. Normal firmware writes maintain the summaries.
@@ -1529,6 +1530,7 @@ func (c *Chip) pioInputLevels() uint64 {
 			}
 		}
 	}
+	out, oe, pulls = p.padView(out, oe, pulls)
 	stable := c.pioInputValid && c.pioInputOut == p.Out && c.pioInputOE == p.OE &&
 		c.pioInputExtLevel == p.ExtLevel && c.pioInputExtValid == p.ExtValid &&
 		c.pioInputPulls == pulls && c.pioInputPWMPins == pwmPins
@@ -1536,8 +1538,10 @@ func (c *Chip) pioInputLevels() uint64 {
 		return c.pioInputCacheLevels
 	}
 
-	oe, ext := p.OE, p.ExtValid
-	levels := (p.Out & oe) | (p.ExtLevel &^ oe & ext) | (pulls &^ oe &^ ext)
+	ext := p.ExtValid
+	levels := (out & oe) | (p.ExtLevel &^ oe & ext) | (pulls &^ oe &^ ext)
+	// A pad with input enable clear presents 0 to every peripheral input.
+	levels &= p.padIE
 	// PWM can change a driven level between microsecond ticks. Only those
 	// pins need the cycle-resolution override; ordinary pins stay bit-parallel.
 	if p.LevelOverride != nil {
@@ -1545,6 +1549,9 @@ func (c *Chip) pioInputLevels() uint64 {
 			pin := bits.TrailingZeros64(pwmPins)
 			pwmPins &^= 1 << uint(pin)
 			bit := uint64(1) << uint(pin)
+			if p.isolated(pin) || p.padIE&bit == 0 || oe&bit == 0 {
+				continue
+			}
 			if level, ok := p.LevelOverride(pin); ok {
 				if level {
 					levels |= bit
