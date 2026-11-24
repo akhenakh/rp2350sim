@@ -125,6 +125,63 @@ func TestST7789GEEKFullGRAM(t *testing.T) {
 	}
 }
 
+func TestST7789GEEKLogicalWindow(t *testing.T) {
+	c := rp2350.New()
+	d := NewST7789(c, 9, 8, 12, 135, 240)
+	d.sendCmd(0x11)               // SLPOUT
+	d.sendCmd(0x36, 0x70)         // MADCTL MX|MY|MV
+	d.sendCmd(0x2A, 0, 0, 0, 239) // TinyGo logical CASET 0..239
+	d.sendCmd(0x2B, 0, 0, 0, 134) // TinyGo logical RASET 0..134
+	d.sendCmd(0x2C)
+	for y := range 135 {
+		for x := range 240 {
+			var px uint16
+			switch {
+			case x == 0 && y == 0:
+				px = 0xF800
+			case x == 239 && y == 134:
+				px = 0x07E0
+			case x == 119 && y == 67:
+				px = 0x001F
+			}
+			d.data(byte(px >> 8))
+			d.data(byte(px))
+		}
+	}
+	d.sendCmd(0x29)
+
+	img := d.Framebuffer()
+	if got := d.PixelsWritten(); got != 240*135 {
+		t.Fatalf("pixels = %d, want %d", got, 240*135)
+	}
+	for _, want := range []struct {
+		x, y int
+		c    color.RGBA
+	}{
+		{0, 0, color.RGBA{R: 248, A: 255}},
+		{239, 134, color.RGBA{G: 252, A: 255}},
+		{119, 67, color.RGBA{B: 248, A: 255}},
+	} {
+		if got := img.RGBAAt(want.x, want.y); got != want.c {
+			t.Errorf("logical pixel (%d,%d) = %v, want %v", want.x, want.y, got, want.c)
+		}
+	}
+
+	// A partial update must not move the exported full-frame origin.
+	d.sendCmd(0x2A, 0, 10, 0, 10)
+	d.sendCmd(0x2B, 0, 20, 0, 20)
+	d.sendCmd(0x2C)
+	d.data(0xFF)
+	d.data(0xE0)
+	img = d.Framebuffer()
+	if got := img.RGBAAt(0, 0); got != (color.RGBA{R: 248, A: 255}) {
+		t.Fatalf("partial update moved logical origin: %v", got)
+	}
+	if got := img.RGBAAt(10, 20); got != (color.RGBA{R: 248, G: 252, A: 255}) {
+		t.Fatalf("partial pixel = %v, want yellow", got)
+	}
+}
+
 func TestST7789SleepRetainsGRAM(t *testing.T) {
 	d := newTestDisplay()
 	d.sendCmd(0x11)             // SLPOUT

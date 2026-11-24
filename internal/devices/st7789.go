@@ -37,13 +37,16 @@ type ST7789 struct {
 	gramWidth, gramHeight int
 	stride                int
 
-	gram   []uint16
-	casetX [2]int
-	casetY [2]int
-	x, y   int
-	cmd    byte
-	params []byte
-	inData bool
+	gram             []uint16
+	casetX           [2]int
+	casetY           [2]int
+	visibleOriginX   int
+	visibleOriginY   int
+	visibleWindowSet bool
+	x, y             int
+	cmd              byte
+	params           []byte
+	inData           bool
 	// pending high byte for RGB565 input
 	hi       byte
 	haveHi   bool
@@ -100,6 +103,8 @@ func (d *ST7789) reset() {
 	maxX, maxY := d.addressSize()
 	d.casetX = [2]int{0, maxX - 1}
 	d.casetY = [2]int{0, maxY - 1}
+	d.visibleWindowSet = false
+	d.updateVisibleOrigin()
 	d.minX, d.minY, d.maxX, d.maxY = -1, -1, -1, -1
 }
 
@@ -110,15 +115,37 @@ func (d *ST7789) addressSize() (width, height int) {
 	return d.gramWidth, d.gramHeight
 }
 
-func (d *ST7789) visibleGeometry() (width, height, originX, originY int) {
+func (d *ST7789) visibleSize() (width, height int) {
 	width, height = d.Width, d.Height
 	if d.madctl&0x20 != 0 {
 		width, height = height, width
 	}
+	return width, height
+}
+
+// updateVisibleOrigin follows the last full visible CASET/RASET window. TinyGo
+// uses logical windows starting at (0,0) unless panel offsets are configured;
+// offset-aware drivers use the physical GEEK window at (40,53). Partial writes
+// retain the origin selected by the last full-frame window.
+func (d *ST7789) updateVisibleOrigin() {
+	width, height := d.visibleSize()
+	fullWindow := d.casetX[1]-d.casetX[0]+1 == width && d.casetY[1]-d.casetY[0]+1 == height
+	if fullWindow {
+		d.visibleOriginX, d.visibleOriginY = d.casetX[0], d.casetY[0]
+		d.visibleWindowSet = true
+		return
+	}
+	if d.visibleWindowSet {
+		return
+	}
 	addressWidth, addressHeight := d.addressSize()
-	originX = max(0, (addressWidth-width+1)/2)
-	originY = max(0, (addressHeight-height+1)/2)
-	return width, height, originX, originY
+	d.visibleOriginX = max(0, (addressWidth-width+1)/2)
+	d.visibleOriginY = max(0, (addressHeight-height+1)/2)
+}
+
+func (d *ST7789) visibleGeometry() (width, height, originX, originY int) {
+	width, height = d.visibleSize()
+	return width, height, d.visibleOriginX, d.visibleOriginY
 }
 
 // Transfer feeds one byte clocked over SPI and returns the MISO byte.
@@ -204,15 +231,22 @@ func (d *ST7789) data(b byte) {
 		if len(d.params) == 4 {
 			d.casetX[0] = int(d.params[0])<<8 | int(d.params[1])
 			d.casetX[1] = int(d.params[2])<<8 | int(d.params[3])
+			d.updateVisibleOrigin()
 		}
 	case 0x2B: // RASET
 		if len(d.params) == 4 {
 			d.casetY[0] = int(d.params[0])<<8 | int(d.params[1])
 			d.casetY[1] = int(d.params[2])<<8 | int(d.params[3])
+			d.updateVisibleOrigin()
 		}
 	case 0x36: // MADCTL
 		if d.madctl != b {
+			oldMV := d.madctl & 0x20
 			d.madctl = b
+			if oldMV != b&0x20 {
+				d.visibleWindowSet = false
+				d.updateVisibleOrigin()
+			}
 			d.visualGen++
 		}
 	}
