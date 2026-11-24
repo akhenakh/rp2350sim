@@ -321,38 +321,109 @@ func TestExclusiveMonitorCrossCoreWrite(t *testing.T) {
 	}
 }
 
-func TestExclusiveLossSignalsEventAndWakesWFE(t *testing.T) {
-	c := New()
+func armExclusiveCore0(t *testing.T, c *Chip, addr uint32) {
+	t.Helper()
 	c.CPU1.Parked = true
-	const addr = sramCode + 0x100
 	c.Write16(sramCode, 0xE853) // ldrex r0, [r3]
 	c.Write16(sramCode+2, 0x0F00)
 	c.CPU0.R[3] = addr
 	c.CPU0.R[15] = sramCode
+	c.CPU0.EventRegister = false
 	c.Step()
 	if !c.CPU0.MonitorCovers(addr) {
 		t.Fatal("LDREX did not arm the monitor")
 	}
+}
 
+func TestLocalStoreClearsMonitorWithoutEvent(t *testing.T) {
+	c := New()
+	const addr = sramCode + 0x100
+	armExclusiveCore0(t, c, addr)
 	c.CPU0.Sleeping = true
 	c.CPU0.SleepOnEvent = true
-	c.Write32(addr, 0)
+
+	c.writeCore = 0
+	c.Write32(addr, 1)
+	c.writeCore = -1
+
 	if c.CPU0.MonitorCovers(addr) {
-		t.Fatal("remote write did not invalidate the monitor")
+		t.Fatal("local store did not clear the local monitor")
 	}
-	if !c.CPU0.EventRegister || c.CPU0.Sleeping {
-		t.Fatal("exclusive loss did not signal an event and wake WFE")
+	if c.CPU0.EventRegister || !c.CPU0.Sleeping {
+		t.Fatal("local store spuriously signaled an event or woke WFE")
+	}
+}
+
+func TestOtherCoreStoreSignalsExclusiveLoss(t *testing.T) {
+	c := New()
+	const addr = sramCode + 0x100
+	armExclusiveCore0(t, c, addr)
+	c.CPU0.Sleeping = true
+	c.CPU0.SleepOnEvent = true
+
+	const code1 = sramCode + 0x1000
+	c.CPU0.Parked = true
+	c.CPU1.Parked = false
+	c.Write16(code1, 0xE853) // ldrex r0, [r3]
+	c.Write16(code1+2, 0x0F00)
+	c.CPU1.R[3] = addr
+	c.CPU1.R[15] = code1
+	c.CPU1.EventRegister = false
+	c.Step()
+	if !c.CPU1.MonitorCovers(addr) {
+		t.Fatal("core 1 LDREX did not arm its monitor")
 	}
 
-	c.CPU0.Sleeping = false
-	c.CPU0.R[15] = sramCode
-	c.Step() // arm the monitor again with LDREX
-	c.CPU0.EventRegister = false
+	c.Write16(code1+4, 0x6018) // str r0, [r3]
+	c.CPU0.Sleeping = true
+	c.CPU0.SleepOnEvent = true
+	c.CPU1.R[0] = 2
+	c.CPU1.R[15] = code1 + 4
+	c.Step()
+
+	if c.CPU0.MonitorCovers(addr) {
+		t.Fatal("other-core store did not invalidate the remote monitor")
+	}
+	if !c.CPU0.EventRegister || c.CPU0.Sleeping {
+		t.Fatal("other-core store did not signal an event and wake WFE")
+	}
+	if c.CPU1.MonitorCovers(addr) || c.CPU1.EventRegister {
+		t.Fatal("core 1 local store did not clear its monitor without an event")
+	}
+}
+
+func TestDMAStoreSignalsExclusiveLoss(t *testing.T) {
+	c := New()
+	const addr = sramCode + 0x100
+	armExclusiveCore0(t, c, addr)
+	c.CPU0.Sleeping = true
+	c.CPU0.SleepOnEvent = true
+
+	const src = sramCode + 0x200
+	c.Write8(src, 0x5A)
+	c.Write32(dmaBase+0x00, src)
+	c.Write32(dmaBase+0x04, addr)
+	c.Write32(dmaBase+0x08, 1)
+	c.Write32(dmaBase+0x0C, dmaCtrlEN)
+	c.Step()
+
+	if c.CPU0.MonitorCovers(addr) {
+		t.Fatal("DMA store did not invalidate the monitor")
+	}
+	if !c.CPU0.EventRegister || c.CPU0.Sleeping {
+		t.Fatal("DMA store did not signal an event and wake WFE")
+	}
+}
+
+func TestRemoteStoreDoesNotWakeWFI(t *testing.T) {
+	c := New()
+	const addr = sramCode + 0x100
+	armExclusiveCore0(t, c, addr)
 	c.CPU0.Sleeping = true
 	c.CPU0.SleepOnEvent = false
-	c.Write32(addr, 1)
+	c.Write32(addr, 1) // host/DMA writer
 	if !c.CPU0.EventRegister || !c.CPU0.Sleeping {
-		t.Fatal("exclusive loss must set the event register without waking WFI")
+		t.Fatal("remote store must set the event register without waking WFI")
 	}
 }
 

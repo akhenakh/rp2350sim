@@ -250,11 +250,14 @@ func (c *CPU) pcRead() uint32 { return c.curPC + 4 }
 // MonitorCovers reports whether the local exclusive monitor covers addr.
 func (c *CPU) MonitorCovers(addr uint32) bool { return c.monitorValid && c.monitor == addr }
 
-// InvalidateMonitor clears the local exclusive monitor and signals an event.
-// Another agent's write to the reserved address makes the exclusive sequence
-// fail, which wakes a WFE sleeper but not a WFI sleeper.
+// ClearMonitor clears the local exclusive monitor without signaling an event.
+// Local stores and exception entry/return use this path.
+func (c *CPU) ClearMonitor() { c.monitorValid = false }
+
+// InvalidateMonitor records an exclusive loss caused by another master and
+// signals an event, which wakes a WFE sleeper but not a WFI sleeper.
 func (c *CPU) InvalidateMonitor() {
-	c.monitorValid = false
+	c.ClearMonitor()
 	c.EventRegister = true
 	if c.SleepOnEvent {
 		c.Sleeping = false
@@ -540,7 +543,7 @@ func (c *CPU) Exception(n uint32) {
 	c.IPSR = n
 	c.APSR &^= flagQ
 	c.itstate = 0
-	c.monitorValid = false
+	c.ClearMonitor()
 	// The handler starts with FPCA=0 until it executes an FP instruction.
 	c.FPUActive = false
 	c.CONTROL &^= 4
@@ -665,7 +668,7 @@ func (c *CPU) exceptionReturn(excReturn uint32) {
 	if returning != 2 {
 		c.FAULTMASK = 0
 	}
-	c.monitorValid = false
+	c.ClearMonitor()
 	if toThread {
 		if usePSP {
 			c.CONTROL |= 2

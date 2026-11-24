@@ -72,6 +72,9 @@ type Chip struct {
 	nextMicros uint64
 	// core is the CPU currently being stepped (0 or 1).
 	core int
+	// writeCore identifies the core executing a bus write. -1 denotes a host
+	// or DMA write, which is remote to both cores.
+	writeCore int
 	// Paused advances time without executing instructions.
 	Paused bool
 	// Halted reports that a core stopped on an unexpected condition.
@@ -202,6 +205,7 @@ func New() *Chip {
 		Unhandled:          map[uint32]uint32{},
 		byBase:             map[uint32]*regBlock{},
 		resetReason:        "power-on",
+		writeCore:          -1,
 		packageSel:         1, // QFN-60 / RP2350A
 		preferredPartition: -1,
 	}
@@ -289,14 +293,19 @@ func (c *Chip) addRegBlock(b *regBlock) {
 // coreIdle reports whether a core has no instructions to run this cycle.
 func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 
-// invalidateMonitors clears the exclusive monitor of either core when a write
-// covers its monitored address. DMA writes go through the same path, so a
-// DMA update also breaks an in-flight ldrex/strex pair.
-func (c *Chip) invalidateMonitors(addr uint32) {
-	for _, cpu := range []*m33.CPU{c.CPU0, c.CPU1} {
-		if cpu != nil && cpu.MonitorCovers(addr) {
-			cpu.InvalidateMonitor()
+// invalidateMonitors applies a write to each core's exclusive monitor. writer
+// is the writing core, or -1 for DMA/host writes. A local store clears only its
+// own monitor; another master's write signals an exclusive-loss event.
+func (c *Chip) invalidateMonitors(addr uint32, writer int) {
+	for core, cpu := range []*m33.CPU{c.CPU0, c.CPU1} {
+		if cpu == nil || !cpu.MonitorCovers(addr) {
+			continue
 		}
+		if writer == core {
+			cpu.ClearMonitor()
+			continue
+		}
+		cpu.InvalidateMonitor()
 	}
 }
 
@@ -428,16 +437,20 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 	if c.Debug != nil && c.Debug.checkPC(c.core, pc, c.Cycles) {
 		return
 	}
+	c.writeCore = c.core
 	if c.booted && pc < ROMSize {
 		if c.rom.exec(c, cpu, pc) {
+			c.writeCore = -1
 			return
 		}
 		// The bootrom is a fixed mask ROM, not extendable memory. Falling
 		// through would execute the table bytes as instructions.
 		cpu.Halt(fmt.Sprintf("execution from unmapped bootrom address %#08x", pc))
+		c.writeCore = -1
 		return
 	}
 	cpu.Step()
+	c.writeCore = -1
 }
 
 // SignalEvent implements SEV: the event is visible to every core, and cores
@@ -614,6 +627,7 @@ func (c *Chip) Reset() {
 	c.nextMicros = cyclesPerMicrosecond
 	c.Halted = false
 	c.core = 0
+	c.writeCore = -1
 	c.pendingReset = false
 	c.usbPoll = 0
 	c.pioLogN = 0
@@ -1001,7 +1015,7 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		c.OnWrite(addr, uint32(v), 1)
 	}
 	c.debugWrite(addr, 1)
-	c.invalidateMonitors(addr)
+	c.invalidateMonitors(addr, c.writeCore)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
 		c.SRAM[addr-SRAMBase] = v
 		return
@@ -1044,7 +1058,7 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		c.OnWrite(addr, uint32(v), 2)
 	}
 	c.debugWrite(addr, 2)
-	c.invalidateMonitors(addr)
+	c.invalidateMonitors(addr, c.writeCore)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-1 {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)
@@ -1087,7 +1101,7 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		c.OnWrite(addr, v, 4)
 	}
 	c.debugWrite(addr, 4)
-	c.invalidateMonitors(addr)
+	c.invalidateMonitors(addr, c.writeCore)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-3 {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)

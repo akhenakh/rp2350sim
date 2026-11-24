@@ -268,9 +268,19 @@ func TestExceptionClearsMonitor(t *testing.T) {
 	if !c.monitorValid {
 		t.Fatal("monitor not set by LDREX")
 	}
+	c.EventRegister = false
 	c.Exception(15)
 	if c.monitorValid {
 		t.Fatal("exception entry left the exclusive monitor armed")
+	}
+	if c.EventRegister {
+		t.Fatal("exception entry spuriously signaled an exclusive-loss event")
+	}
+	c.monitor, c.monitorValid = 0x400, true
+	c.EventRegister = false
+	c.exceptionReturn(c.R[14])
+	if c.monitorValid || c.EventRegister {
+		t.Fatal("exception return must clear the monitor without signaling an event")
 	}
 }
 
