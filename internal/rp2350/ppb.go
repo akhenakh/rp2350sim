@@ -426,8 +426,8 @@ func (n *NVIC) read(off uint32) uint32 {
 	case off == 0x018: // SYST_CVR
 		n.tick.sync(n.chip.Cycles, n)
 		return n.tick.value(n.chip.Cycles)
-	case off == 0x01C: // SYST_CALIB: no reference clock, no skew
-		return 0x40000000
+	case off == 0x01C: // 10 ms at the 1 MHz reference clock, no skew
+		return 100000
 	case off >= 0x100 && off < 0x108:
 		i := (off - 0x100) / 4
 		return n.enabled[i] & irqMask[i]

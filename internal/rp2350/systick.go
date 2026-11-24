@@ -72,6 +72,7 @@ func (s *sysTickBlock) sync(now uint64, n *NVIC) {
 		s.baseCycle = s.reloadAt
 		s.reloadAt = 0
 		if s.base == 0 {
+			s.markWrap(n)
 			s.stopped = true
 			return
 		}
@@ -79,14 +80,18 @@ func (s *sysTickBlock) sync(now uint64, n *NVIC) {
 	for now-s.baseCycle >= s.period() {
 		s.baseCycle += s.period()
 		s.base = s.load
-		s.ctrl |= sysTickCountFlag
-		if s.ctrl&sysTickTickInt != 0 {
-			n.pendSystem(excSysTick)
-		}
+		s.markWrap(n)
 		if s.base == 0 {
 			s.stopped = true
 			return
 		}
+	}
+}
+
+func (s *sysTickBlock) markWrap(n *NVIC) {
+	s.ctrl |= sysTickCountFlag
+	if s.ctrl&sysTickTickInt != 0 {
+		n.pendSystem(excSysTick)
 	}
 }
 
@@ -106,6 +111,13 @@ func (s *sysTickBlock) cyclesUntil(now uint64, n *NVIC) uint64 {
 	if s.reloadAt != 0 {
 		start = s.reloadAt
 		count = s.load
+		if count == 0 {
+			next := start
+			if next <= now {
+				return 1
+			}
+			return next - now
+		}
 	}
 	next := start + (uint64(count)+1)*s.divisor()
 	if next <= now {
@@ -131,10 +143,10 @@ func (s *sysTickBlock) writeCSR(v uint32, now uint64, n *NVIC) {
 		s.reloadAt = 0
 		s.stopped = false
 	case !oldEnable:
-		// Enabling reloads RVR whatever CVR holds.
-		s.base = s.load
+		// CVR stays at zero until the first selected clock edge loads RVR.
+		s.base = 0
 		s.baseCycle = now
-		s.reloadAt = 0
+		s.reloadAt = now + s.divisor()
 		s.stopped = false
 	case !s.stopped:
 		s.base = cur
@@ -150,14 +162,13 @@ func (s *sysTickBlock) writeCVR(now uint64, n *NVIC) {
 	s.ctrl &^= sysTickCountFlag
 	s.base = 0
 	s.baseCycle = now
-	s.reloadAt = 0
 	s.stopped = false
-	if !s.enabled() || s.load == 0 {
-		// Writing CVR stops the timer when RVR is zero.
-		s.stopped = true
+	if !s.enabled() {
+		s.reloadAt = 0
 		return
 	}
-	// CVR reads as zero until the next clock edge reloads RVR.
+	// CVR reads as zero until the next clock edge reloads RVR. With RVR=0
+	// that edge is the single 1-to-0 count that raises COUNTFLAG.
 	s.reloadAt = now + s.divisor()
 }
 

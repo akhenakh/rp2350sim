@@ -321,6 +321,41 @@ func TestExclusiveMonitorCrossCoreWrite(t *testing.T) {
 	}
 }
 
+func TestExclusiveLossSignalsEventAndWakesWFE(t *testing.T) {
+	c := New()
+	c.CPU1.Parked = true
+	const addr = sramCode + 0x100
+	c.Write16(sramCode, 0xE853) // ldrex r0, [r3]
+	c.Write16(sramCode+2, 0x0F00)
+	c.CPU0.R[3] = addr
+	c.CPU0.R[15] = sramCode
+	c.Step()
+	if !c.CPU0.MonitorCovers(addr) {
+		t.Fatal("LDREX did not arm the monitor")
+	}
+
+	c.CPU0.Sleeping = true
+	c.CPU0.SleepOnEvent = true
+	c.Write32(addr, 0)
+	if c.CPU0.MonitorCovers(addr) {
+		t.Fatal("remote write did not invalidate the monitor")
+	}
+	if !c.CPU0.EventRegister || c.CPU0.Sleeping {
+		t.Fatal("exclusive loss did not signal an event and wake WFE")
+	}
+
+	c.CPU0.Sleeping = false
+	c.CPU0.R[15] = sramCode
+	c.Step() // arm the monitor again with LDREX
+	c.CPU0.EventRegister = false
+	c.CPU0.Sleeping = true
+	c.CPU0.SleepOnEvent = false
+	c.Write32(addr, 1)
+	if !c.CPU0.EventRegister || !c.CPU0.Sleeping {
+		t.Fatal("exclusive loss must set the event register without waking WFI")
+	}
+}
+
 func TestWFIPendingWithPrimask(t *testing.T) {
 	c := New()
 	c.NVIC.write(0x100, 1) // ISER0: IRQ 0

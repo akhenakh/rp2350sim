@@ -242,8 +242,9 @@ func (io *ioBank) reset() {}
 
 // SIO interrupt numbers on the RP2350.
 const (
-	sioIRQFIFO = 25
-	sioIRQBell = 26
+	sioIRQFIFO   = 25
+	sioIRQBell   = 26
+	sioFIFODepth = 4
 )
 
 type sioBlock struct {
@@ -309,7 +310,7 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 		if len(s.fifo[src]) > 0 {
 			v |= 1 // VLD
 		}
-		if len(s.fifo[1-src]) < 8 {
+		if len(s.fifo[1-src]) < sioFIFODepth {
 			v |= 1 << 1 // RDY
 		}
 		if s.fifoWOF[src] {
@@ -324,13 +325,13 @@ func (s *sioBlock) read(c *Chip, off uint32) uint32 {
 	case 0x58: // FIFO_RD
 		src := c.core
 		if len(s.fifo[src]) == 0 {
+			s.fifoROE[src] = true
+			s.syncFIFOIRQ(c, src)
 			return 0
 		}
 		v := s.fifo[src][0]
 		s.fifo[src] = s.fifo[src][1:]
-		if len(s.fifo[src]) == 0 {
-			c.clearCorePendingIRQ(src, sioIRQFIFO)
-		}
+		s.syncFIFOIRQ(c, src)
 		return v
 	case 0x5C: // SPINLOCK_ST
 		return s.spinlock
@@ -399,6 +400,7 @@ func (s *sioBlock) write(c *Chip, off, v uint32) {
 		if v&(1<<3) != 0 {
 			s.fifoROE[c.core] = false
 		}
+		s.syncFIFOIRQ(c, c.core)
 	case 0x54: // FIFO_WR
 		s.push(c, c.core, v)
 	case 0x180: // DOORBELL_OUT_SET: set the peer's input bits
@@ -442,12 +444,12 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 	if s.core1Parked && from == 0 {
 		// Core 1 is parked in the bootrom FIFO wait loop: echo the word and
 		// watch for the multicore launch sequence.
-		if len(s.fifo[0]) < 8 {
+		if len(s.fifo[0]) < sioFIFODepth {
 			s.fifo[0] = append(s.fifo[0], v)
-			c.pendCoreIRQ(0, sioIRQFIFO)
 		} else {
 			s.fifoWOF[0] = true
 		}
+		s.syncFIFOIRQ(c, 0)
 		s.launchSeq = append(s.launchSeq, v)
 		if len(s.launchSeq) == 6 {
 			vt := s.launchSeq[3]
@@ -466,12 +468,21 @@ func (s *sioBlock) push(c *Chip, from int, v uint32) {
 		return
 	}
 	dst := 1 - from
-	if len(s.fifo[dst]) >= 8 {
+	if len(s.fifo[dst]) >= sioFIFODepth {
 		s.fifoWOF[from] = true
+		s.syncFIFOIRQ(c, from)
 		return
 	}
 	s.fifo[dst] = append(s.fifo[dst], v)
-	c.pendCoreIRQ(dst, sioIRQFIFO)
+	s.syncFIFOIRQ(c, dst)
+}
+
+func (s *sioBlock) syncFIFOIRQ(c *Chip, core int) {
+	if len(s.fifo[core]) != 0 || s.fifoWOF[core] || s.fifoROE[core] {
+		c.pendCoreIRQ(core, sioIRQFIFO)
+		return
+	}
+	c.clearCorePendingIRQ(core, sioIRQFIFO)
 }
 
 // inputWord builds a 32-bit GPIO input value for the given base pin.

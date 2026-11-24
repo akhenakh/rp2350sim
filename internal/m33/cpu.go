@@ -247,10 +247,17 @@ func (c *CPU) pcRead() uint32 { return c.curPC + 4 }
 // MonitorCovers reports whether the local exclusive monitor covers addr.
 func (c *CPU) MonitorCovers(addr uint32) bool { return c.monitorValid && c.monitor == addr }
 
-// InvalidateMonitor clears the local exclusive monitor. Any write by
-// another agent (the other core or DMA) to the monitored address must call
-// this, as must exception entry and return.
-func (c *CPU) InvalidateMonitor() { c.monitorValid = false }
+// InvalidateMonitor clears the local exclusive monitor and signals an event.
+// Another agent's write to the reserved address makes the exclusive sequence
+// fail, which wakes a WFE sleeper but not a WFI sleeper.
+func (c *CPU) InvalidateMonitor() {
+	c.monitorValid = false
+	c.EventRegister = true
+	if c.SleepOnEvent {
+		c.Sleeping = false
+		c.SleepOnEvent = false
+	}
+}
 
 // execHint executes an architectural hint. kind is 0..4 for NOP, YIELD, WFE,
 // WFI and SEV; 0xF0..0xFF is the DBG hint (a no-op here).

@@ -36,8 +36,13 @@ func TestSysTickCountsAndSetsCountFlag(t *testing.T) {
 	n.write(0x014, 1499) // 1500 cycles
 	n.write(0x010, 7)    // ENABLE | TICKINT | CPU clock
 
+	if got := n.read(0x018); got != 0 {
+		t.Fatalf("CVR immediately after enable = %d, want 0", got)
+	}
+	c.Cycles++
+	n.tickSysTick(c.Cycles)
 	if got := n.read(0x018); got != 1499 {
-		t.Fatalf("CVR after enable = %d, want 1499", got)
+		t.Fatalf("CVR after first clock edge = %d, want 1499", got)
 	}
 	c.Cycles += 1499
 	n.tickSysTick(c.Cycles)
@@ -75,7 +80,15 @@ func TestSysTickReferenceClock(t *testing.T) {
 	n := c.ppb[0]
 	n.write(0x014, 99)  // 100 ticks of 1 us
 	n.write(0x010, 0x3) // ENABLE | TICKINT, reference clock
+	if got := n.read(0x018); got != 0 {
+		t.Fatalf("reference CVR immediately after enable = %d, want 0", got)
+	}
 
+	c.Cycles += cyclesPerMicrosecond
+	n.tickSysTick(c.Cycles)
+	if got := n.read(0x018); got != 99 {
+		t.Fatalf("reference CVR after first clock edge = %d, want 99", got)
+	}
 	c.Cycles += 99 * cyclesPerMicrosecond
 	n.tickSysTick(c.Cycles)
 	if n.pendST {
@@ -85,6 +98,46 @@ func TestSysTickReferenceClock(t *testing.T) {
 	n.tickSysTick(c.Cycles)
 	if !n.pendST {
 		t.Fatal("reference SysTick did not fire at 100 us")
+	}
+}
+
+func TestSysTickEnableEdgeAndCalibration(t *testing.T) {
+	cases := []struct {
+		name string
+		csr  uint32
+		div  uint64
+	}{
+		{"processor_clock", 1 | 1<<2, 1},
+		{"reference_clock", 1, cyclesPerMicrosecond},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := New()
+			n := c.ppb[0]
+			n.write(0x014, 9)
+			n.write(0x010, tc.csr)
+			if got := n.read(0x018); got != 0 {
+				t.Fatalf("CVR after enable = %d, want 0", got)
+			}
+			c.Cycles = tc.div - 1
+			n.tickSysTick(c.Cycles)
+			if got := n.read(0x018); got != 0 {
+				t.Fatalf("CVR before first edge = %d, want 0", got)
+			}
+			c.Cycles = tc.div
+			n.tickSysTick(c.Cycles)
+			if got := n.read(0x018); got != 9 {
+				t.Fatalf("CVR after first edge = %d, want 9", got)
+			}
+			c.Cycles = 11 * tc.div
+			n.tickSysTick(c.Cycles)
+			if got := n.read(0x010); got&sysTickCountFlag == 0 {
+				t.Fatal("COUNTFLAG not set at first wrap")
+			}
+			if got := n.read(0x01C); got != 100000 {
+				t.Fatalf("SYST_CALIB = %#x, want 100000", got)
+			}
+		})
 	}
 }
 
@@ -108,27 +161,28 @@ func TestSysTickWakesIdleSkipExactly(t *testing.T) {
 		t.Fatal("WFI did not sleep")
 	}
 	start := c.Cycles
-	c.Run(775)
-	if c.Cycles != start+775 || !c.CPU0.Sleeping {
-		t.Fatalf("run to %d: Cycles=%d sleeping=%v", start+775, c.Cycles, c.CPU0.Sleeping)
+	c.Run(776)
+	if c.Cycles != start+776 || !c.CPU0.Sleeping {
+		t.Fatalf("run to %d: Cycles=%d sleeping=%v", start+776, c.Cycles, c.CPU0.Sleeping)
 	}
-	// 776 is on the 8-cycle alignment grid and 124 cycles before the next
-	// microsecond boundary; only the SysTick clamp keeps the jump from
-	// overshooting the wrap at start+776.
+	// The wrap is one cycle later and 127 cycles before the next microsecond
+	// boundary; only the SysTick clamp keeps the jump from overshooting it.
 	if got := c.ppb[0].cyclesUntilSysTick(c.Cycles); got != 1 {
 		t.Fatalf("cycles until SysTick = %d, want 1", got)
 	}
 	c.Run(1)
-	if c.Cycles != start+776 {
-		t.Fatalf("idle skip ended at %d, want %d", c.Cycles, start+776)
+	if c.Cycles != start+777 {
+		t.Fatalf("idle skip ended at %d, want %d", c.Cycles, start+777)
 	}
 	if c.CPU0.Sleeping {
 		t.Fatal("SysTick did not wake the core")
 	}
-	if !c.ppb[0].pendST {
-		t.Fatal("SysTick is not pending after the wake")
+	if !c.ppb[0].pendST && c.CPU0.IPSR != excSysTick {
+		t.Fatal("SysTick is neither pending nor active after the wake")
 	}
-	c.Step()
+	if c.CPU0.IPSR != excSysTick {
+		c.Step()
+	}
 	if c.CPU0.IPSR != excSysTick {
 		t.Fatalf("IPSR = %d, want %d", c.CPU0.IPSR, excSysTick)
 	}
@@ -427,6 +481,61 @@ func TestSIOFIFOAndDoorbellIRQs(t *testing.T) {
 	}
 }
 
+func TestSIOFIFODepthAndErrorIRQs(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.sio.core1Parked = false
+	c.core = 0
+
+	for i := range 4 {
+		c.Write32(SIOBase+0x54, 0x100+uint32(i))
+	}
+	if got := c.Read32(SIOBase + 0x50); got&3 != 0 {
+		t.Fatalf("sender FIFO_ST = %#x, want RDY=0 and VLD=0", got)
+	}
+	c.core = 1
+	if got := c.Read32(SIOBase + 0x50); got&3 != 3 {
+		t.Fatalf("receiver FIFO_ST = %#x, want VLD=1 and RDY=1", got)
+	}
+	if c.ppb[1].pending[0]&(1<<sioIRQFIFO) == 0 {
+		t.Fatal("receiver FIFO IRQ not pending")
+	}
+
+	c.core = 0
+	c.Write32(SIOBase+0x54, 0x200)
+	if !c.sio.fifoWOF[0] || len(c.sio.fifo[1]) != 4 {
+		t.Fatalf("fifth write: WOF=%v depth=%d, want true and 4", c.sio.fifoWOF[0], len(c.sio.fifo[1]))
+	}
+	if c.ppb[0].pending[0]&(1<<sioIRQFIFO) == 0 {
+		t.Fatal("WOF did not assert the sender FIFO IRQ")
+	}
+	c.Write32(SIOBase+0x50, 1<<2)
+	if c.ppb[0].pending[0]&(1<<sioIRQFIFO) != 0 {
+		t.Fatal("clearing WOF left the sender FIFO IRQ pending")
+	}
+
+	c.core = 1
+	for i := range 4 {
+		if got := c.Read32(SIOBase + 0x58); got != 0x100+uint32(i) {
+			t.Fatalf("FIFO_RD[%d] = %#x", i, got)
+		}
+	}
+	if c.ppb[1].pending[0]&(1<<sioIRQFIFO) != 0 {
+		t.Fatal("draining VLD left the receiver FIFO IRQ pending")
+	}
+	if got := c.Read32(SIOBase + 0x58); got != 0 {
+		t.Fatalf("empty FIFO_RD = %#x, want 0", got)
+	}
+	if !c.sio.fifoROE[1] || c.ppb[1].pending[0]&(1<<sioIRQFIFO) == 0 {
+		t.Fatal("empty read did not set ROE and assert the receiver FIFO IRQ")
+	}
+	c.Write32(SIOBase+0x50, 1<<3)
+	if c.ppb[1].pending[0]&(1<<sioIRQFIFO) != 0 {
+		t.Fatal("clearing ROE left the receiver FIFO IRQ pending")
+	}
+}
+
 // TestSIODoorbellStatusAndZeroWrite covers the register map: OUT_* reads the
 // peer's input status, IN_* reads own, and SET with zero is a no-op.
 func TestSIODoorbellStatusAndZeroWrite(t *testing.T) {
@@ -554,7 +663,7 @@ func TestSysTickCSRWriteCatchesStall(t *testing.T) {
 	n := c.ppb[0]
 	n.write(0x014, 99)
 	n.write(0x010, 7)
-	c.Cycles = 100 // a wrap happened at 100
+	c.Cycles = 101 // the first wrap after the enable-edge reload
 	n.write(0x010, 7)
 	if got := n.read(0x010); got&sysTickCountFlag == 0 {
 		t.Fatal("CSR rewrite dropped the stalled wrap")
@@ -597,7 +706,7 @@ func TestSysTickNarrowCSRWriteKeepsCountFlag(t *testing.T) {
 	n := c.ppb[0]
 	n.write(0x014, 9)
 	n.write(0x010, 7)
-	c.Cycles = 10 // wrap
+	c.Cycles = 11 // first wrap after the enable-edge reload
 	n.tickSysTick(c.Cycles)
 	c.Write8(SCSBase+0x010, 7) // byte RMW of SYST_CSR
 	if got := c.Read32(SCSBase + 0x010); got&sysTickCountFlag == 0 {
