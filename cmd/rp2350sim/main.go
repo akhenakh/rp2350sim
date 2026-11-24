@@ -244,6 +244,26 @@ func main() {
 		fmt.Println("rp2350sim", version)
 		return
 	}
+	traceFrom, err := parseOptionalHex32(*fromStr, "-trace-from")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exit(2)
+	}
+	pokes, err := parsePokes(*pokeStr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exit(2)
+	}
+	watchValue, err := parseOptionalHex32(*valStr, "-watch-val")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exit(2)
+	}
+	peekAddr, err := parseOptionalHex32(*peekStr, "-peek")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exit(2)
+	}
 	if *sdImage != "" && *sdDir != "" {
 		fmt.Fprintln(os.Stderr, "-sd-image and -sd-dir are mutually exclusive")
 		exit(2)
@@ -808,14 +828,10 @@ func main() {
 
 	if *traceN > 0 {
 		n := 0
-		var from uint64
-		if *fromStr != "" {
-			from, _ = strconv.ParseUint(strings.TrimPrefix(*fromStr, "0x"), 16, 32)
-		}
-		started := from == 0
+		started := traceFrom == 0
 		c.CPU0.TracePC = func(cpu *m33.CPU, pc uint32, hw1 uint16) {
 			if !started {
-				if uint64(pc) != from {
+				if pc != traceFrom {
 					return
 				}
 				started = true
@@ -958,24 +974,13 @@ func main() {
 		}
 	}
 
-	for kv := range strings.SplitSeq(*pokeStr, ",") {
-		kv = strings.TrimSpace(kv)
-		if kv == "" {
-			continue
-		}
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		a, _ := strconv.ParseUint(strings.TrimPrefix(parts[0], "0x"), 16, 32)
-		v, _ := strconv.ParseUint(strings.TrimPrefix(parts[1], "0x"), 16, 32)
-		c.Write32(uint32(a), uint32(v))
+	for _, poke := range pokes {
+		c.Write32(poke.addr, poke.val)
 	}
 
 	if *valStr != "" {
-		wv, _ := strconv.ParseUint(strings.TrimPrefix(*valStr, "0x"), 16, 32)
 		c.OnWrite = func(addr uint32, val uint32, size int) {
-			if val == uint32(wv) {
+			if val == watchValue {
 				log.Info("write value match",
 					slog.String("addr", hex(addr)), slog.String("value", hex(val)),
 					slog.Int("size", size),
@@ -1449,8 +1454,7 @@ func main() {
 	}
 
 	if *peekStr != "" {
-		a, _ := strconv.ParseUint(strings.TrimPrefix(*peekStr, "0x"), 16, 32)
-		log.Info("memory", slog.String("addr", hex(uint32(a))), slog.String("value", hex(c.Read32(uint32(a)))))
+		log.Info("memory", slog.String("addr", hex(peekAddr)), slog.String("value", hex(c.Read32(peekAddr))))
 	}
 
 	if *unhandled {

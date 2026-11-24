@@ -76,6 +76,9 @@ func loadOTP(c *rp2350.Chip, path string) (int, error) {
 		case r.Data != "":
 			var data uint64
 			data, err = parseHexValue(r.Data)
+			if err == nil && data > 0xffff {
+				err = fmt.Errorf("data value exceeds 16 bits")
+			}
 			if err == nil {
 				raw = uint64(rp2350.OTPEncodeRow(uint16(data)))
 			}
@@ -84,6 +87,9 @@ func loadOTP(c *rp2350.Chip, path string) (int, error) {
 		}
 		if err != nil {
 			return n, fmt.Errorf("row %d: %w", r.Row, err)
+		}
+		if r.Raw != "" && raw > 0xffffff {
+			return n, fmt.Errorf("row %d: raw value exceeds 24 bits", r.Row)
 		}
 		c.SetOTPRow(r.Row, uint32(raw))
 		n++

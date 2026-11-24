@@ -68,11 +68,14 @@ type logicCapture struct {
 }
 
 func parsePinList(s string) ([]int, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
 	var out []int
 	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
-			continue
+			return nil, fmt.Errorf("empty GPIO in pin list")
 		}
 		n, err := strconv.Atoi(part)
 		if err != nil || n < 0 || n > 47 {
@@ -81,6 +84,16 @@ func parsePinList(s string) ([]int, error) {
 		out = append(out, n)
 	}
 	return out, nil
+}
+
+func validateLogicPin(pin int, what string, optional bool) error {
+	if pin == -1 && optional {
+		return nil
+	}
+	if pin < 0 || pin > 47 {
+		return fmt.Errorf("%s pin GP%d is not a valid GPIO", what, pin)
+	}
+	return nil
 }
 
 func parseIntFields(s string, what string) ([]int, error) {
@@ -140,6 +153,12 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 		if s.baud <= 0 {
 			return nil, fmt.Errorf("-logic-uart baud must be positive")
 		}
+		if err := validateLogicPin(s.tx, "-logic-uart tx", false); err != nil {
+			return nil, err
+		}
+		if err := validateLogicPin(s.rx, "-logic-uart rx", false); err != nil {
+			return nil, err
+		}
 		l.uartSpecs = append(l.uartSpecs, s)
 		add(s.tx)
 		add(s.rx)
@@ -148,6 +167,12 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 		f, err := parseIntFields(i2cStr, "-logic-i2c")
 		if err != nil || len(f) != 2 {
 			return nil, fmt.Errorf("-logic-i2c expects sda,scl")
+		}
+		if err := validateLogicPin(f[0], "-logic-i2c sda", false); err != nil {
+			return nil, err
+		}
+		if err := validateLogicPin(f[1], "-logic-i2c scl", false); err != nil {
+			return nil, err
 		}
 		l.i2cSpecs = append(l.i2cSpecs, logicI2CSpec{sda: f[0], scl: f[1]})
 		add(f[0])
@@ -164,6 +189,18 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 		}
 		if len(f) > 3 {
 			s.cs = f[3]
+		}
+		if err := validateLogicPin(s.sck, "-logic-spi sck", false); err != nil {
+			return nil, err
+		}
+		if err := validateLogicPin(s.mosi, "-logic-spi mosi", false); err != nil {
+			return nil, err
+		}
+		if err := validateLogicPin(s.miso, "-logic-spi miso", true); err != nil {
+			return nil, err
+		}
+		if err := validateLogicPin(s.cs, "-logic-spi cs", true); err != nil {
+			return nil, err
 		}
 		l.spiSpecs = append(l.spiSpecs, s)
 		add(s.sck)

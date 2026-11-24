@@ -35,6 +35,21 @@ func TestOTPFileRoundTrip(t *testing.T) {
 }
 
 // TestOTPFileRejectsBadRow checks bounds and empty rows.
+func TestOTPFileRejectsWideValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wide.json")
+	for _, contents := range []string{
+		`{"rows":[{"row":1,"raw":"0x1000000"}]}`,
+		`{"rows":[{"row":1,"data":"0x10000"}]}`,
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadOTP(rp2350.New(), path); err == nil {
+			t.Fatalf("wide OTP value accepted: %s", contents)
+		}
+	}
+}
+
 func TestOTPFileRejectsBadRow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.json")
 	if err := os.WriteFile(path, []byte(`{"rows":[{"row":4096,"data":"0x1"}]}`), 0o644); err != nil {
