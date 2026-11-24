@@ -47,6 +47,22 @@ DRY_RUN=1 CHECKSUMS_FILE=dist/rp2350sim_<version>_checksums.txt \
 The formula installs `rp2350sim` and `rp2350sim-ui` and tests both version
 commands.
 
+## AUR
+
+The Arch package is published as `rp2350sim` in the AUR and builds both
+programs from the release source tarball. Install it with an AUR helper:
+
+```sh
+yay -S rp2350sim
+# or
+paru -S rp2350sim
+```
+
+The package installs `/usr/bin/rp2350sim` and `/usr/bin/rp2350sim-ui`. The
+current PKGBUILD targets `v0.1.0`; after that tag is published, update its
+checksum with `updpkgsums` and regenerate `.SRCINFO` with
+`makepkg --printsrcinfo > .SRCINFO` before uploading.
+
 ## Local checks
 
 ```sh

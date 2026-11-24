@@ -19,6 +19,14 @@ On macOS Apple Silicon or Intel, install both programs with
 brew install akhenakh/tap/rp2350sim
 ```
 
+On Arch-based Linux, install from the AUR with `yay` or `paru`:
+
+```sh
+yay -S rp2350sim
+# or
+paru -S rp2350sim
+```
+
 Prebuilt binaries are attached to [GitHub Releases](https://github.com/akhenakh/rp2350sim/releases).
 Every archive contains both programs, `LICENSE`, `README.md` and the `docs/`
 directory:
