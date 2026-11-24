@@ -10,21 +10,28 @@ type dmaBlock struct {
 	block *regBlock
 	chip  *Chip
 	ch    [16]dmaChannel
-	// active is a bitmask of channels with work, so the per-cycle check does
-	// not scan all sixteen channels.
-	active uint16
-	intr   uint32 // INTR, write-1-to-clear
-	// chainPending latches a chain trigger whose target had a zero count;
-	// software reloading TRANS_COUNT starts it, matching the hardware.
+	// active is the BUSY mask, including paused channels. enabled is kept
+	// separately so clearing EN suspends a sequence without losing it.
+	active  uint16
+	enabled uint16
+	next    uint8
+	intr    uint32 // INTR, write-1-to-clear
+	intf    uint32 // INTF, read/write force
+	// chainPending latches a chain trigger whose target had a zero reload
+	// count; software reloading TRANS_COUNT starts it.
 	chainPending uint16
+	abort        uint16
 }
 
 type dmaChannel struct {
-	active bool
-	read   uint32
-	write  uint32
-	count  uint32
-	ctrl   uint32
+	active    bool
+	read      uint32
+	write     uint32
+	count     uint32
+	reload    uint32
+	ctrl      uint32
+	readBase  uint32
+	writeBase uint32
 }
 
 const (
@@ -36,6 +43,11 @@ const (
 	dmaCtrlINCRWrit = 1 << 6
 	dmaCtrlIRQQuiet = 1 << 23
 	dmaCtrlBusy     = 1 << 26
+	dmaCtrlBSWAP    = 1 << 24
+	dmaCountMask    = 0x0FFFFFFF
+	dmaRingSel      = 1 << 12
+	dmaReadRev      = 1 << 5
+	dmaWriteRev     = 1 << 7
 )
 
 // dmaIntReg decodes the interrupt registers: kind 0 is INTRn, 1 INTE,
@@ -100,12 +112,12 @@ func newDMA(c *Chip) *dmaBlock {
 		if irq, kind, ok := dmaIntReg(off); ok {
 			switch kind {
 			case 0: // INTR is write-1-to-clear
-				d.intr &^= v
+				d.intr &^= v & 0xFFFF
 				d.syncIRQ()
 				return
 			case 3: // INTS acknowledges the enabled channels
 				inte := d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4]
-				d.intr &^= v & inte
+				d.intr &^= v & inte & 0xFFFF
 				d.syncIRQ()
 				return
 			}
@@ -114,40 +126,87 @@ func newDMA(c *Chip) *dmaBlock {
 	}
 	d.block.writeFn = func(c *Chip, off, v uint32) {
 		if ch, reg, trig, ok := dmaAlias(off); ok {
-			d.block.regs[(uint32(ch)*0x40+reg)/4] = v
+			switch reg {
+			case 0x00:
+				d.block.regs[uint32(ch*0x40)/4] = v
+			case 0x04:
+				d.block.regs[uint32(ch*0x40)/4+1] = v
+			case 0x08:
+				d.setCount(ch, v)
+			case 0x0C:
+				d.setCtrl(ch, v)
+			}
 			if trig {
-				d.start(ch)
-			} else if reg == 0x08 {
-				// Reloading TRANS_COUNT through AL2/AL3 wakes a channel
-				// whose chain trigger arrived before the count was written.
-				d.checkChain(ch)
+				d.triggerRegister(ch, v)
 			}
 			return
 		}
-		if off < 0x400 && off%0x40 == 0x0C { // CTRL_TRIG
-			d.trigger(int(off/0x40), v)
+		if off < 0x400 {
+			switch off % 0x40 {
+			case 0x08:
+				d.setCount(int(off/0x40), v)
+			case 0x0C:
+				ch := int(off / 0x40)
+				d.setCtrl(ch, v)
+				d.triggerRegister(ch, v)
+			}
 			return
 		}
-		if off < 0x400 && off%0x40 == 0x08 { // TRANS_COUNT reload
-			d.checkChain(int(off / 0x40))
-			return
-		}
-		if off == 0x450 { // MULTI_CHAN_TRIGGER
+		switch off {
+		case 0x450: // MULTI_CHAN_TRIGGER is a self-clearing strobe.
 			for ch := range 16 {
 				if v&(1<<uint(ch)) != 0 {
 					d.start(ch)
 				}
+			}
+			d.block.regs[off/4] = 0
+			return
+		case 0x454, 0x458: // CRC sniffer is deliberately not modelled.
+			c.unhandledWrite(0x50000000+off, v)
+			d.block.regs[off/4] = 0
+			return
+		case 0x460: // FIFO_LEVELS is read-only; this engine has no internal FIFOs.
+			d.block.regs[off/4] = 0
+			return
+		case 0x464: // CHAN_ABORT
+			d.abort |= uint16(v & 0xFFFF)
+			for ch := range 16 {
+				if d.abort&(1<<uint(ch)) != 0 {
+					d.abortChannel(ch)
+				}
+			}
+			d.block.regs[off/4] = uint32(d.abort)
+			return
+		case 0x468: // N_CHANNELS is read-only.
+			d.block.regs[off/4] = 0
+			return
+		}
+		if off >= 0x800 && off < 0xC00 {
+			reg := (off - 0x800) % 0x40
+			if reg == 0 { // DBG_CTDREQ: any write clears the DREQ counter.
+				d.block.regs[off/4] = 0
+			} else if reg == 4 { // DBG_TCR is read-only.
+				ch := int((off - 0x800) / 0x40)
+				d.block.regs[off/4] = d.ch[ch].reload
 			}
 			return
 		}
 		if irq, kind, ok := dmaIntReg(off); ok {
 			switch kind {
 			case 0: // INTR write-1-to-clear
-				d.intr &^= v
+				d.intr &^= v & 0xFFFF
+				d.block.regs[off/4] = d.intr
 				d.syncIRQ()
-			case 3: // INTS write-1-to-clear the enabled channels
+			case 1: // INTE changes the masked IRQ lines
+				d.syncIRQ()
+			case 2: // INTF read/write force
+				d.intf = v & 0xFFFF
+				d.block.regs[off/4] = d.intf
+				d.syncIRQ()
+			case 3: // INTS write-1-to-clear the enabled raw channels
 				inte := d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4]
-				d.intr &^= v & inte
+				d.intr &^= v & inte & 0xFFFF
+				d.block.regs[off/4] = d.intr & inte
 				d.syncIRQ()
 			}
 		}
@@ -160,13 +219,20 @@ func newDMA(c *Chip) *dmaBlock {
 			case 1: // INTEn
 				return d.block.regs[off/4], true
 			case 2: // INTFn
-				return d.block.regs[off/4], true
+				return d.intf, true
 			default: // INTSn
-				return d.intr & d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4], true
+				inte := d.block.regs[(dmaRegINTR+uint32(irq)*dmaIRQstep+4)/4]
+				return (d.intr | d.intf) & inte, true
 			}
 		}
 		if ch, reg, _, ok := dmaAlias(off); ok {
-			v := d.block.regs[(uint32(ch)*0x40+reg)/4]
+			if reg == 0x08 {
+				if d.ch[ch].active {
+					return d.ch[ch].count, true
+				}
+				return 0, true
+			}
+			v := d.block.regs[(uint32(ch*0x40)+reg)/4]
 			if reg == 0x0C {
 				if d.ch[ch].active {
 					v |= dmaCtrlBusy
@@ -176,136 +242,237 @@ func newDMA(c *Chip) *dmaBlock {
 			}
 			return v, true
 		}
-		if off < 0x400 && off%0x40 == 0x0C {
-			// CTRL_TRIG reads back with BUSY while the channel is running.
-			v := d.block.regs[off/4]
-			if d.ch[off/0x40].active {
-				v |= dmaCtrlBusy
-			} else {
-				v &^= dmaCtrlBusy
+		if off < 0x400 {
+			ch := int(off / 0x40)
+			switch off % 0x40 {
+			case 0x08:
+				if d.ch[ch].active {
+					return d.ch[ch].count, true
+				}
+				return 0, true
+			case 0x0C:
+				v := d.block.regs[off/4]
+				if d.ch[ch].active {
+					v |= dmaCtrlBusy
+				} else {
+					v &^= dmaCtrlBusy
+				}
+				return v, true
 			}
-			return v, true
+		}
+		switch off {
+		case 0x450:
+			return 0, true
+		case 0x454, 0x458:
+			c.unhandledRead32(0x50000000 + off)
+			return 0, true
+		case 0x460:
+			return 0, true
+		case 0x464:
+			return uint32(d.abort), true
+		case 0x468:
+			return 16, true
+		}
+		if off >= 0x800 && off < 0xC00 {
+			ch := int((off - 0x800) / 0x40)
+			switch (off - 0x800) % 0x40 {
+			case 0:
+				return 0, true // DBG_CTDREQ, no DREQ pacing in this model
+			case 4:
+				return d.ch[ch].reload, true
+			}
 		}
 		return 0, false
 	}
 	return d
 }
 
-// start reads the channel's main registers and begins a transfer. The
-// AL1_TRANS_COUNT_TRIG, AL2_WRITE_ADDR_TRIG and AL3_READ_ADDR_TRIG aliases
-// update one register first and then call this.
 func (d *dmaBlock) reset() {
 	d.ch = [16]dmaChannel{}
 	d.active = 0
+	d.enabled = 0
+	d.next = 0
 	d.intr = 0
+	d.intf = 0
 	d.chainPending = 0
+	d.abort = 0
+	d.syncIRQ()
 }
 
-func (d *dmaBlock) start(ch int) {
+func (d *dmaBlock) setCount(ch int, v uint32) {
 	if ch < 0 || ch >= len(d.ch) {
 		return
 	}
-	v := d.block.regs[uint32(ch*0x40)/4+3]
-	d.begin(ch, v)
+	d.ch[ch].reload = v
+	if d.ch[ch].active {
+		d.block.regs[uint32(ch*0x40+0x08)/4] = d.ch[ch].count
+	} else {
+		d.block.regs[uint32(ch*0x40+0x08)/4] = 0
+	}
+	d.checkChain(ch)
 }
 
-func (d *dmaBlock) trigger(ch int, v uint32) {
+func (d *dmaBlock) setCtrl(ch int, v uint32) {
 	if ch < 0 || ch >= len(d.ch) {
 		return
 	}
-	d.begin(ch, v)
-}
-
-func (d *dmaBlock) begin(ch int, v uint32) {
-	base := uint32(ch * 0x40)
-	ctrl := v &^ dmaCtrlBusy
 	chp := &d.ch[ch]
-	d.chainPending &^= 1 << uint(ch)
-	if v&dmaCtrlEN == 0 {
-		chp.active = false
-		d.active &^= 1 << uint(ch)
-		d.block.regs[base/4+3] = ctrl
+	chp.ctrl = v &^ dmaCtrlBusy
+	if chp.active {
+		chp.ctrl |= dmaCtrlBusy
+	}
+	if chp.ctrl&dmaCtrlEN != 0 {
+		d.enabled |= 1 << uint(ch)
+	} else {
+		d.enabled &^= 1 << uint(ch)
+		d.chainPending &^= 1 << uint(ch)
+	}
+	d.block.regs[uint32(ch*0x40+0x0C)/4] = chp.ctrl
+}
+
+// start begins a new sequence from the programmed reload count. Triggers are
+// ignored while BUSY or while EN is clear.
+func (d *dmaBlock) start(ch int) {
+	if ch < 0 || ch >= len(d.ch) || d.enabled&(1<<uint(ch)) == 0 || d.ch[ch].active || d.abort&(1<<uint(ch)) != 0 {
 		return
 	}
-	d.block.regs[base/4+3] = ctrl | dmaCtrlBusy
-	chp.active = true
-	d.active |= 1 << uint(ch)
+	d.chainPending &^= 1 << uint(ch)
+	chp := &d.ch[ch]
+	base := uint32(ch * 0x40)
 	chp.read = d.block.regs[base/4]
 	chp.write = d.block.regs[base/4+1]
-	chp.count = d.block.regs[base/4+2]
-	chp.ctrl = ctrl
+	chp.readBase = chp.read
+	chp.writeBase = chp.write
+	chp.count = chp.reload & dmaCountMask
+	chp.active = true
+	chp.ctrl |= dmaCtrlEN | dmaCtrlBusy
+	d.active |= 1 << uint(ch)
+	d.block.regs[base/4+2] = chp.count
+	d.block.regs[base/4+3] = chp.ctrl
 	if chp.count == 0 {
 		d.complete(ch)
 	}
 }
 
-// busy reports whether any channel still has work, so the per-cycle tick can
-// stay out of the hot path when the controller is idle.
-func (d *dmaBlock) busy() bool {
-	return d.active != 0
+func (d *dmaBlock) triggerRegister(ch int, v uint32) {
+	if ch < 0 || ch >= len(d.ch) {
+		return
+	}
+	if v == 0 {
+		if !d.ch[ch].active && d.ch[ch].ctrl&dmaCtrlIRQQuiet != 0 {
+			d.intr |= 1 << uint(ch)
+			d.syncIRQ()
+		}
+		return
+	}
+	d.start(ch)
 }
 
-// tick advances every active channel by one element.
+// busy reports whether any channel still has work or an abort is draining.
+func (d *dmaBlock) busy() bool {
+	return d.active != 0 || d.abort != 0
+}
+
+// tick services one enabled channel in round-robin order.
 func (d *dmaBlock) tick() {
-	mask := d.active
-	for mask != 0 {
-		n := bits.TrailingZeros16(mask)
-		mask &^= 1 << uint(n)
-		ch := &d.ch[n]
-		if !ch.active {
+	if d.abort != 0 {
+		d.abort = 0
+		d.block.regs[0x464/4] = 0
+	}
+	mask := d.active & d.enabled
+	if mask == 0 {
+		return
+	}
+	start := int(d.next)
+	for i := range 16 {
+		ch := (start + i) & 15
+		if mask&(1<<uint(ch)) == 0 {
 			continue
 		}
-		d.step(n, ch)
+		d.next = uint8((ch + 1) & 15)
+		d.step(ch, &d.ch[ch])
+		return
 	}
 }
 
 func (d *dmaBlock) step(n int, ch *dmaChannel) {
-	switch (ch.ctrl >> 2) & 3 {
-	case 0: // byte
-		d.chip.Write8(ch.write, d.chip.Read8(ch.read))
-		if ch.ctrl&dmaCtrlINCRRead != 0 {
-			ch.read++
-		}
-		if ch.ctrl&dmaCtrlINCRWrit != 0 {
-			ch.write++
-		}
-	case 1: // halfword
-		d.chip.Write16(ch.write, d.chip.Read16(ch.read))
-		if ch.ctrl&dmaCtrlINCRRead != 0 {
-			ch.read += 2
-		}
-		if ch.ctrl&dmaCtrlINCRWrit != 0 {
-			ch.write += 2
-		}
-	default: // word
-		d.chip.Write32(ch.write, d.chip.Read32(ch.read))
-		if ch.ctrl&dmaCtrlINCRRead != 0 {
-			ch.read += 4
-		}
-		if ch.ctrl&dmaCtrlINCRWrit != 0 {
-			ch.write += 4
+	size := int((ch.ctrl >> 2) & 3)
+	var value uint32
+	switch size {
+	case 0:
+		value = uint32(d.chip.Read8(ch.read))
+	case 1:
+		value = uint32(d.chip.Read16(ch.read))
+	default:
+		value = d.chip.Read32(ch.read)
+	}
+	if ch.ctrl&dmaCtrlBSWAP != 0 {
+		switch size {
+		case 0:
+		case 1:
+			value = uint32(bits.ReverseBytes16(uint16(value)))
+		default:
+			value = bits.ReverseBytes32(value)
 		}
 	}
+	switch size {
+	case 0:
+		d.chip.writeDMA8(ch.write, byte(value))
+	case 1:
+		d.chip.writeDMA16(ch.write, uint16(value))
+	default:
+		d.chip.Write32(ch.write, value)
+	}
+	ch.read = dmaAddress(ch.read, ch.readBase, ch.ctrl, true, size)
+	ch.write = dmaAddress(ch.write, ch.writeBase, ch.ctrl, false, size)
 	ch.count--
 	base := uint32(n * 0x40)
 	d.block.regs[base/4] = ch.read
 	d.block.regs[base/4+1] = ch.write
 	d.block.regs[base/4+2] = ch.count
-	if ch.count == 0 || d.chip.Halted {
+	if ch.count == 0 {
 		d.complete(n)
 	}
+}
+
+func dmaAddress(addr, base, ctrl uint32, read bool, size int) uint32 {
+	step := uint32(1) << uint(size)
+	incr, rev := ctrl&dmaCtrlINCRRead, ctrl&dmaReadRev
+	if !read {
+		incr, rev = ctrl&dmaCtrlINCRWrit, ctrl&dmaWriteRev
+	}
+	if incr != 0 {
+		if rev != 0 {
+			addr -= step
+		} else {
+			addr += step
+		}
+	} else if rev != 0 {
+		addr += 2 * step
+	}
+	ringSize := (ctrl >> 8) & 0xF
+	selected := ctrl&dmaRingSel == 0
+	if !read {
+		selected = ctrl&dmaRingSel != 0
+	}
+	if ringSize != 0 && selected {
+		mask := uint32(1)<<ringSize - 1
+		addr = base&^mask | addr&mask
+	}
+	return addr
 }
 
 func (d *dmaBlock) complete(n int) {
 	base := uint32(n * 0x40)
 	ch := &d.ch[n]
 	ch.active = false
+	ch.count = 0
 	d.active &^= 1 << uint(n)
 	d.block.regs[base/4+2] = 0
-	// Completion clears BUSY only. EN stays set, so the channel can be
-	// re-triggered through an alias or MULTI_CHAN_TRIGGER without rewriting
-	// CTRL; hardware ignores triggers only while EN is clear.
-	d.block.regs[base/4+3] = ch.ctrl &^ dmaCtrlBusy
+	// Completion clears BUSY only. EN stays set so the channel can be
+	// re-triggered without rewriting CTRL.
+	ch.ctrl &^= dmaCtrlBusy
+	d.block.regs[base/4+3] = ch.ctrl
 	if d.chip.OnDMA != nil {
 		d.chip.OnDMA(n, ch.read, ch.write, ch.count, ch.ctrl)
 	}
@@ -313,20 +480,30 @@ func (d *dmaBlock) complete(n int) {
 		d.intr |= 1 << uint(n)
 		d.syncIRQ()
 	}
-	// A completed channel may trigger another channel (CHAIN_TO). The target
-	// was configured but not started, which is how the DVI example ping-pongs
-	// command lists and pixel buffers.
 	target := int((ch.ctrl >> 13) & 0xF)
-	if target != n && target < 16 {
-		// A chained trigger respects the target's EN bit, like any other
-		// trigger. A zero count means software has not reloaded it yet;
-		// chaining now would immediately complete and recurse.
-		if d.block.regs[uint32(target*0x40)/4+2] != 0 {
-			d.begin(target, d.block.regs[uint32(target*0x40)/4+3])
-		} else {
-			d.chainPending |= 1 << uint(target)
-		}
+	if target == n || target >= 16 || d.enabled&(1<<uint(target)) == 0 || d.ch[target].active {
+		return
 	}
+	if d.ch[target].reload&dmaCountMask == 0 {
+		d.chainPending |= 1 << uint(target)
+		return
+	}
+	d.start(target)
+}
+
+func (d *dmaBlock) abortChannel(ch int) {
+	if ch < 0 || ch >= len(d.ch) || !d.ch[ch].active {
+		return
+	}
+	chp := &d.ch[ch]
+	chp.active = false
+	chp.count = 0
+	chp.ctrl &^= dmaCtrlBusy
+	d.active &^= 1 << uint(ch)
+	d.chainPending &^= 1 << uint(ch)
+	base := uint32(ch * 0x40)
+	d.block.regs[base/4+2] = 0
+	d.block.regs[base/4+3] = chp.ctrl
 }
 
 // checkChain starts a channel whose chain trigger arrived before software
@@ -335,19 +512,18 @@ func (d *dmaBlock) checkChain(ch int) {
 	if ch < 0 || ch >= 16 || d.chainPending&(1<<uint(ch)) == 0 {
 		return
 	}
-	base := uint32(ch * 0x40)
-	if d.block.regs[base/4+2] == 0 {
+	if d.ch[ch].reload&dmaCountMask == 0 {
 		return
 	}
 	d.chainPending &^= 1 << uint(ch)
-	d.begin(ch, d.block.regs[base/4+3]|dmaCtrlEN)
+	d.start(ch)
 }
 
-// syncIRQ maps INTR through the four INTE masks onto the DMA IRQs.
+// syncIRQ maps raw and forced channel interrupts through the four INTE masks.
 func (d *dmaBlock) syncIRQ() {
 	for i := range 4 {
 		inte := d.block.regs[(dmaRegINTR+uint32(i)*dmaIRQstep+4)/4]
-		if d.intr&inte != 0 {
+		if (d.intr|d.intf)&inte != 0 {
 			d.chip.PendIRQ(10 + i)
 		} else {
 			d.chip.ClearPendingIRQ(10 + i)
@@ -358,5 +534,46 @@ func (d *dmaBlock) syncIRQ() {
 // pending returns the channel bits visible in INTSn (for tests and diagnostics).
 func (d *dmaBlock) pending(n int) uint32 {
 	inte := d.block.regs[(dmaRegINTR+uint32(n)*dmaIRQstep+4)/4]
-	return d.intr & inte
+	return (d.intr | d.intf) & inte
+}
+
+// writeDMA8 and writeDMA16 preserve normal memory semantics while reproducing
+// RP2350's replicated narrow write bus for peripheral registers. Explicitly
+// byte-addressed blocks such as USB DPRAM and SHA WDATA keep true narrow writes.
+func (c *Chip) dmaNarrowReplicated(addr uint32) bool {
+	if addr < PeriphBase || addr&0x4000 != 0 {
+		return false
+	}
+	if b := c.regBlockFor(addr); b != nil {
+		if b.writeSizeFn != nil || c.usb != nil && b == c.usb.dpram {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Chip) writeDMA8(addr uint32, v uint8) {
+	if c.dmaNarrowReplicated(addr) {
+		if c.OnWrite != nil {
+			c.OnWrite(addr, uint32(v), 1)
+		}
+		c.debugWrite(addr, 1)
+		c.invalidateMonitors(addr)
+		c.writeMMIO(addr&^3, uint32(v)*0x01010101)
+		return
+	}
+	c.Write8(addr, v)
+}
+
+func (c *Chip) writeDMA16(addr uint32, v uint16) {
+	if c.dmaNarrowReplicated(addr) {
+		if c.OnWrite != nil {
+			c.OnWrite(addr, uint32(v), 2)
+		}
+		c.debugWrite(addr, 2)
+		c.invalidateMonitors(addr)
+		c.writeMMIO(addr&^3, uint32(v)*0x00010001)
+		return
+	}
+	c.Write16(addr, v)
 }
