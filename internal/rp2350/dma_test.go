@@ -427,6 +427,51 @@ func TestDMANarrowWriteReplication(t *testing.T) {
 	}
 }
 
+// Boot RAM is true memory: a DMA byte/halfword write changes only the selected
+// lanes, including through the atomic aliases.
+func TestDMANarrowBootRAMLaneWrites(t *testing.T) {
+	t.Run("byte", func(t *testing.T) {
+		c := New()
+		c.CPU0.Parked = true
+		c.CPU1.Parked = true
+		c.Write32(bootramBase+0x40, 0x11223344)
+		dmaConfigure(c, 0, 0x20000000, bootramBase+0x41, 1, 0)
+		c.Write8(0x20000000, 0xaa)
+		c.Write32(dmaBase+0x450, 1)
+		c.Step()
+		if got := c.Read32(bootramBase + 0x40); got != 0x1122aa44 {
+			t.Fatalf("DMA boot RAM byte write = %#x, want 0x1122aa44", got)
+		}
+	})
+	t.Run("halfword", func(t *testing.T) {
+		c := New()
+		c.CPU0.Parked = true
+		c.CPU1.Parked = true
+		c.Write32(bootramBase+0x40, 0x11223344)
+		dmaConfigure(c, 0, 0x20000000, bootramBase+0x42, 1, 1<<2)
+		c.Write16(0x20000000, 0xaabb)
+		c.Write32(dmaBase+0x450, 1)
+		c.Step()
+		if got := c.Read32(bootramBase + 0x40); got != 0xaabb3344 {
+			t.Fatalf("DMA boot RAM halfword write = %#x, want 0xaabb3344", got)
+		}
+	})
+	t.Run("halfword alias", func(t *testing.T) {
+		c := New()
+		c.CPU0.Parked = true
+		c.CPU1.Parked = true
+		c.Write32(bootramBase+0x40, 0x11223344)
+		const dst = bootramBase + 0x2000 + 0x42 // SET alias, upper halfword
+		dmaConfigure(c, 0, 0x20000000, dst, 1, 1<<2)
+		c.Write16(0x20000000, 0x00ff)
+		c.Write32(dmaBase+0x450, 1)
+		c.Step()
+		if got := c.Read32(bootramBase + 0x40); got != 0x11ff3344 {
+			t.Fatalf("DMA boot RAM alias halfword write = %#x, want 0x11ff3344", got)
+		}
+	})
+}
+
 func TestDMAQuietNullTrigger(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -545,16 +545,21 @@ func (d *dmaBlock) pending(n int) uint32 {
 }
 
 // writeDMA8 and writeDMA16 preserve normal memory semantics while reproducing
-// RP2350's replicated narrow write bus for peripheral registers. Explicitly
-// byte-addressed blocks such as USB DPRAM and SHA WDATA keep true narrow writes.
+// RP2350's replicated narrow write bus for peripheral registers. Byte-addressed
+// blocks (USB DPRAM, boot RAM) and their atomic aliases keep true lane writes,
+// as do blocks such as SHA WDATA that implement their own size handling. The
+// +0x4000 zero-fill alias also falls through to the CPU narrow-write path.
 func (c *Chip) dmaNarrowReplicated(addr uint32) bool {
 	if addr < PeriphBase || addr&0x4000 != 0 {
 		return false
 	}
 	if b := c.regBlockFor(addr); b != nil {
-		if b.writeSizeFn != nil || c.usb != nil && b == c.usb.dpram {
+		if b.writeSizeFn != nil || b.byteAddressed {
 			return false
 		}
+	}
+	if _, b, ok := c.aliasTarget(addr); ok && b.byteAddressed {
+		return false
 	}
 	return true
 }
