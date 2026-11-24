@@ -1,17 +1,33 @@
 # rp2350sim documentation
 
 `rp2350sim` runs unmodified `tinygo build -target=pico2` and stock Pico SDK C
-firmware: a Cortex-M33 interpreter, the RP2350 chip peripherals, and models for
-the boards and external chips (ST7789 LCD, W5500/W6300/CH9120 Ethernet,
-WS2812B, virtual Wi-Fi). A Shirei desktop UI adds board selection, live GPIO, a
-scope, a logic analyzer, built-in bus presets, Bus Pirate terminals and a
-Source/Build drawer with live reload.
+firmware, including RTOS kernels such as **Zephyr**: a Cortex-M33 interpreter,
+the RP2350 chip peripherals, and models for the boards and external chips
+(ST7789 LCD, W5500/W6300/CH9120 Ethernet, WS2812B, virtual Wi-Fi). A Shirei
+desktop UI adds board selection, live GPIO, a scope, a logic analyzer,
+built-in bus presets, Bus Pirate terminals and a Source/Build drawer with live
+reload.
 
 ![Board picker](images/picker.png)
 
 This directory is the user guide. The same pages are rendered with Hugo and
 the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 <https://akhenakh.github.io/rp2350sim/>; preview locally with `task docs:serve`.
+
+## Recent features
+
+- **RTOS support**: preemptive SVC/PendSV/SysTick exceptions, nested IRQs,
+  per-core NVIC/SCB, banked MSP/PSP and lazy/eager floating-point frames.
+  Zephyr 4.5 is validated on `rpi_pico2/rp2350a/m33` (hello world,
+  synchronization, philosophers, blinky, kernel context, scheduler API and FPU
+  sharing); the C `rtosctx` fixture covers context switching and critical
+  sections. See [zephyr.md](zephyr.md).
+- **Interactive board controls**: buttons, switches, rotary encoders, ADC pots
+  and BOOTSEL declared in `boards.yaml` and scriptable with `--input`.
+- **Debug variables**: every application global and local is shown in a
+  scrollable list with its evaluated value.
+- **Distribution**: Homebrew on macOS, AUR on Arch, and release archives with
+  verifiable GitHub build provenance.
 
 | Document | Contents |
 |---|---|
@@ -101,6 +117,9 @@ See [ci.md](ci.md) for the full recipe.
   the always-on timer, HSTX/DVI output, a GDB server and optional QSPI PSRAM on
   QMI CS1. Raw flash images may use the emulator's A/B partition table.
   See [c.md](c.md) for the C path and its current limits.
+- **RTOS kernels**: Zephyr 4.5 (`rpi_pico2/rp2350a/m33`) and FreeRTOS-style
+  preemptive kernels with SVC/PendSV/SysTick, per-core NVIC and floating-point
+  context switching. See [zephyr.md](zephyr.md).
 - **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
   CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).
 - **Pico 2 + PSRAM**: optional 1–16 MiB QSPI device on QMI CS1, with a
