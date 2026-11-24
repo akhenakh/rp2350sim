@@ -247,10 +247,7 @@ func (n *NVIC) groupPriority(p int) int {
 	if p < 0 {
 		return p
 	}
-	group := (n.aircr >> 8) & 7
-	if group > 3 {
-		group = 3
-	}
+	group := min((n.aircr>>8)&7, 3)
 	switch group {
 	case 0:
 		return p & 0xF0

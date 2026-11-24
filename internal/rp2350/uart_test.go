@@ -148,11 +148,9 @@ func TestUARTConcurrentSendAndRead(t *testing.T) {
 	c.Write32(base+0x2c, 1<<4)
 	var wg sync.WaitGroup
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			c.SendUART(0, make([]byte, 8))
-		}()
+		})
 	}
 	done := make(chan struct{})
 	go func() {

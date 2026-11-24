@@ -314,7 +314,7 @@ func (h *hstxBlock) consumePixels(v uint32) {
 	for i := 0; i < perWord && h.remaining != 0; i++ {
 		data := bits.RotateLeft32(v, -i*encShift)
 		px := h.decodePixel(data)
-		for b := 0; b < bytesPer; b++ {
+		for b := range bytesPer {
 			h.line = append(h.line, byte(px>>uint(b*8)))
 		}
 		if h.remaining > 0 {

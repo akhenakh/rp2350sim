@@ -183,9 +183,10 @@ func newDMA(c *Chip) *dmaBlock {
 		}
 		if off >= 0x800 && off < 0xC00 {
 			reg := (off - 0x800) % 0x40
-			if reg == 0 { // DBG_CTDREQ: any write clears the DREQ counter.
+			switch reg {
+			case 0: // DBG_CTDREQ: any write clears the DREQ counter.
 				d.block.regs[off/4] = 0
-			} else if reg == 4 { // DBG_TCR is read-only.
+			case 4: // DBG_TCR is read-only.
 				ch := int((off - 0x800) / 0x40)
 				d.block.regs[off/4] = d.ch[ch].reload
 			}

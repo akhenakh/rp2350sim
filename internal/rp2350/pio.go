@@ -825,12 +825,6 @@ func (s *pioSM) autoPullBetween() {
 	}
 }
 
-// execNow runs an instruction written to SMx_INSTR. Forced instructions ignore
-// the divider and delay, and may execute while the state machine is disabled.
-func (s *pioSM) execNow(instr uint16) {
-	s.forceInstruction(instr)
-}
-
 func (s *pioSM) forceInstruction(instr uint16) {
 	s.applySticky()
 	if instr == 0xA042 && s.execStalled { // NOP clears a stalled forced instruction
