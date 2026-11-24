@@ -1948,11 +1948,7 @@ func scopePanel() {
 				Label("armed · "+scopeTrigMode, FontSize(11), TextColor(45, 60, 60, 1))
 			}
 		})
-		Container(Attrs(Row, Wrap, Gap(4)), func() {
-			for _, pin := range scopeCandidates {
-				scopePinChip(pin)
-			}
-		})
+		scopePinPicker()
 		Container(Attrs(Row, Gap(6), Expand), func() {
 			Container(Attrs(FixWidth(38), FixHeight(420)), func() {
 				Label(fmt.Sprintf("%s V", strconv.FormatFloat(float64(vmax), 'g', 3, 32)), FontSize(10))
@@ -2045,6 +2041,54 @@ func formatPeriod(sec float64) string {
 	}
 }
 
+const (
+	scopePinW   float32 = 64
+	scopePinGap float32 = 4
+)
+
+// scopePinColumns returns how many fixed-width pin chips fit in width. The
+// grid is explicit because Row+Wrap can overflow when its parent has no
+// resolved width (notably during the first layout pass or with the drawer open).
+func scopePinColumns(width float32) int {
+	if width < scopePinW {
+		width = scopePinW
+	}
+	return max(1, int((width+scopePinGap)/(scopePinW+scopePinGap)))
+}
+
+func scopePinAvailableWidth() float32 {
+	maxW := float32(viewW) - 40
+	if buildPanelOpen {
+		maxW -= 478
+	}
+	if maxW < scopePinW {
+		maxW = scopePinW
+	}
+	width := GetContentWidth()
+	if width < 100 || width > maxW {
+		width = maxW
+	}
+	return width
+}
+
+func scopePinPicker() {
+	cols := scopePinColumns(scopePinAvailableWidth())
+	rows := (len(scopeCandidates) + cols - 1) / cols
+	Container(Attrs(Gap(scopePinGap), Expand), func() {
+		for row := range rows {
+			Container(Attrs(Row, Gap(scopePinGap)), func() {
+				for col := range cols {
+					i := row*cols + col
+					if i >= len(scopeCandidates) {
+						break
+					}
+					scopePinChip(scopeCandidates[i])
+				}
+			})
+		}
+	})
+}
+
 func scopePinChip(pin int) {
 	idx := -1
 	for i, p := range scopePins {
@@ -2053,7 +2097,7 @@ func scopePinChip(pin int) {
 			break
 		}
 	}
-	ContainerWithKey(fmt.Sprintf("scope-%d", pin), Attrs(Row, CrossMid, Gap(5), Pad2(3, 7), Corners(4),
+	ContainerWithKey(fmt.Sprintf("scope-%d", pin), Attrs(Row, CrossMid, FixWidth(scopePinW), Gap(5), Pad2(3, 7), Corners(4),
 		Background(220, 12, 12, 1), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
 		st := ProcessButtonEvents(false)
 		if st.Clicked {

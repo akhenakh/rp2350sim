@@ -315,7 +315,8 @@ The last WS2812B frame as large swatches with its RGB values.
 
 Up to eight channels, each with its own colour, 0–3.3 V, 1 MHz sampling and a
 ~16 ms window. Click header pins to add/remove traces; all GPIOs are offered
-(GP0–GP47; RP2350A packages only bond 0–29). The legend shows the latest
+(GP0–GP47; RP2350A packages only bond 0–29). The pin chips use width-aware rows,
+so all 48 remain inside the window on narrow layouts. The legend shows the latest
 voltage and a live measurement per channel: frequency, duty cycle and period,
 using the same first-to-last-rising-edge method as `tools/pincheck` (with
 "static high/low" when there are no edges).
