@@ -77,6 +77,7 @@ func TestLogicPauseStopsSynchronousRunFor(t *testing.T) {
 
 func TestBoardSwitchFlushesMIDIBeforeReset(t *testing.T) {
 	old := rp2350.New()
+	old.Write32(0x4007802c, 1<<4) // UART1 LCR_H: enable the 32-entry RX FIFO.
 	e := &Emu{
 		chip: old, debugger: rp2350.NewDebugger(),
 		board:    &BoardDef{ID: "old", MIDI: &MIDIDevice{Kind: "uart", UART: 1}},
@@ -99,6 +100,7 @@ func TestBoardSwitchFlushesMIDIBeforeReset(t *testing.T) {
 
 func TestSendInputQueuesUSBUntilReady(t *testing.T) {
 	c := rp2350.New()
+	c.Write32(0x4007002c, 1<<4) // UART0 LCR_H: enable the 32-entry RX FIFO.
 	e := &Emu{chip: c, debugger: rp2350.NewDebugger()}
 	e.SendInput([]byte("abc"))
 	if got := string(e.usbInput); got != "abc" {
