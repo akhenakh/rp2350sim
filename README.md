@@ -1,6 +1,6 @@
 # rp2350sim
 
-An emulator for the Raspberry Pi RP2350 (Pico 2 and derived) that runs unmodified Pico C SDK and `tinygo build -target=pico2` firmware, with a desktop UI showing the board state.
+rp2350sim is a Raspberry Pi RP2350 (Pico 2 and compatible boards) emulator for developing, testing, and debugging firmware on a desktop without hardware. It runs unmodified Pico SDK C and `tinygo build -target=pico2` programs, including RTOS firmware such as Zephyr, with a live UI for the emulated board and its peripherals.
 
 Status: runs real programs end to end, package initialisation, the task
 scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a CST816D touch controller, a QMI8658 IMU, a microSD card model that can be backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, the OTP array (fuses, Hamming ECC, page locks, bootrom access), and optional QSPI PSRAM (1-16 MiB on QMI CS1, with configurable access latency).
