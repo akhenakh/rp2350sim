@@ -120,11 +120,7 @@ func (b *BusBridge) Start() error {
 	b.mu.Unlock()
 
 	if connect != "" {
-		b.wg.Add(1)
-		go func() {
-			defer b.wg.Done()
-			b.dialLoop()
-		}()
+		b.wg.Go(b.dialLoop)
 		return nil
 	}
 	ln, err := net.Listen("tcp", b.ListenAddr)
@@ -136,12 +132,8 @@ func (b *BusBridge) Start() error {
 	}
 	b.mu.Lock()
 	b.ln = ln
-	b.wg.Add(1)
 	b.mu.Unlock()
-	go func() {
-		defer b.wg.Done()
-		b.acceptLoop(ln)
-	}()
+	b.wg.Go(func() { b.acceptLoop(ln) })
 	b.logger().Info("bus bridge listening",
 		slog.String("kind", string(b.Kind)),
 		slog.Int("bus", b.Bus),

@@ -69,7 +69,7 @@ func BuildFAT16FromDir(root string, size int) ([]byte, map[string]bool, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("sd dir: %w", err)
 	}
-	defer hostRoot.Close()
+	defer func() { _ = hostRoot.Close() }()
 	info, err := hostRoot.Stat(".")
 	if err != nil {
 		return nil, nil, fmt.Errorf("sd dir: %w", err)

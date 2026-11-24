@@ -88,16 +88,9 @@ func (b *UARTBridge) Start() error {
 	}
 	b.mu.Lock()
 	b.ln = ln
-	b.wg.Add(2)
 	b.mu.Unlock()
-	go func() {
-		defer b.wg.Done()
-		b.acceptLoop(ln)
-	}()
-	go func() {
-		defer b.wg.Done()
-		b.txLoop(tx, done)
-	}()
+	b.wg.Go(func() { b.acceptLoop(ln) })
+	b.wg.Go(func() { b.txLoop(tx, done) })
 	loggerOr(b.Logger).Info("uart bridge listening", slog.Int("uart", b.UART), slog.String("addr", ln.Addr().String()))
 	return nil
 }
@@ -117,16 +110,12 @@ func (b *UARTBridge) acceptLoop(ln net.Listener) {
 		old := b.conn
 		b.conn = conn
 		b.client = conn.RemoteAddr().String()
-		b.wg.Add(1)
+		b.wg.Go(func() { b.readLoop(conn) })
 		b.mu.Unlock()
 		if old != nil {
 			_ = old.Close()
 		}
 		loggerOr(b.Logger).Info("uart bridge client", slog.Int("uart", b.UART), slog.String("remote", conn.RemoteAddr().String()))
-		go func() {
-			defer b.wg.Done()
-			b.readLoop(conn)
-		}()
 	}
 }
 

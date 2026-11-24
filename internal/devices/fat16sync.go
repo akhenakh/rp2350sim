@@ -35,7 +35,7 @@ func (s *SDCard) Sync() error {
 	if err != nil {
 		return fmt.Errorf("sd sync: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	manifest := map[string]bool{}
 	if err := s.syncLevel(root, "", 0, true, l, manifest); err != nil {
@@ -162,7 +162,7 @@ func ensureHostDir(root *os.Root, rel string) error {
 		return fmt.Errorf("sd sync: unsafe path %q", rel)
 	}
 	cur := ""
-	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(clean, string(filepath.Separator)) {
 		if part == "" || part == "." {
 			continue
 		}

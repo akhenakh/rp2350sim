@@ -113,11 +113,7 @@ func (d *CH9120) startNetworkLocked(fn func()) bool {
 	if d.closed {
 		return false
 	}
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		fn()
-	}()
+	d.wg.Go(fn)
 	return true
 }
 

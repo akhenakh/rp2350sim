@@ -506,11 +506,7 @@ func (st *connState) startRun() {
 	st.stopOnce = once
 	st.runMu.Unlock()
 	st.t.Continue()
-	st.wait.Add(1)
-	go func() {
-		defer st.wait.Done()
-		st.waitStop(gen)
-	}()
+	st.wait.Go(func() { st.waitStop(gen) })
 }
 
 func (st *connState) interrupt() {

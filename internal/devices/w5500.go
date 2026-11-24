@@ -173,11 +173,7 @@ func (w *W5500) startNetworkLocked(fn func()) bool {
 	if w.closed {
 		return false
 	}
-	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
-		fn()
-	}()
+	w.wg.Go(fn)
 	return true
 }
 
