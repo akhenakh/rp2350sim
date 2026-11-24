@@ -412,16 +412,18 @@ func (u *usbBlock) ints() uint32  { return (u.intr | u.intf) & u.inte() }
 func (u *usbBlock) enabled() bool { return u.regs.regs[usbMAINCTRL/4]&usbMainEnable != 0 }
 
 func (u *usbBlock) syncIRQ(c *Chip) {
-	active := u.ints() != 0
-	if active == u.irqActive {
-		return
-	}
-	u.irqActive = active
-	if active {
+	if u.ints() != 0 {
+		// Re-pend while any source remains asserted. TinyGo can clear SETUP_REQ
+		// after a buffer completion arrives, so the combined IRQ stays high even
+		// though NVIC pending was consumed by the current handler.
+		u.irqActive = true
 		c.PendIRQ(usbIRQ)
 		return
 	}
-	c.ClearPendingIRQ(usbIRQ)
+	if u.irqActive {
+		u.irqActive = false
+		c.ClearPendingIRQ(usbIRQ)
+	}
 }
 
 // idleForSkip reports whether the USB host cannot be mid-handshake, so a

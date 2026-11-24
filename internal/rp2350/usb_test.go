@@ -293,6 +293,30 @@ func TestUSBInterruptLatches(t *testing.T) {
 	}
 }
 
+// TestUSBInterruptReassertsForNewSource models TinyGo's EP0 ISR: SETUP_REQ is
+// active when the handler starts, a buffer completion arrives while it runs,
+// and the handler clears SETUP_REQ. The combined USB IRQ never drops, but the
+// completion still needs a fresh NVIC pending bit after the current handler.
+func TestUSBInterruptReassertsForNewSource(t *testing.T) {
+	c := New()
+	u := c.usb
+	c.Write32(usbRegsBase+usbINTE, usbINTSetupReq|usbINTBuffStatus)
+	c.Write32(usbRegsBase+usbSIECTRL, usbSIEEP0Int1Buf)
+	u.setSIEStatus(usbSIESetupRec)
+
+	// Exception entry clears NVIC pending while the peripheral latch remains.
+	c.ClearPendingIRQ(usbIRQ)
+	u.completeBuffer(0, true, 0)
+	u.write(c, usbSIESTATUS, usbSIESetupRec)
+
+	if u.ints()&usbINTBuffStatus == 0 {
+		t.Fatal("buffer completion did not remain asserted")
+	}
+	if c.ppb[0].pending[0]&(1<<usbIRQ) == 0 || c.ppb[1].pending[0]&(1<<usbIRQ) == 0 {
+		t.Fatal("new USB completion was lost while the combined IRQ stayed active")
+	}
+}
+
 // TestUSBAttachViaSetAlias checks that TinyUSB's use of the +0x2000 SET alias
 // for SIE_CTRL.PULLUP_EN reaches the controller.
 func TestUSBAttachViaSetAlias(t *testing.T) {
