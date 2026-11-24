@@ -35,7 +35,9 @@ No device flags are needed. The core brings up the RP2350 peripherals the
 TinyGo and Pico SDK runtimes use: GPIO/IO_BANK0/PADS, SIO, NVIC/SCB, timers,
 clocks/PLL/XOSC, watchdog, UART0/1, SPI0/1, I2C0/1, PWM, ADC, DMA, USB device
 + CDC console, and PIO0/1/2. TinyGo `-scheduler=cores` and Pico SDK
-`multicore_launch_core1` both boot core 1.
+`multicore_launch_core1` both boot core 1. Sub-word peripheral register writes
+replicate across the 32-bit register as on silicon; SIO/SCS priority bytes and
+USB DPRAM/boot RAM keep their lane-oriented memory writes.
 
 ## Waveshare RP2350-GEEK
 
@@ -263,6 +265,11 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 
 ## Current limitations
 
+- **Clock, bootrom and partition model:** virtual time is fixed at 150 MHz;
+  register-derived PLL/VCO timing and reset gating are not simulated. The
+  bootrom is a synthetic service subset, not executable ROM code. PT25 is the
+  emulator's custom A/B table format; signed picobin, secure boot and rollback
+  are not implemented.
 - **CYW43439 / Bluetooth:** not emulated; the Pico 2 W uses the virtual Wi-Fi
   described above.
 - **Core 1:** works with `-scheduler=cores` (SIO launch, WFE/SEV, tasks on both
@@ -284,7 +291,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 - **Not enforced:** MSPLIM/PSPLIM violations, CPACR gating and the MPU/SAU
   registers (they are stored and readable, but no protection is applied), so
   `CONFIG_USERSPACE` isolation and stack-guard faults are not modelled.
-  Fault escalation beyond masked SVC (bus/usage/mem faults) is not generated.
+  TrustZone/ACCESSCTRL/security isolation and the full interrupt matrix are
+  outside the model. Fault escalation beyond masked SVC (bus/usage/mem faults)
+  is not generated.
 - **Peripheral interrupts:** NVIC lines are wired for DMA, both timers, UART RX,
   USB, PIO, POWMAN, SIO FIFO (25) and SIO doorbell (26). SPI, I2C, ADC,
   GPIO-edge and PWM wrap interrupts are not delivered yet.

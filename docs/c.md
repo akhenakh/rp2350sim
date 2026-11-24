@@ -113,7 +113,8 @@ coprocessor operation with its operands and result.
 ## Limitations
 
 - The DCP arithmetic path used by `+ - * /` and `sqrt` is covered by
-  `firmware/c/dcp`; `%f` varargs remain unsupported (see above).
+  `firmware/c/dcp`. `%f` renders its double, but following variadic arguments
+  can be misread (see above).
 - Bootrom coverage is a functional subset. `rom_reboot` (including the
   FLASH_UPDATE partition preference), flash erase/program, OTP access and the
   random-number service are modelled; `reset_usb_boot` logs a warning and

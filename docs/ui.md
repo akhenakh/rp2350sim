@@ -52,7 +52,7 @@ Startup flags:
 | `--scope-zoom N`, `--scope-range V` | initial scope time zoom / full-scale volts |
 | `--logic-trigger KIND` | arm the logic analyzer at startup: `off`, `any`, `uart`, `i2c`, `spi` |
 | `--logic-pause` | pause the machine when the startup logic trigger fires |
-| `--break SPEC` | add a breakpoint (address or symbol) after loading the firmware |
+| `--break SPEC` | add a breakpoint (address or symbol) before the first instruction |
 | `--gdb ADDR` | start the GDB remote server at launch (the toolbar **GDB** button toggles it) |
 | `--debug-tab TAB` | debug inspector tab at startup: `registers`, `memory`, `variables` |
 | `--bus-connect` | connect the Bus tab terminal to every bridge listener automatically |
@@ -81,8 +81,9 @@ self-update.
   `127.0.0.1:3333`); the status line shows the listening address while it is
   active. Attach with `arm-none-eabi-gdb` and `target remote`; see
   [debug.md](debug.md).
-- **Board…** returns to the picker; choosing another board reloads the current
-  firmware onto the new hardware.
+- **Board…** returns to the picker, stops firmware and file watching, flushes
+  MIDI Note-Off messages to the old transport, and closes host sockets. Choosing
+  another board reloads the current firmware onto the new hardware.
 - After an OTA reset the **Board** tab shows a banner naming the flash image,
   its boot number and entry point.
 
@@ -92,6 +93,9 @@ A board declares the devices it has. Every key is optional; the UI creates a
 tab only when the device exists. A board may carry several devices on one SPI
 controller as long as each uses a different chip select; duplicate I2C
 addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
+After defaults are applied, the loader also checks LCD/touch geometry and
+rotation, package pin ranges, logic/scope pins, audio pin ownership and the
+reserved BOOTSEL id.
 
 | key | fields | tab |
 |---|---|---|
@@ -340,8 +344,9 @@ bytes, I2C address/data/ACK phases and SPI MOSI/MISO bytes are listed under
 synthesised waveforms; USB CDC transfers are listed with direction.
 
 **Trigger** waits for Off/Any/UART/I2C/SPI, captures the trace and decoded lists
-on the next event; **Pause: on** also stops the machine. **Rearm** waits for
-the next event after a frozen capture. **Save trace** writes
+on the next event; **Pause: on** also stops the machine, both in the live loop
+and in synchronous `--run` snapshots. **Rearm** waits for the next event after
+a frozen capture. **Save trace** writes
 `logic-analyze-trace-<date>-<board>.txt` in the current directory with the raw
 pin samples, the decoded UART/I2C/SPI/USB sections and complete event logs for
 every bus and direction. **Save VCD** writes
@@ -372,7 +377,8 @@ panel width with real white/black key geometry; keys the firmware plays light
 up, and clicking or dragging plays a glissando. **−/+ Octave** moves the range
 and **Panic** sends Note Off for held keys plus All Notes Off on all 16
 channels. A key sends Note On on press and Note Off on release. Host-to-device
-messages use the same USB-MIDI or UART endpoint as the headless runner.
+messages use the same USB-MIDI or UART endpoint as the headless runner. Board
+changes flush Note-Off/All-Notes-Off to the old transport before switching.
 
 ![MIDI tab](images/midi.png)
 
@@ -426,16 +432,19 @@ examples.
 ### Live reload and the Source/Build drawer
 
 `--watch` polls the loaded firmware (or `--flash` image) and restarts the
-machine when it changes on disk. A change must be stable for two 200 ms polls,
-so a linker writing the output in place is not executed half-finished. The
-status line shows `watch <name>` and the number of reloads; a load error stays
-visible until the next successful change. The watcher follows a new path when
-you press **Load** or pick another file; the toolbar **Build** button opens the
-drawer that usually produces that file.
+machine when it changes on disk. The baseline is captured when the path is
+selected; a change must then be stable for two 200 ms polls, so a linker writing
+the output in place is not executed half-finished. Reload and pause restoration
+are atomic, and path/mode changes cannot be overwritten by a stale callback.
+The status line shows `watch <name>` and the number of reloads; a load error
+stays visible until the next successful change. The watcher follows a new path
+when you press **Load** or pick another file; the toolbar **Build** button opens
+the drawer that usually produces that file.
 
 The **Source / Build** drawer is optional and opens from the toolbar or with
 `--build-drawer`. Its **Source** tab edits one file with line numbers, **Open**
-and **Save**; its **Build** tab runs a shell command in a chosen directory and
+and **Save**; a failed Open leaves the previous document and committed path
+intact. Its **Build** tab runs a shell command in a chosen directory and
 streams stdout/stderr into the log. Empty fields are inferred from the
 firmware path:
 
@@ -458,8 +467,9 @@ rp2350sim-ui --board pico2 --watch --build-drawer build/blinky.elf
 ### Console
 
 USB CDC + UART output. Click it to give it keyboard focus; typed text and
-Enter/Backspace/Tab/arrows are forwarded to the firmware. UART-over-TCP and
-bus-bridge status lines are listed here.
+Enter/Backspace/Tab/arrows are forwarded to the firmware. UART0 receives input
+immediately; USB input waits in a queue until CDC enumeration and the OUT
+endpoint are ready. UART-over-TCP and bus-bridge status lines are listed here.
 
 ![Console tab](images/console.png)
 

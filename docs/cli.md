@@ -59,7 +59,7 @@ traces, PIO state-machine steps, USB enumeration and network socket activity.
 |---|---|
 | `0` | the run completed (or `-stop-on-expect` matched) |
 | `1` | load/configuration error, unreadable `-input-file`, summary write failed |
-| `2` | usage error (unknown flag, missing `-fw`, conflicting device flags) |
+| `2` | usage error (unknown flag, missing `-fw`, conflicting flags, malformed numeric/debug/logic input) |
 | `3` | a core halted or faulted (unimplemented instruction, UDF, unmapped MMIO, outside image) |
 | `4` | one or more `-expect` strings were not seen |
 | `5` | `-wall-timeout` expired |
@@ -188,8 +188,9 @@ Flash is a 16 MiB array that starts erased (`0xFF`) and implements page
 programming (`1 -> 0`) and 4 KiB sector erase. The Pico SDK's
 `flash_range_erase`/`flash_range_program` reach it through the synthetic
 bootrom services (`RE`, `RP`; `FO` for `flash_op`). A reset from the bootrom
-`reboot`, `AIRCR.SYSRESETREQ`, or the watchdog reboots the vector table at
-`0x10000000`.
+`reboot` or the watchdog reboots the vector table at `0x10000000`.
+`AIRCR.SYSRESETREQ` resets only the requesting core, preserving the other core
+and unrelated peripheral state.
 
 - `-flash PATH` loads a raw flash image if it exists and writes the final image
   back after a reset and at exit. Without `-fw`, the runner boots the vector
@@ -300,7 +301,8 @@ firmware that reads the rows instead.
 `ecc-error` or `uncorrectable`, and `software_locked` lists pages the firmware
 locked through `SW_LOCK`. Only `rows` is read back by `-otp`; a row with `raw`
 is restored verbatim (so deliberately corrupted ECC round-trips), a row with
-only `data` gets a fresh ECC.
+only `data` gets a fresh ECC. `raw` is limited to 24 bits and `data` to 16 bits;
+wider values are rejected as load errors.
 
 Firmware reads and writes OTP through the bootrom `otp_access` service, as on
 hardware. Pico SDK `firmware/c/otp` exercises ECC, raw rows, fuse rules and
@@ -492,13 +494,17 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 `-trace-last`. Address zero is a valid breakpoint; the runner tracks whether
 `-bp`/`-bp2` were set rather than using zero as a sentinel. `-strict-mmio`
 keeps the instruction ring even without `-trace-last`, so the first unmapped
-access gets a backtrace.
+access gets a backtrace. Malformed `-trace-from`, `-poke`, `-watch-val` and
+`-peek` values are rejected before the machine starts (exit 2).
 
 ### Logic analyzer capture
 
 The runner can save the same trace the UI's logic tab shows. Hardware
 UART/SPI/I2C taps are always included; `-logic-pins` adds raw pin samples and
-the protocol flags decode those pins for PIO/bit-banged traffic.
+the protocol flags decode those pins for PIO/bit-banged traffic. Protocol pin
+numbers must be GPIOs 0-47 (optional SPI MISO/CS may be `-1`); malformed lists
+are usage errors. UART pin decoding drops a frame if its data or stop-bit
+samples are missing.
 
 ```sh
 rp2350sim -fw build/protocols.elf -seconds 0.5 \

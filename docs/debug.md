@@ -28,9 +28,11 @@ rp2350sim -fw firmware.elf -seconds 2 -watch g_magic
   the other core stays halted. Cycle counts are virtual 150 MHz cycles, so
   exceptions and slow external memory are visible in the delta.
 - **Breakpoints** can be entered as `0x...` or as an ELF symbol
-  (`main.main`, `debug_marker`, `main`). The list shows the resolved address,
-  function and source line. Address breakpoints also work for UF2/raw images,
-  which have no symbols.
+  (`main.main`, `debug_marker`, `main`). Exact symbols win before hexadecimal
+  parsing, so a symbol such as `face` is not read as `0xface`. The list shows
+  the resolved address, function and source line. Address breakpoints also work
+  for UF2/raw images, which have no symbols. `--break` is installed before the
+  first instruction, including at the reset vector.
 - **Write watchpoints** stop when firmware writes the resolved address. A
   watchpoint is checked on 8/16/32-bit writes; the write still completes.
 - **Source** shows the lines around the current PC when the DWARF file is
@@ -43,8 +45,9 @@ rp2350sim -fw firmware.elf -seconds 2 -watch g_magic
     never reads a UART/SPI/I2C/FIFO register. **PC** and **SP** jump to the
     current locations.
   - **Variables** evaluates the current function's locals and global objects in
-    a scrollable list. All application globals are listed; underscore-prefixed
-    linker/runtime symbols are omitted.
+    a scrollable list. Globals come from every compilation unit and include
+    symbol-only objects; underscore-prefixed linker/runtime symbols are omitted
+    from the UI.
 
 ## Variables and limitations
 
@@ -81,7 +84,8 @@ rp2350sim -fw firmware/c/build/debug.elf -seconds 1 -watch g_magic
 
 The breakpoint record includes `symbol`, `file` and `line` when available. An
 exact symbol match wins over a hexadecimal interpretation, so a symbol named
-`face` is not mistaken for an address. `-trace`, `-bp`, `-watch` and
+`face` is not mistaken for an address. Multi-CU line lookup keeps the winning
+entry's compilation directory. `-trace`, `-bp`, `-watch` and
 `-watch-val` can be combined. The existing `-trace-last`, `-poke` and `-peek`
 flags remain available for non-interactive diagnosis.
 

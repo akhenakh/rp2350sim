@@ -166,8 +166,10 @@ emulated host follows the configuration descriptor, the DPRAM buffer addresses
 in `EP_CONTROL`, the control status stage and host OUT data PIDs.
 
 **UI.** The **Console** tab shows USB CDC + UART output. Click it to focus,
-then type; Enter, Backspace, Tab and the arrow keys reach the firmware. UART
-bridges and Bus Pirate status lines are listed in the same tab.
+then type; Enter, Backspace, Tab and the arrow keys reach the firmware. UART0
+receives input immediately; USB bytes wait until CDC is enumerated and its OUT
+endpoint is armed. UART bridges and Bus Pirate status lines are listed in the
+same tab.
 
 ![Console tab with TinyUSB CDC output](images/console.png)
 
@@ -563,6 +565,7 @@ time, and provides a two-octave piano keyboard across the full panel width
 with octave buttons and **Panic** (Note Off for held keys plus All Notes Off
 on all channels). A key sends Note On on press and Note Off on release;
 clicking or dragging plays a glissando, and keys the firmware plays light up.
+Board changes flush those release messages to the old endpoint before switch.
 
 ![MIDI tab](images/midi.png)
 
