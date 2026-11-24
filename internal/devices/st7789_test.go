@@ -1,6 +1,7 @@
 package devices
 
 import (
+	"image/color"
 	"testing"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -75,5 +76,79 @@ func TestST7789Reset(t *testing.T) {
 	d.sendCmd(0x01) // SWRESET
 	if d.On() {
 		t.Fatal("SWRESET left the display on")
+	}
+}
+
+func TestST7789GEEKFullGRAM(t *testing.T) {
+	c := rp2350.New()
+	d := NewST7789(c, 9, 8, 12, 135, 240)
+	d.sendCmd(0x11)                 // SLPOUT
+	d.sendCmd(0x36, 0x70)           // MADCTL MX|MY|MV
+	d.sendCmd(0x2A, 0, 40, 1, 0x17) // CASET 40..279
+	d.sendCmd(0x2B, 0, 53, 0, 0xBB) // RASET 53..187
+	d.sendCmd(0x2C)                 // RAMWR
+	for y := 53; y <= 187; y++ {
+		for x := 40; x <= 279; x++ {
+			var px uint16
+			switch {
+			case x == 40 && y == 53:
+				px = 0xF800 // red at the visible top-left
+			case x == 279 && y == 187:
+				px = 0x07E0 // green at the visible bottom-right
+			case x == 159 && y == 120:
+				px = 0x001F // blue at the visible centre
+			}
+			d.data(byte(px >> 8))
+			d.data(byte(px))
+		}
+	}
+	d.sendCmd(0x29) // DISPON
+
+	if got := d.PixelsWritten(); got != 240*135 {
+		t.Fatalf("pixels = %d, want %d", got, 240*135)
+	}
+	img := d.Framebuffer()
+	if got := img.Bounds().Size(); got.X != 240 || got.Y != 135 {
+		t.Fatalf("size = %v, want 240x135", got)
+	}
+	for _, want := range []struct {
+		x, y int
+		c    color.RGBA
+	}{
+		{0, 0, color.RGBA{R: 248, A: 255}},
+		{239, 134, color.RGBA{G: 252, A: 255}},
+		{119, 67, color.RGBA{B: 248, A: 255}},
+	} {
+		if got := img.RGBAAt(want.x, want.y); got != want.c {
+			t.Errorf("pixel (%d,%d) = %v, want %v", want.x, want.y, got, want.c)
+		}
+	}
+}
+
+func TestST7789SleepRetainsGRAM(t *testing.T) {
+	d := newTestDisplay()
+	d.sendCmd(0x11)             // SLPOUT
+	d.sendCmd(0x2A, 0, 0, 0, 0) // CASET 0..0
+	d.sendCmd(0x2B, 0, 0, 0, 0) // RASET 0..0
+	d.sendCmd(0x2C)             // RAMWR
+	d.data(0xF8)
+	d.data(0x00)
+	d.sendCmd(0x29) // DISPON
+
+	colored := d.Framebuffer().RGBAAt(0, 0)
+	if colored.R != 248 || colored.G != 0 || colored.B != 0 {
+		t.Fatalf("awake pixel = %v, want red", colored)
+	}
+	pixels := d.PixelsWritten()
+	d.sendCmd(0x10) // SLPIN
+	if got := d.Framebuffer().RGBAAt(0, 0); got.R != 0 || got.G != 0 || got.B != 0 {
+		t.Fatalf("sleeping pixel = %v, want black", got)
+	}
+	if got := d.PixelsWritten(); got != pixels {
+		t.Fatalf("sleep changed pixel count from %d to %d", pixels, got)
+	}
+	d.sendCmd(0x11) // SLPOUT
+	if got := d.Framebuffer().RGBAAt(0, 0); got != colored {
+		t.Fatalf("woken pixel = %v, want %v", got, colored)
 	}
 }

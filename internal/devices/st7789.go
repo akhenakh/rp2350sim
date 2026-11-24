@@ -11,26 +11,31 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
+const (
+	st7789GramWidth  = 240
+	st7789GramHeight = 320
+)
+
 // ST7789 models an ST7789-family SPI TFT controller. It decodes the command
 // stream produced by TinyGo's st7789 driver and keeps the GRAM contents.
 //
-// The GRAM is addressed the way the controller sees it: CASET selects the
-// column and RASET the row of each pixel. The driver applies rotation through
-// MADCTL rather than by transforming pixel data, so rendering in address order
-// reproduces the logical image the driver intended (MX/MY/MV then only decide
-// how the panel itself scans that memory).
+// The controller has a full 240x320 GRAM, while a panel such as the GEEK only
+// exposes a centred 240x135 window in landscape. CASET/RASET address the full
+// controller memory; Framebuffer crops the visible panel rectangle. The driver
+// applies rotation through MADCTL rather than by transforming pixel data, so
+// rendering in address order reproduces the logical image it intended.
 type ST7789 struct {
 	Chip *rp2350.Chip
 
 	// Wiring: chip-select, data/command and reset pins.
 	CS, DC, RST int
 
-	// GRAM addressable size.
+	// Width and Height are the visible panel dimensions in native orientation.
 	Width, Height int
-	// stride is the driver-coordinate row pitch. With MADCTL MV the
-	// controller exchanges rows and columns, so a rotated 240x320 panel is
-	// addressed as 320x240.
-	stride int
+	// The full controller GRAM is independent of the visible panel. MV swaps
+	// the addressable axes, but never the physical row pitch.
+	gramWidth, gramHeight int
+	stride                int
 
 	gram   []uint16
 	casetX [2]int
@@ -45,6 +50,10 @@ type ST7789 struct {
 	madctl   byte
 	inverted bool
 	on       bool
+	sleeping bool
+	// visualGen changes whenever the exported image can change, including
+	// configuration-only changes such as MADCTL and sleep transitions.
+	visualGen uint64
 	// Brightness scales the exported image, matching a PWM backlight.
 	Brightness float32
 	pixels     int
@@ -57,15 +66,19 @@ type ST7789 struct {
 }
 
 // NewST7789 creates a display attached to the chip, wired to the given pins.
-// width and height are the panel geometry from the board definition (240x320
-// when unknown).
+// width and height are the visible panel geometry in native orientation
+// (240x320 when unknown); the controller GRAM remains 240x320.
 func NewST7789(chip *rp2350.Chip, cs, dc, rst, width, height int) *ST7789 {
 	if width <= 0 || height <= 0 {
-		width, height = 240, 320
+		width, height = st7789GramWidth, st7789GramHeight
 	}
-	d := &ST7789{Chip: chip, CS: cs, DC: dc, RST: rst, Width: width, Height: height, Brightness: 1}
-	d.stride = max(d.Width, d.Height)
-	d.gram = make([]uint16, d.stride*d.stride)
+	d := &ST7789{
+		Chip: chip, CS: cs, DC: dc, RST: rst,
+		Width: width, Height: height, Brightness: 1,
+		gramWidth: st7789GramWidth, gramHeight: st7789GramHeight,
+		stride: st7789GramWidth,
+	}
+	d.gram = make([]uint16, d.gramWidth*d.gramHeight)
 	d.reset()
 	return d
 }
@@ -79,12 +92,33 @@ func (d *ST7789) reset() {
 	d.madctl = 0
 	d.inverted = false
 	d.on = false
+	d.sleeping = true
+	d.visualGen++
 	for i := range d.gram {
 		d.gram[i] = 0
 	}
-	d.casetX = [2]int{0, d.Width - 1}
-	d.casetY = [2]int{0, d.Height - 1}
+	maxX, maxY := d.addressSize()
+	d.casetX = [2]int{0, maxX - 1}
+	d.casetY = [2]int{0, maxY - 1}
 	d.minX, d.minY, d.maxX, d.maxY = -1, -1, -1, -1
+}
+
+func (d *ST7789) addressSize() (width, height int) {
+	if d.madctl&0x20 != 0 { // MV exchanges rows and columns
+		return d.gramHeight, d.gramWidth
+	}
+	return d.gramWidth, d.gramHeight
+}
+
+func (d *ST7789) visibleGeometry() (width, height, originX, originY int) {
+	width, height = d.Width, d.Height
+	if d.madctl&0x20 != 0 {
+		width, height = height, width
+	}
+	addressWidth, addressHeight := d.addressSize()
+	originX = max(0, (addressWidth-width+1)/2)
+	originY = max(0, (addressHeight-height+1)/2)
+	return width, height, originX, originY
 }
 
 // Transfer feeds one byte clocked over SPI and returns the MISO byte.
@@ -125,10 +159,26 @@ func (d *ST7789) command(c byte) {
 	case 0x01: // SWRESET
 		d.reset()
 		d.cmd = c
+	case 0x10: // SLPIN
+		if !d.sleeping {
+			d.sleeping = true
+			d.visualGen++
+		}
+	case 0x11: // SLPOUT
+		if d.sleeping {
+			d.sleeping = false
+			d.visualGen++
+		}
 	case 0x28: // DISPOFF
-		d.on = false
+		if d.on {
+			d.on = false
+			d.visualGen++
+		}
 	case 0x29: // DISPON
-		d.on = true
+		if !d.on {
+			d.on = true
+			d.visualGen++
+		}
 	case 0x20: // INVOFF
 		d.inverted = false
 	case 0x21: // INVON
@@ -161,19 +211,20 @@ func (d *ST7789) data(b byte) {
 			d.casetY[1] = int(d.params[2])<<8 | int(d.params[3])
 		}
 	case 0x36: // MADCTL
-		d.madctl = b
+		if d.madctl != b {
+			d.madctl = b
+			d.visualGen++
+		}
 	}
 }
 
 func (d *ST7789) putPixel(px uint16) {
 	x, y := d.x, d.y
-	maxX, maxY := d.Width, d.Height
-	if d.madctl&0x20 != 0 { // MV exchanges rows and columns
-		maxX, maxY = d.Height, d.Width
-	}
+	maxX, maxY := d.addressSize()
 	if x >= 0 && x < maxX && y >= 0 && y < maxY {
 		d.gram[y*d.stride+x] = px
 		d.pixels++
+		d.visualGen++
 		if d.minX < 0 || x < d.minX {
 			d.minX = x
 		}
@@ -203,16 +254,20 @@ func (d *ST7789) PixelsWritten() int { return d.pixels }
 // On reports whether the display is enabled.
 func (d *ST7789) On() bool { return d.on }
 
-// Framebuffer renders the whole panel as RGBA, in driver (address) order. With
-// MADCTL MV the panel is addressed with rows and columns exchanged.
+// Sleeping reports whether SLPIN is holding the panel in sleep mode.
+func (d *ST7789) Sleeping() bool { return d.sleeping }
+
+// VisualGeneration changes whenever the exported framebuffer can change.
+func (d *ST7789) VisualGeneration() uint64 { return d.visualGen }
+
+// Framebuffer renders the visible panel rectangle as RGBA, in driver
+// (address) order. With MADCTL MV the panel is addressed with rows and columns
+// exchanged. Sleep blanks the output without discarding GRAM.
 func (d *ST7789) Framebuffer() *image.RGBA {
-	w, h := d.Width, d.Height
-	if d.madctl&0x20 != 0 { // MV exchanges rows and columns
-		w, h = d.Height, d.Width
-	}
+	w, h, originX, originY := d.visibleGeometry()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	brightness := d.Brightness
-	if !d.on {
+	if !d.on || d.sleeping {
 		brightness = 0
 	}
 	if brightness < 0 {
@@ -236,11 +291,17 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 		bTab[i] = uint8(float32(uint8(i)<<3) * brightness)
 	}
 	bgr := d.madctl&0x08 != 0
+	addressWidth, addressHeight := d.addressSize()
 	pix := img.Pix
 	for y := range h {
-		row := d.gram[y*d.stride : y*d.stride+w]
+		gramY := originY + y
 		o := y * w * 4
-		for _, px := range row {
+		for x := range w {
+			var px uint16
+			gramX := originX + x
+			if gramX >= 0 && gramX < addressWidth && gramY >= 0 && gramY < addressHeight {
+				px = d.gram[gramY*d.stride+gramX]
+			}
 			r := rTab[(px>>11)&0x1f]
 			g := gTab[(px>>5)&0x3f]
 			b := bTab[px&0x1f]

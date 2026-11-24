@@ -162,10 +162,9 @@ type Emu struct {
 	console     []byte
 	consolePos  int64
 
-	lcdGen   int
+	lcdGen   uint64
 	lcdFrame *image.RGBA
 	lcdDuty  float32
-	lcdOn    bool
 
 	board *BoardDef
 
@@ -1160,7 +1159,6 @@ func (e *Emu) resetChip() {
 	e.lcdGen = 0
 	e.lcdFrame = nil
 	e.lcdDuty = -1
-	e.lcdOn = false
 }
 
 // attachBusPresets attaches the board's built-in I2C/SPI device presets to a
@@ -1831,13 +1829,11 @@ func (e *Emu) Snapshot() MachineState {
 		if e.blPin >= 0 {
 			duty = e.chip.PinBrightness(e.blPin)
 		}
-		on := e.lcd.On()
-		if g := e.lcd.PixelsWritten(); g != e.lcdGen || duty != e.lcdDuty || on != e.lcdOn {
+		if g := e.lcd.VisualGeneration(); g != e.lcdGen || duty != e.lcdDuty {
 			e.lcd.Brightness = duty
 			e.lcdFrame = e.lcd.Framebuffer()
 			e.lcdGen = g
 			e.lcdDuty = duty
-			e.lcdOn = on
 		}
 		s.LCD = e.lcdFrame
 		if e.blPin >= 0 {
