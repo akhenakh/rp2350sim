@@ -87,6 +87,21 @@ func Load(path string) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
+	return Parse("", data)
+}
+
+// Parse decodes a firmware image already held in memory (ELF, UF2 or a raw
+// flash image). name is only used in error messages; the browser build uses it
+// for uploaded files, where there is no filesystem to read from.
+func Parse(name string, data []byte) (*Image, error) {
+	img, err := parse(data)
+	if err != nil && name != "" {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return img, err
+}
+
+func parse(data []byte) (*Image, error) {
 	switch {
 	case len(data) >= 4 && data[0] == 0x7F && data[1] == 'E' && data[2] == 'L' && data[3] == 'F':
 		return loadELF(data)
