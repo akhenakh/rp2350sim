@@ -13,8 +13,9 @@ The site is produced by Shirei's `shirei_web` tool, which writes
 
 A live build is published with the documentation:
 
-- **https://akhenakh.github.io/rp2350sim/demo/**
-- Touch-LCD-2: [demo/?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd](https://akhenakh.github.io/rp2350sim/demo/?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd)
+- **https://akhenakh.github.io/rp2350sim/demo/** — the default demo opens the
+  tinychess mate-in-1 game on the Touch-LCD-2.
+- TinyChess: [demo/?board=touch-lcd2&fw=firmware/tinychess.elf&tab=lcd](https://akhenakh.github.io/rp2350sim/demo/?board=touch-lcd2&fw=firmware/tinychess.elf&tab=lcd)
 - GEEK LCD: [demo/?board=geek&fw=firmware/lcd.elf&tab=lcd](https://akhenakh.github.io/rp2350sim/demo/?board=geek&fw=firmware/lcd.elf&tab=lcd)
 
 The GitHub Pages job builds it with `task docs:demo`, which runs
@@ -61,16 +62,23 @@ task wasm:serve    # build and serve http://127.0.0.1:8787
 ```
 
 `wasm:build` copies `build/lcd.elf` and `build/touchlcd.elf` into
-`build/web/firmware/`. The page reads its configuration from the query string:
+`build/web/firmware/`, and bundles the prebuilt tinychess image from
+`site/static/demo/firmware/tinychess.elf`. The tinychess sources live in
+[github.com/akhenakh/tinychess](https://github.com/akhenakh/tinychess) and are
+not vendored here; `tools/pack_demo_elf.py` turns its debug ELF into the
+single-segment flash image the browser downloads (~190 KB).
+
+The page reads its configuration from the query string:
 
 | parameter | default | meaning |
 |---|---|---|
-| `board` | `geek` | board id from `boards.yaml` |
-| `fw` | `firmware/lcd.elf` | firmware URL, relative to the page |
-| `tab` | `board` | initial tab, same names as `--tab` |
+| `board` | `touch-lcd2` | board id from `boards.yaml` |
+| `fw` | `firmware/tinychess.elf` | firmware URL, relative to the page |
+| `tab` | `lcd` | initial tab, same names as `--tab` |
 
 ```
-http://127.0.0.1:8787/?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd
+http://127.0.0.1:8787/
+http://127.0.0.1:8787/?board=geek&fw=firmware/lcd.elf&tab=lcd
 ```
 
 Any static server works. `shirei_web -serve` additionally sets the COOP/COEP

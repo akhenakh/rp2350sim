@@ -20,3 +20,7 @@ site/public/
 site/resources/
 site/themes/
 site/.hugo_build.lock
+
+# The browser demo bundles one prebuilt firmware. Its sources live in the
+# tinychess repository and are not vendored here.
+!site/static/demo/firmware/tinychess.elf

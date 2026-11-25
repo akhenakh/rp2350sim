@@ -19,9 +19,10 @@ It provides a CLI tool and a user interface to run, mock periphericals, debug rp
 
 ## Try it in the browser
 
-The desktop UI also runs as a WebAssembly demo — the same window, no install:
+The desktop UI also runs as a WebAssembly demo — the same window, no install.
+The default demo boots a mate-in-1 chess game on the Touch-LCD-2:
 
-[Open the web demo](demo/?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd) ·
+[Open the web demo](demo/?board=touch-lcd2&fw=firmware/tinychess.elf&tab=lcd) ·
 [GEEK LCD demo](demo/?board=geek&fw=firmware/lcd.elf&tab=lcd)
 
 It is a demo build: firmware comes from the page, host devices (Ethernet,

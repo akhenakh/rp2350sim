@@ -146,10 +146,11 @@ func webHostTools() bool { return false }
 
 // webBoot reads the demo configuration from the page URL:
 //
-//	index.html?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd
+//	index.html?board=touch-lcd2&fw=firmware/tinychess.elf&tab=lcd
 //
-// The defaults keep the generated page useful with no query string. It returns
-// false on a desktop build so the command line keeps working unchanged.
+// The defaults open the tinychess mate-in-1 demo on the Touch-LCD-2 board, so
+// the bare demo URL is useful. It returns false on a desktop build so the
+// command line keeps working unchanged.
 func webBoot() (boardID, firmware, tab string, ok bool) {
 	loc := js.Global().Get("location")
 	if loc.IsUndefined() || loc.IsNull() {
@@ -161,15 +162,19 @@ func webBoot() (boardID, firmware, tab string, ok bool) {
 	}
 	boardID = q.Get("board")
 	if boardID == "" {
-		boardID = "geek"
+		boardID = "touch-lcd2"
 	}
 	firmware = q.Get("fw")
 	if firmware == "" {
-		firmware = "firmware/lcd.elf"
+		firmware = "firmware/tinychess.elf"
+	}
+	tab = q.Get("tab")
+	if tab == "" {
+		tab = "lcd"
 	}
 	webInstallDrop()
 	webInstallFilePicker()
-	return boardID, firmware, q.Get("tab"), true
+	return boardID, firmware, tab, true
 }
 
 // webPrepareBoard strips the host-only parts of a board definition: the browser

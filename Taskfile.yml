@@ -558,6 +558,9 @@ tasks:
       - mkdir -p {{.BUILD}}/web/firmware
       - cp {{.BUILD}}/lcd.elf {{.BUILD}}/web/firmware/lcd.elf
       - cp {{.BUILD}}/touchlcd.elf {{.BUILD}}/web/firmware/touchlcd.elf
+      # Prebuilt from github.com/akhenakh/tinychess; its sources are not
+      # vendored here, so the browser demo ships the packed ELF as an asset.
+      - cp site/static/demo/firmware/tinychess.elf {{.BUILD}}/web/firmware/tinychess.elf
       - cd cmd/simui && go run go.hasen.dev/shirei/cmd/shirei_web -webcompiler=go -o ../../{{.BUILD}}/web .
       # Optional: wasm-opt shrinks the module (~8%) and buys about 10% throughput.
       - |
