@@ -52,6 +52,10 @@ jobs:
             | sudo tar -xz -C /opt
           echo "/opt/tinygo/bin" >> "$GITHUB_PATH"
 
+      # wasm-opt shrinks the demo module (~9%) and buys ~10% throughput.
+      - name: Install binaryen
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binaryen
+
       - name: Configure Pages
         id: pages
         uses: actions/configure-pages@v5
