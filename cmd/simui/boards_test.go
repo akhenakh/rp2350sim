@@ -59,6 +59,12 @@ func TestBoardsIncludeTouchLCD2(t *testing.T) {
 	if touch.Touch == nil || touch.Touch.Addr != 0x15 || touch.Touch.RSTPin() != 20 {
 		t.Fatalf("touch-lcd2 touch = %+v", touch.Touch)
 	}
+	// The native touch frame is the portrait panel; the logical LCD is the
+	// same panel rotated 90, so the axes must be swapped.
+	if touch.Touch.Width != touch.LCD.Height || touch.Touch.Height != touch.LCD.Width {
+		t.Fatalf("touch-lcd2 touch %dx%d vs logical LCD %dx%d",
+			touch.Touch.Width, touch.Touch.Height, touch.LCD.Width, touch.LCD.Height)
+	}
 	if touch.IMU == nil || touch.IMU.Addr != 0x6b {
 		t.Fatalf("touch-lcd2 imu = %+v", touch.IMU)
 	}
