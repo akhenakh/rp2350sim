@@ -6,6 +6,8 @@ on:
     paths:
       - "docs/**"
       - "site/**"
+      - "cmd/**"
+      - "internal/**"
       - "tools/gen_docs_site.py"
       - "Taskfile.yml"
       - ".github/workflows/docs.yml"
