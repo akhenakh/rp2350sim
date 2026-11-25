@@ -37,6 +37,7 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
 | [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
 | [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer |
+| [wasm.md](wasm.md) | the same UI compiled to WebAssembly: build, URL parameters, stripped host devices and browser speed |
 | [debug.md](debug.md) | the Debug tab, symbols, breakpoints, watchpoints, memory and variables |
 | [boards.md](boards.md) | supported boards, wiring, peripherals and current limitations |
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |
@@ -111,7 +112,8 @@ See [ci.md](ci.md) for the full recipe.
 | ![DVI tab decoding the stock HSTX example](images/dvi.png) | ![MIDI tab with the piano and monitor](images/midi.png) |
 
 The [UI guide](ui.md) covers the board picker, every tab, the scope and logic
-analyzer, audio, MIDI, DVI and headless snapshots.
+analyzer, audio, MIDI, DVI and headless snapshots. The same UI also runs in a
+browser; see the [browser build](wasm.md).
 
 ## Design notes
 

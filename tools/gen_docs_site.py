@@ -27,6 +27,7 @@ PAGES = [
     ("peripherals.md", "Peripherals from CLI and UI", 20),
     ("bus-pirate.md", "Bus Pirate targets", 25),
     ("ui.md", "Desktop UI", 30),
+    ("wasm.md", "Browser build", 35),
     ("debug.md", "Debugging", 40),
     ("boards.md", "Boards and peripherals", 50),
     ("tinygo.md", "TinyGo", 60),

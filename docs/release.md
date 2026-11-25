@@ -69,6 +69,11 @@ this heading to the version and trim anything that no longer applies.
   the panel on the left, which made a touch marker near an edge look like a copy
   on the opposite side; the GEEK output is unchanged.
 - Homebrew formula generation targets macOS only (Apple Silicon and Intel).
+- Browser build: `task wasm:build` compiles the desktop UI to WebAssembly with
+  Shirei's `shirei_web`, so the same window runs in a page with the board,
+  firmware and tab chosen by URL (`?board=…&fw=…&tab=…`). Host-only devices
+  (sockets, SD directory backing, GDB, the file picker) are stripped before
+  boot and firmware is fetched over HTTP; see `docs/wasm.md`.
 
 ## v0.2 highlights
 
