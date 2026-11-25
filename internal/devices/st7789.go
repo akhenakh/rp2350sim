@@ -2,6 +2,7 @@
 package devices
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -160,11 +161,16 @@ func (d *ST7789) Transfer(tx byte) byte {
 		return 0x00
 	}
 	command := !d.Chip.Pins.Level(d.DC)
-	if command {
-		loggerOr(d.Logger).Debug("lcd command", slog.String("byte", fmt.Sprintf("%02x", tx)))
-	} else if d.logN < 24 {
-		loggerOr(d.Logger).Debug("lcd data", slog.String("byte", fmt.Sprintf("%02x", tx)))
-		d.logN++
+	// Every SPI byte reaches this function; build the debug attributes only
+	// when a logger is actually recording, or the Sprintf alone costs more than
+	// the pixel decode.
+	if d.Logger != nil && d.Logger.Enabled(context.Background(), slog.LevelDebug) {
+		if command {
+			d.Logger.Debug("lcd command", slog.String("byte", fmt.Sprintf("%02x", tx)))
+		} else if d.logN < 24 {
+			d.Logger.Debug("lcd data", slog.String("byte", fmt.Sprintf("%02x", tx)))
+			d.logN++
+		}
 	}
 	if command {
 		d.command(tx)
