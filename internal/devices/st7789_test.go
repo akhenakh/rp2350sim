@@ -210,6 +210,38 @@ func TestST7789SleepRetainsGRAM(t *testing.T) {
 	}
 }
 
+// TestST7789MVRotations checks the four MV/MX/MY combinations and a windowed
+// write for each: address (x,y) must land at framebuffer (x,y), with no
+// aliasing into the next column.
+func TestST7789MVRotations(t *testing.T) {
+	for _, madctl := range []byte{0x20, 0x60, 0xA0, 0xE0} {
+		d := newTestDisplay()
+		d.sendCmd(0x11) // SLPOUT
+		d.sendCmd(0x36, madctl)
+		d.sendCmd(0x29)                         // DISPON
+		d.sendCmd(0x2A, 0x01, 0x2C, 0x01, 0x2D) // CASET 300..301
+		d.sendCmd(0x2B, 0, 10, 0, 10)           // RASET 10
+		d.sendCmd(0x2C)
+		d.data(0xF8)
+		d.data(0x00) // red at (300,10)
+		d.data(0x07)
+		d.data(0xE0) // green at (301,10)
+		img := d.Framebuffer()
+		if got := img.Bounds().Size(); got.X != 320 || got.Y != 240 {
+			t.Fatalf("MADCTL %#x size = %v, want 320x240", madctl, got)
+		}
+		if c := img.RGBAAt(300, 10); c.R != 248 || c.G != 0 {
+			t.Fatalf("MADCTL %#x (300,10) = %v, want red", madctl, c)
+		}
+		if c := img.RGBAAt(301, 10); c.R != 0 || c.G != 252 {
+			t.Fatalf("MADCTL %#x (301,10) = %v, want green", madctl, c)
+		}
+		if c := img.RGBAAt(60, 11); c.R != 0 || c.G != 0 || c.B != 0 {
+			t.Fatalf("MADCTL %#x aliased (60,11) = %v", madctl, c)
+		}
+	}
+}
+
 // With MADCTL MV the 240x320 frame memory is addressed column by column: the
 // logical (X,Y) of the 320x240 landscape frame maps to index X*240+Y. Indexing
 // it as Y*240+X aliases pixels 240 columns apart, which duplicated right-edge
