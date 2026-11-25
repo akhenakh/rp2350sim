@@ -29,6 +29,12 @@ func webOpenFirmware() bool { return false }
 // webReloadFirmware lets the desktop re-read the path from disk.
 func webReloadFirmware() bool { return false }
 
+// webTurboDefault keeps real-time pacing on desktop.
+func webTurboDefault() bool { return false }
+
+// webFileOutput lets the desktop write traces, WAVs and PNGs.
+func webFileOutput() bool { return true }
+
 // webYield hands the CPU to other goroutines on a desktop build.
 func webYield() { runtime.Gosched() }
 

@@ -28,15 +28,17 @@ func dviPanel(snap MachineState) {
 				Label(fmt.Sprintf("%dx%d", b.Dx(), b.Dy()), FontSize(12))
 			}
 			Filler(1)
-			if Button(NoIcon, "Save PNG") {
-				if snap.DVI == nil {
-					dviMsg, dviErr = "no frame captured yet", true
-				} else if path, err := saveDVIPNG(snap.DVI); err != nil {
-					dviMsg, dviErr = "save failed: "+err.Error(), true
-				} else {
-					dviMsg, dviErr = "saved "+path, false
+			if webFileOutput() {
+				if Button(NoIcon, "Save PNG") {
+					if snap.DVI == nil {
+						dviMsg, dviErr = "no frame captured yet", true
+					} else if path, err := saveDVIPNG(snap.DVI); err != nil {
+						dviMsg, dviErr = "save failed: "+err.Error(), true
+					} else {
+						dviMsg, dviErr = "saved "+path, false
+					}
+					RequestNextFrame()
 				}
-				RequestNextFrame()
 			}
 			Label("decoded from the HSTX command stream", FontSize(11), TextColor(220, 6, 60, 1))
 		})

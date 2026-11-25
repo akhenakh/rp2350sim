@@ -85,28 +85,32 @@ func audioPanel(snap MachineState) {
 					snap.AudioRate, snap.AudioChannels, snap.AudioSamples, secs), FontSize(12))
 			}
 			Filler(1)
-			if Button(NoIcon, "Save WAV") {
-				name := "audio-" + time.Now().Format("20060102-150405") + ".wav"
-				if err := emu.SaveAudio(name); err != nil {
-					audioMsg, audioErr = err.Error(), true
-				} else {
-					abs, _ := filepath.Abs(name)
-					audioMsg, audioErr = "saved "+abs, false
+			if webFileOutput() {
+				if Button(NoIcon, "Save WAV") {
+					name := "audio-" + time.Now().Format("20060102-150405") + ".wav"
+					if err := emu.SaveAudio(name); err != nil {
+						audioMsg, audioErr = err.Error(), true
+					} else {
+						abs, _ := filepath.Abs(name)
+						audioMsg, audioErr = "saved "+abs, false
+					}
+					RequestNextFrame()
 				}
-				RequestNextFrame()
 			}
-			if Button(NoIcon, "Play") {
-				if err := playAudio(emu.AudioWAV()); err != nil {
-					audioMsg, audioErr = err.Error(), true
-				} else {
-					audioMsg, audioErr = "playing", false
+			if webHostTools() {
+				if Button(NoIcon, "Play") {
+					if err := playAudio(emu.AudioWAV()); err != nil {
+						audioMsg, audioErr = err.Error(), true
+					} else {
+						audioMsg, audioErr = "playing", false
+					}
+					RequestNextFrame()
 				}
-				RequestNextFrame()
-			}
-			if Button(NoIcon, "Stop") {
-				stopAudio()
-				audioMsg, audioErr = "stopped", false
-				RequestNextFrame()
+				if Button(NoIcon, "Stop") {
+					stopAudio()
+					audioMsg, audioErr = "stopped", false
+					RequestNextFrame()
+				}
 			}
 		})
 		if audioMsg != "" {

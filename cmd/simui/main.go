@@ -2331,27 +2331,29 @@ func logicPanel() {
 				Label(fmt.Sprintf("%.1f MS/s · %.1f ms window", rate/1e6, window), FontSize(12))
 			}
 			Filler(1)
-			if Button(NoIcon, "Save trace") {
-				path, err := saveLogicTrace(pins, samples, interval)
-				if err != nil {
-					logicSaveMsg = "save failed: " + err.Error()
-					logicSaveErr = true
-				} else {
-					logicSaveMsg = "saved " + path
-					logicSaveErr = false
+			if webFileOutput() {
+				if Button(NoIcon, "Save trace") {
+					path, err := saveLogicTrace(pins, samples, interval)
+					if err != nil {
+						logicSaveMsg = "save failed: " + err.Error()
+						logicSaveErr = true
+					} else {
+						logicSaveMsg = "saved " + path
+						logicSaveErr = false
+					}
+					RequestNextFrame()
 				}
-				RequestNextFrame()
-			}
-			if Button(NoIcon, "Save VCD") {
-				path, err := saveLogicVCD(pins, samples, interval)
-				if err != nil {
-					logicSaveMsg = "VCD failed: " + err.Error()
-					logicSaveErr = true
-				} else {
-					logicSaveMsg = "saved " + path
-					logicSaveErr = false
+				if Button(NoIcon, "Save VCD") {
+					path, err := saveLogicVCD(pins, samples, interval)
+					if err != nil {
+						logicSaveMsg = "VCD failed: " + err.Error()
+						logicSaveErr = true
+					} else {
+						logicSaveMsg = "saved " + path
+						logicSaveErr = false
+					}
+					RequestNextFrame()
 				}
-				RequestNextFrame()
 			}
 			Label("hardware taps + pin traces", FontSize(11), TextColor(220, 6, 60, 1))
 		})
@@ -3117,6 +3119,9 @@ func main() {
 	flag.Parse()
 	busAutoConnect = *busConnect
 	emu.SetTurbo(*turboFlag)
+	if webTurboDefault() {
+		emu.SetTurbo(true)
+	}
 	// The browser build has no command line: the page URL names the board and
 	// the firmware (see web_js.go). Desktop builds return ok=false.
 	webFirmware := ""

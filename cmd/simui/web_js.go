@@ -188,6 +188,15 @@ func webPrepareBoard(b *BoardDef) {
 	b.Wifi = nil
 }
 
+// webTurboDefault starts the browser demo unpaced: it cannot keep up with the
+// 150 MHz system clock, so the red "slow" indicator would be permanent.
+func webTurboDefault() bool { return true }
+
+// webFileOutput is false in the browser: there is no writable filesystem, so
+// Save WAV/PNG/trace/VCD would only report a failure. A Blob download would be
+// the next step if those buttons are wanted there.
+func webFileOutput() bool { return false }
+
 // webYield returns to the browser event loop. Go's js runtime only hands
 // control back to the host when every goroutine blocks, so the emulator loop
 // must sleep instead of spinning or the page never paints.
