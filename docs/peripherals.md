@@ -489,8 +489,8 @@ depth (16384). Without `-logic-out` the file is
 `logic-analyze-trace-<date>-<board>.txt` in the current directory; set the
 board name with `-logic-board`. The text includes complete UART/SPI/I2C tap
 logs for every bus. `-vcd PATH` writes the digital pin window as an IEEE 1364
-value change dump for GTKWave or PulseView. Capturing pins installs a
-per-cycle hook and disables idle fast-forward.
+value change dump for GTKWave or PulseView. Capturing pins installs a periodic
+sampler on the requested grid, which keeps idle fast-forward available.
 
 **UI.** The **Logic** tab shows synthesised waveforms, decoded UART/I2C/SPI/USB
 sections and **Save trace**/**Save VCD** buttons. Save trace writes the same

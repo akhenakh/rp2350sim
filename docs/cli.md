@@ -522,9 +522,9 @@ Without `-logic-out` the file is written to the current directory as
 a `# samples` table (`time_us` plus one column per GPIO), and decoded sections
 for the controller taps and pin protocols. A pin trace is a rolling window of
 `-logic-depth` samples; lower `-logic-rate` to cover more time. Capturing pins
-installs a per-cycle hook, which disables the idle fast-forward while the run
-is captured. The UI's **Save trace** writes the same format plus a USB CDC
-section.
+installs a periodic sampler on the requested grid, which keeps the idle
+fast-forward available. The UI's **Save trace** writes the same format plus a
+USB CDC section.
 
 `-vcd PATH` writes the same pin window as an IEEE 1364 value change dump
 (timescale 1 ns, one wire per GPIO), ready for GTKWave or PulseView. It needs

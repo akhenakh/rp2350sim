@@ -333,9 +333,12 @@ orange dashed line; measurements then reflect the frozen window.
 entries generate waveforms (the `pico2-analog` board puts a 1 kHz sine on GP26,
 which the ADC also reads).
 
-The scope and logic tabs sample pins every emulated cycle. That disables the
-idle fast-forward the headless runner uses, so sleep-heavy firmware costs the
-full per-cycle rate while the UI is open. The Debug tab still pauses the chip.
+The scope and logic traces sample on a fixed virtual-time grid (1 MHz and
+2 MHz) through periodic hooks, so they do not stop an idle core from being
+fast-forwarded. Compute-bound firmware still advances virtual time at the
+interpreter's rate (about 0.2× a 150 MHz part), so the `virtual` counter can lag
+wall time; sleep-heavy firmware runs at or above real time. The Debug tab pauses
+the chip.
 
 ![Scope tab](images/scope.png)
 
