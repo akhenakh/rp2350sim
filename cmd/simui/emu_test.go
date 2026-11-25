@@ -171,3 +171,80 @@ func writeFlashELF(t *testing.T) string {
 	}
 	return path
 }
+
+func TestCycleDuration(t *testing.T) {
+	if got := cycleDuration(150_000); got != time.Millisecond {
+		t.Fatalf("cycleDuration(150000) = %v, want 1ms", got)
+	}
+	if got := cycleDuration(rp2350.SysClkHz); got != time.Second {
+		t.Fatalf("cycleDuration(1s of cycles) = %v, want 1s", got)
+	}
+}
+
+func TestPaceSleep(t *testing.T) {
+	if got := paceSleep(10*time.Millisecond, 4*time.Millisecond); got != 6*time.Millisecond {
+		t.Fatalf("ahead by 6ms = %v, want 6ms", got)
+	}
+	if got := paceSleep(4*time.Millisecond, 10*time.Millisecond); got != 0 {
+		t.Fatalf("behind by 6ms = %v, want no sleep", got)
+	}
+	if got := paceSleep(time.Second, 0); got != 20*time.Millisecond {
+		t.Fatalf("a long lead = %v, want the 20ms cap", got)
+	}
+}
+
+// Pacing keeps virtual time level with wall time; turbo removes the wait. The
+// indicator must agree with the measured ratio.
+func TestRealtimePacingAndTurbo(t *testing.T) {
+	fw := filepath.Join("..", "..", "build", "blinky.elf")
+	if _, err := os.Stat(fw); err != nil {
+		t.Skip("build/blinky.elf is not built")
+	}
+	defs, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var board *BoardDef
+	for i := range defs {
+		if defs[i].ID == "pico2" {
+			board = &defs[i]
+		}
+	}
+	if board == nil {
+		t.Fatal("pico2 board is missing")
+	}
+
+	e := NewEmu()
+	defer e.SetRunning(false)
+	e.SetBoard(board)
+	if err := e.Load(fw); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	paced := e.Snapshot()
+	if !paced.Running || !paced.Pacing {
+		t.Fatalf("running %v pacing %v, want both true", paced.Running, paced.Pacing)
+	}
+	// Under -race the interpreter can be far slower than the host clock, so
+	// only the upper bound is guaranteed: pacing must not let it race ahead.
+	if paced.Speed <= 0 || paced.Speed > 1.5 {
+		t.Fatalf("paced speed %.2f, want at most 1.5", paced.Speed)
+	}
+	if paced.Slow != (paced.Speed < 0.95) {
+		t.Fatalf("slow %v with speed %.2f", paced.Slow, paced.Speed)
+	}
+
+	e.SetTurbo(true)
+	time.Sleep(700 * time.Millisecond)
+	turbo := e.Snapshot()
+	if turbo.Pacing {
+		t.Fatal("turbo mode still paces")
+	}
+	if turbo.Slow {
+		t.Fatal("turbo mode cannot be reported as slow")
+	}
+	if turbo.Speed < paced.Speed {
+		t.Fatalf("turbo speed %.2f < paced %.2f", turbo.Speed, paced.Speed)
+	}
+}

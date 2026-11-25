@@ -44,6 +44,7 @@ Startup flags:
 | `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `audio`, `midi`, `otp`, `bus`, `debug`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
+| `--turbo` | run as fast as the host allows instead of pacing virtual time to real time |
 | `--paused` | load the firmware but do not execute until Run |
 | `--png PATH` | render one settled frame and exit (headless) |
 | `--flash PATH` | raw flash backing image; loaded before firmware, and self-updates are written back here |
@@ -75,6 +76,13 @@ in-window file browser with path entry, breadcrumbs, sorting and filters for
 **Board…**, **Build** (Source/Build drawer) and the scope controls. The status
 line under it reports the image name, virtual time, PC and SP, or `(flash)`
 after a self-update.
+
+A live window paces the emulated clock to real time: when the firmware sleeps,
+the loop waits instead of racing ahead, and the status line shows the achieved
+ratio (`virtual 1.234s · 1.00×`). Firmware the interpreter cannot execute fast
+enough shows a ratio below 1× and the virtual time turns red. `--turbo` removes
+the pacing and runs as fast as the host allows (the ratio is still shown);
+`--png` snapshots always run synchronously and are unaffected.
 
 - **Load** restarts the selected image, useful after a rebuild.
 - **Reset** restarts the current image, preserving a self-updated flash.
@@ -335,10 +343,10 @@ which the ADC also reads).
 
 The scope and logic traces sample on a fixed virtual-time grid (1 MHz and
 2 MHz) through periodic hooks, so they do not stop an idle core from being
-fast-forwarded. Compute-bound firmware still advances virtual time at the
-interpreter's rate (about 0.2× a 150 MHz part), so the `virtual` counter can lag
-wall time; sleep-heavy firmware runs at or above real time. The Debug tab pauses
-the chip.
+fast-forwarded. A live window paces virtual time to real time (see the toolbar
+note above), so the `virtual` counter tracks wall time unless the interpreter
+cannot keep up, in which case it turns red; `--turbo` runs flat out. The Debug
+tab pauses the chip.
 
 ![Scope tab](images/scope.png)
 

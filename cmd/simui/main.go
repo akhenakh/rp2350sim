@@ -1009,7 +1009,17 @@ func toolbar(snap MachineState) {
 			name = filepath.Base(snap.FlashPath) + " (flash)"
 		}
 		Label(name, FontSize(12), FontWeight(600))
-		Label(fmt.Sprintf("virtual %.3fs", float64(snap.Cycles)/150_000_000), FontSize(12))
+		virtual := fmt.Sprintf("virtual %.3fs", float64(snap.Cycles)/150_000_000)
+		timeAttrs := []TextStyleFn{FontSize(12)}
+		if snap.Running && snap.Speed > 0 {
+			virtual += fmt.Sprintf(" · %.2f×", snap.Speed)
+		}
+		if snap.Slow {
+			// The interpreter cannot keep up with real time: make the clock
+			// the warning.
+			timeAttrs = append(timeAttrs, TextColor(210, 60, 60, 1), FontWeight(700))
+		}
+		Label(virtual, timeAttrs...)
 		Label(fmt.Sprintf("PC %08x  SP %08x", snap.PC, snap.SP), FontSize(12), Fonts(Monospace...))
 		if addr := gdbListenAddr(); addr != "" {
 			Label("GDB "+addr, FontSize(12), FontWeight(600), TextColor(20, 90, 70, 1))
@@ -3087,6 +3097,7 @@ func main() {
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, console")
+	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")
 	debugTab := flag.String("debug-tab", "registers", "debug inspector tab: registers, memory, variables")
@@ -3098,6 +3109,7 @@ func main() {
 	showVer := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	busAutoConnect = *busConnect
+	emu.SetTurbo(*turboFlag)
 	if *showVer {
 		fmt.Println("rp2350sim-ui", version)
 		return

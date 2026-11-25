@@ -35,14 +35,19 @@ type PinInfo struct {
 
 // MachineState is a consistent copy of the machine state for one UI frame.
 type MachineState struct {
-	Pins          [48]PinInfo
-	GPIOs         int
-	Package       string
-	DVI           *image.RGBA
-	Cycles        uint64
-	PC, SP        uint32
-	Halted        bool
-	Running       bool
+	Pins    [48]PinInfo
+	GPIOs   int
+	Package string
+	DVI     *image.RGBA
+	Cycles  uint64
+	PC, SP  uint32
+	Halted  bool
+	Running bool
+	// Speed is the virtual/wall ratio since the run started; Slow reports
+	// that the machine cannot keep up with real time under pacing.
+	Speed         float64
+	Pacing        bool
+	Slow          bool
 	Firmware      string
 	FlashPath     string
 	Boots         uint64
@@ -224,6 +229,13 @@ type Emu struct {
 	bridges    []*devices.UARTBridge
 	bridgeErrs []string
 	serialSig  string
+
+	// Real-time pacing: the loop keeps virtual time level with wall time and
+	// sleeps when it runs ahead. turbo disables that entirely.
+	turbo      bool
+	paceStart  time.Time
+	paceCycles uint64
+	speed      float64
 
 	i2cBuses  []*devices.I2CBridge
 	spiBuses  []*devices.SPIBridge
@@ -1914,8 +1926,9 @@ func (e *Emu) loop() {
 		stopped := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
 		running := e.running && e.board != nil && e.chip != nil && !e.chip.Halted && !stopped
 		boots := e.lastBoots
+		var sleepFor time.Duration
 		if running {
-			e.chip.Run(chunk)
+			done := e.chip.Run(chunk)
 			e.advanceScheduledInputsLocked()
 			e.flushMIDILocked()
 			e.flushUSBInputLocked()
@@ -1924,6 +1937,9 @@ func (e *Emu) loop() {
 			if e.debugger.Stopped {
 				e.running = false
 			}
+			sleepFor = e.paceLocked(done, started)
+		} else {
+			e.paceStart = time.Time{}
 		}
 		saveFlash := false
 		if boots != e.lastBoots {
@@ -1943,16 +1959,69 @@ func (e *Emu) loop() {
 		if saveFlash {
 			e.SaveFlash()
 		}
-		if !running {
+		switch {
+		case sleepFor > 0:
+			// The machine can outrun the real part: wait so virtual time
+			// tracks wall time.
+			time.Sleep(sleepFor)
+		case !running:
 			// Paused, halted, or the board picker: nothing to step, so idle
 			// instead of spinning.
 			time.Sleep(2 * time.Millisecond)
-		} else if time.Since(started) < time.Millisecond {
-			// The chunk finished quickly; yield so the UI thread can take the
-			// lock without paying the timer granularity of a short sleep.
+		case time.Since(started) < time.Millisecond:
+			// The chunk finished quickly and there is still catching up to do;
+			// yield so the UI thread can take the lock without paying the
+			// timer granularity of a short sleep.
 			runtime.Gosched()
 		}
 	}
+}
+
+// cycleDuration converts virtual cycles to wall-clock duration at the system
+// clock.
+func cycleDuration(cycles uint64) time.Duration {
+	return time.Duration(float64(cycles) / float64(rp2350.SysClkHz) * float64(time.Second))
+}
+
+// paceSleep returns how long the loop must wait to keep virtual time level
+// with wall time: positive when the machine is ahead, zero when it is behind.
+func paceSleep(virtual, wall time.Duration) time.Duration {
+	const maxSleep = 20 * time.Millisecond
+	if virtual <= wall {
+		return 0
+	}
+	return min(virtual-wall, maxSleep)
+}
+
+// paceLocked accounts one stepped chunk and returns the sleep that keeps the
+// virtual clock level with wall time. The speed ratio is tracked in both modes;
+// turbo only skips the wait. The caller holds e.mu.
+func (e *Emu) paceLocked(cycles uint64, started time.Time) time.Duration {
+	if e.paceStart.IsZero() {
+		e.paceStart = started
+		e.paceCycles = 0
+		e.speed = 1
+	}
+	e.paceCycles += cycles
+	virtual := cycleDuration(e.paceCycles)
+	wall := time.Since(e.paceStart)
+	if wall >= 250*time.Millisecond {
+		e.speed = virtual.Seconds() / wall.Seconds()
+	}
+	if e.turbo {
+		return 0
+	}
+	return paceSleep(virtual, wall)
+}
+
+// SetTurbo disables real-time pacing: the machine runs as fast as the host
+// allows instead of keeping virtual time level with wall time.
+func (e *Emu) SetTurbo(on bool) {
+	e.mu.Lock()
+	e.turbo = on
+	e.paceStart = time.Time{}
+	e.speed = 1
+	e.mu.Unlock()
 }
 
 // Snapshot returns a consistent view of the machine for one frame.
@@ -1967,6 +2036,14 @@ func (e *Emu) Snapshot() MachineState {
 	s.Running = e.running
 	if e.chip.Debug != nil && e.chip.Debug.Stopped {
 		s.Running = false
+	}
+	s.Pacing = !e.turbo
+	s.Speed = e.speed
+	// Report "too slow" only once the run has had time to settle, so boot and
+	// resume do not flash red.
+	if s.Pacing && s.Running && !e.paceStart.IsZero() &&
+		time.Since(e.paceStart) > time.Second && e.speed < 0.95 {
+		s.Slow = true
 	}
 	s.Firmware = e.fwPath
 	s.FlashPath = e.flashPath
