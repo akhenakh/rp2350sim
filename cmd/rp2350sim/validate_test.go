@@ -42,6 +42,18 @@ func TestParsePokes(t *testing.T) {
 	}
 }
 
+func TestLogicCaptureRejectsBadRateAndPinCount(t *testing.T) {
+	if _, err := newLogicCapture("", "", "", "", 200e6, 1024, "test"); err == nil {
+		t.Fatal("logic rate above the system clock was accepted")
+	}
+	if _, err := newLogicCapture("0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16", "", "", "", 2e6, 1024, "test"); err == nil {
+		t.Fatal("more than 16 logic pins were accepted")
+	}
+	if _, err := newLogicCapture("", "", "", "", 2e6, 0, "test"); err == nil {
+		t.Fatal("zero logic depth was accepted")
+	}
+}
+
 func TestLogicCaptureRejectsInvalidProtocolPins(t *testing.T) {
 	for _, tc := range []struct {
 		uart, i2c, spi string

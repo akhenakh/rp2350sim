@@ -143,6 +143,17 @@ func (t *Trace) ScanSince(after uint64, fn func(TraceSample) bool) {
 	}
 }
 
+// ScanAll visits every sample in chronological order. It is used once when a
+// trigger is armed before the first sample, so a transition at T=0 is not
+// skipped by the newer-than cursor.
+func (t *Trace) ScanAll(fn func(TraceSample) bool) {
+	for i := range t.count {
+		if !fn(t.sampleAt(i)) {
+			return
+		}
+	}
+}
+
 func (t *Trace) sampleAt(i int) TraceSample {
 	start := (t.head - t.count + len(t.samples)) % len(t.samples)
 	return t.samples[(start+i)%len(t.samples)]

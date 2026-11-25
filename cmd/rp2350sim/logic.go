@@ -118,7 +118,10 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 	if rate <= 0 {
 		return nil, fmt.Errorf("logic rate must be positive")
 	}
-	l := &logicCapture{board: board, depth: depth, interval: uint64(150e6 / rate)}
+	if rate > float64(rp2350.SysClkHz) {
+		return nil, fmt.Errorf("logic rate must be at most %g Hz", float64(rp2350.SysClkHz))
+	}
+	l := &logicCapture{board: board, depth: depth, interval: uint64(float64(rp2350.SysClkHz) / rate)}
 	if l.interval == 0 {
 		l.interval = 1
 	}
@@ -211,6 +214,9 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 		if s.cs >= 0 {
 			add(s.cs)
 		}
+	}
+	if len(l.pins) > devices.MaxTraceChannels {
+		return nil, fmt.Errorf("logic capture supports at most %d pins, got %d", devices.MaxTraceChannels, len(l.pins))
 	}
 	return l, nil
 }

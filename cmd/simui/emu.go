@@ -788,7 +788,7 @@ func (e *Emu) checkScopeTriggerLocked() {
 	// Walk only the samples added since the last call. While the trigger is
 	// merely armed this costs no allocation; the full ring is copied once,
 	// when the post-trigger window is complete.
-	e.scope.ScanSince(fs.seen, func(s devices.TraceSample) bool {
+	scan := func(s devices.TraceSample) bool {
 		fs.seen = s.T
 		if fs.found {
 			if s.T > fs.trigT {
@@ -829,7 +829,14 @@ func (e *Emu) checkScopeTriggerLocked() {
 			fs.found = true
 		}
 		return true
-	})
+	}
+	if !fs.haveLast && fs.seen == 0 {
+		// Include the attach-instant sample at cycle 0; ScanSince(0) would
+		// skip it and lose an edge from the baseline to the first new sample.
+		e.scope.ScanAll(scan)
+		return
+	}
+	e.scope.ScanSince(fs.seen, scan)
 }
 
 func (e *Emu) freezeScopeLocked(pins []int, samples []devices.TraceSample) {

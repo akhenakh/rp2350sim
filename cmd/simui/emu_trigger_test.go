@@ -22,6 +22,30 @@ func TestScopeTriggerAddsPin(t *testing.T) {
 	}
 }
 
+// TestScopeTriggerSeesZeroBaseline checks that an edge from the attach-instant
+// sample at T=0 to the first new sample is not lost.
+func TestScopeTriggerSeesZeroBaseline(t *testing.T) {
+	const pin = 5
+	bit := uint64(1) << pin
+	c := rp2350.New()
+	tr := devices.NewTrace(c, []int{pin}, devices.ScopeInterval, devices.ScopeDepth)
+	e := &Emu{scope: tr, scopePins: []int{pin}}
+	e.SetScopeTrigger(ScopeTriggerConfig{Mode: "rise", Pin: pin})
+	c.Pins.ExtValid |= bit
+	c.Pins.ExtLevel &^= bit
+	tr.Tick() // baseline at T=0
+	c.Pins.ExtLevel |= bit
+	c.Cycles += devices.ScopeInterval
+	tr.Tick()
+	e.mu.Lock()
+	e.checkScopeTriggerLocked()
+	found, at := e.frozenScope.found, e.frozenScope.trigT
+	e.mu.Unlock()
+	if !found || at != devices.ScopeInterval {
+		t.Fatalf("baseline edge: found=%v trigT=%d", found, at)
+	}
+}
+
 // TestScopeLevelTriggers covers fall/high/low, which share the scanner with
 // the rise case but freeze on a different sample.
 func TestScopeLevelTriggers(t *testing.T) {
