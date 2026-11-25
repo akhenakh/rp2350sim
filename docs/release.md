@@ -20,6 +20,54 @@ version with `-version`.
 The binaries are pure Go (`CGO_ENABLED=0`), including the UI's Shirei/purego
 backend, so a single Linux runner cross-compiles every target.
 
+## GitHub paths
+
+Replace `<tag>` with the release tag (for example `v0.2.0`) and `<previous-tag>`
+with the prior tag. Do not hardcode the next version in committed documentation:
+
+- repository: `https://github.com/akhenakh/rp2350sim`
+- releases: `https://github.com/akhenakh/rp2350sim/releases`
+- tag: `https://github.com/akhenakh/rp2350sim/releases/tag/<tag>`
+- asset: `https://github.com/akhenakh/rp2350sim/releases/download/<tag>/<asset>`
+- source archive: `https://github.com/akhenakh/rp2350sim/archive/refs/tags/<tag>.tar.gz`
+- comparison: `https://github.com/akhenakh/rp2350sim/compare/<previous-tag>...<tag>`
+
+## Release sequence
+
+1. Update this document and the user-facing docs, then commit them.
+2. Tag that documentation commit as `v<version>` and push the tag.
+3. The release workflow builds, attests and publishes the archives.
+4. Update the Homebrew tap and AUR package from the published checksums.
+
+Committing the release notes before tagging keeps the tag, source archive and
+release page consistent without retroactively editing the tagged commit.
+
+## v0.2 highlights
+
+v0.2 contains 71 commits since `093f67a`, focused on RP2350
+datasheet conformance and regression hardening.
+
+- RP2350 datasheet-conformance pass across CPU/SCS, memory/boot, DMA, PIO,
+  timers, PWM, ADC, serial peripherals, USB, HSTX, TRNG, SHA-256 and OTP.
+- Host-safety fixes for FAT16 confinement, flash backing, GDB locking, bounded
+  network I/O, socket shutdown and device lifecycle cleanup.
+- TinyGo reliability: USB IRQ delivery, UART host bursts, PSP exception-entry
+  synchronization and multicore console completion.
+- DMA/PIO/PWM/timer/ADC trigger, FIFO, interrupt, timing and reset semantics
+  corrected, with new conformance and idle-scheduling regressions.
+- I2C/SPI/UART abort, FIFO, threshold, reset and narrow-write behavior aligned
+  with the RP2350 datasheet.
+- PSRAM maintenance-window safety, BOOTRAM lane writes, `+0x4000` zero-fill
+  writes, PSM core-1 reset and PADS IE/ISO/OD behavior added.
+- Desktop UI migrated to Shirei v0.10 with the in-window `FileBrowserModal`;
+  Zenity and its transitive dependencies were removed.
+- GEEK ST7789 logical-window rendering fixed, and the oscilloscope GPIO picker
+  is now width-aware and stays inside the window.
+- Debugger source rendering guards stale DWARF line tables; board validation
+  rejects GPIO/chip-select collisions.
+- Verification expanded across unit/race/lint/QEMU plus full TinyGo, Pico SDK,
+  pico-examples, UI, network, bridge, LCD, DVI, OTA, PSRAM, OTP and RTOS smokes.
+
 ## Verifying a release
 
 The release workflow attests every archive and the checksum file with GitHub
@@ -71,9 +119,12 @@ paru -S rp2350sim
 ```
 
 The package installs `/usr/bin/rp2350sim` and `/usr/bin/rp2350sim-ui`. The
-current PKGBUILD targets `v0.1.0` and carries the published source checksum.
-For a new release, bump `pkgver`, run `updpkgsums`, and regenerate `.SRCINFO`
-with `makepkg --printsrcinfo > .SRCINFO` before updating the AUR.
+PKGBUILD tracks the latest published tag and carries that tag's source
+checksum. After a release, bump `pkgver` to the new tag, run `updpkgsums`, and
+regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` before updating
+the AUR. Use the abstract source path
+`https://github.com/akhenakh/rp2350sim/archive/refs/tags/<tag>.tar.gz` so the
+PKGBUILD is not coupled to an unreleased version.
 
 ## Local checks
 
