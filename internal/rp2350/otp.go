@@ -171,6 +171,9 @@ type otpBlock struct {
 	swAdvanced [OTPPages]bool
 	writes     uint64
 	lastWrite  int
+	// version changes on every fuse or lock mutation, so hosts can cache a
+	// copy of the rows instead of rebuilding it every frame.
+	version uint64
 
 	block *regBlock
 }
@@ -363,6 +366,7 @@ func (o *otpBlock) writeReg(c *Chip, off uint32, v uint32) {
 		l.sec = maxLock(l.sec, v)
 		l.nsec = maxLock(l.nsec, v>>2)
 		o.swAdvanced[page] = true
+		o.version++
 		c.Logger.Debug("otp software lock", slog.Int("page", page),
 			slog.Uint64("secure", uint64(l.sec)), slog.Uint64("nonsecure", uint64(l.nsec)))
 	case off == otpSBPIInstr:
@@ -415,6 +419,7 @@ func (o *otpBlock) programRow(row int, raw uint32) bool {
 	if raw&^o.rows[row] != 0 {
 		o.writes++
 		o.lastWrite = row
+		o.version++
 	}
 	o.rows[row] |= raw
 	return true
@@ -472,6 +477,14 @@ func (c *Chip) OTPRowsCopy() []uint32 {
 		copy(out, c.otp.rows[:])
 	}
 	return out
+}
+
+// OTPVersion changes on every OTP fuse or lock mutation.
+func (c *Chip) OTPVersion() uint64 {
+	if c.otp == nil {
+		return 0
+	}
+	return c.otp.version
 }
 
 // OTPWrites reports how many rows the firmware programmed this run.

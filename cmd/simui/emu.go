@@ -178,6 +178,8 @@ type Emu struct {
 	lcdGen   uint64
 	lcdFrame *image.RGBA
 	lcdDuty  float32
+	otpGen   uint64
+	otpRows  []uint32
 
 	board *BoardDef
 
@@ -964,11 +966,20 @@ func (e *Emu) I2CEvents() []I2CEvent {
 	return append([]I2CEvent(nil), e.i2cEvents...)
 }
 
+// trimRing keeps the newest keep elements of s in place once it grows past
+// max. Reslicing the tail instead moves the start forward, which forces a
+// reallocation on almost every append; a per-byte tap cannot afford that.
+func trimRing[T any](s []T, max, keep int) []T {
+	if len(s) <= max {
+		return s
+	}
+	n := copy(s, s[len(s)-keep:])
+	return s[:n]
+}
+
 func (e *Emu) addUART(bus int, cycle uint64, in bool, b byte) {
 	e.uartEvents = append(e.uartEvents, UARTEvent{Bus: bus, Cycle: cycle, In: in, Data: b})
-	if len(e.uartEvents) > 512 {
-		e.uartEvents = e.uartEvents[len(e.uartEvents)-256:]
-	}
+	e.uartEvents = trimRing(e.uartEvents, 512, 256)
 	if !in && e.triggerArmed("uart") {
 		e.checkTriggerLocked("uart", fmt.Sprintf("UART TX 0x%02x", b))
 	}
@@ -976,9 +987,7 @@ func (e *Emu) addUART(bus int, cycle uint64, in bool, b byte) {
 
 func (e *Emu) addSPI(bus int, cycle uint64, tx, rx byte) {
 	e.spiEvents = append(e.spiEvents, SPIEvent{Bus: bus, Cycle: cycle, TX: tx, RX: rx})
-	if len(e.spiEvents) > 512 {
-		e.spiEvents = e.spiEvents[len(e.spiEvents)-256:]
-	}
+	e.spiEvents = trimRing(e.spiEvents, 512, 256)
 	if e.triggerArmed("spi") {
 		e.checkTriggerLocked("spi", fmt.Sprintf("SPI MOSI 0x%02x", tx))
 	}
@@ -986,9 +995,7 @@ func (e *Emu) addSPI(bus int, cycle uint64, tx, rx byte) {
 
 func (e *Emu) addI2C(bus int, cycle uint64, kind string, addr uint8, data byte, ack bool) {
 	e.i2cEvents = append(e.i2cEvents, I2CEvent{Bus: bus, Cycle: cycle, Kind: kind, Addr: addr, Data: data, Ack: ack})
-	if len(e.i2cEvents) > 512 {
-		e.i2cEvents = e.i2cEvents[len(e.i2cEvents)-256:]
-	}
+	e.i2cEvents = trimRing(e.i2cEvents, 512, 256)
 	if !e.triggerArmed("i2c") {
 		return
 	}
@@ -1004,9 +1011,7 @@ func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
 		data = data[:64]
 	}
 	e.usbEvents = append(e.usbEvents, USBEvent{Cycle: cycle, In: in, Data: append([]byte(nil), data...)})
-	if len(e.usbEvents) > 64 {
-		e.usbEvents = e.usbEvents[len(e.usbEvents)-32:]
-	}
+	e.usbEvents = trimRing(e.usbEvents, 64, 32)
 }
 
 // resetChip builds a fresh machine and attaches the selected board's devices.
@@ -1240,20 +1245,29 @@ func (e *Emu) resetChip() {
 		}
 	}
 
+	trimConsole := func() {
+		// Keep the tail in place; the UI resets its view when the length drops.
+		if len(e.console) > 64*1024 {
+			n := copy(e.console, e.console[len(e.console)-32*1024:])
+			e.console = e.console[:n]
+		}
+	}
 	appendConsole := func(b []byte) {
 		e.console = append(e.console, b...)
 		e.consolePos += int64(len(b))
-		// Keep the tail; the UI resets its view when the length drops.
-		if len(e.console) > 64*1024 {
-			e.console = append([]byte(nil), e.console[len(e.console)-32*1024:]...)
-		}
+		trimConsole()
+	}
+	appendConsoleByte := func(b byte) {
+		e.console = append(e.console, b)
+		e.consolePos++
+		trimConsole()
 	}
 	c.OnUART0 = func(b byte) {
-		appendConsole([]byte{b})
+		appendConsoleByte(b)
 		e.addUART(0, c.Cycles, false, b)
 	}
 	c.OnUART1 = func(b byte) {
-		appendConsole([]byte{b})
+		appendConsoleByte(b)
 		e.addUART(1, c.Cycles, false, b)
 	}
 	c.SetUSBCDC(func(b []byte) {
@@ -1273,6 +1287,7 @@ func (e *Emu) resetChip() {
 	e.chip = c
 	e.lcdGen = 0
 	e.lcdFrame = nil
+	e.otpGen, e.otpRows = 0, nil
 	e.lcdDuty = -1
 }
 
@@ -1545,9 +1560,7 @@ func (e *Emu) addMIDI(cycle uint64, m midi.Message) {
 		Text:  m.String(),
 		Bytes: midi.ParseText(m.Bytes()),
 	})
-	if len(e.midiEvents) > 256 {
-		e.midiEvents = e.midiEvents[len(e.midiEvents)-128:]
-	}
+	e.midiEvents = trimRing(e.midiEvents, 256, 128)
 	if e.midiNotes == nil {
 		e.midiNotes = map[int]bool{}
 	}
@@ -2140,8 +2153,12 @@ func (e *Emu) Snapshot() MachineState {
 	if e.sd != nil {
 		s.SD = &SDState{Inserted: e.sd.Inserted(), Blocks: e.sd.Blocks(), Source: e.sd.Source()}
 	}
+	if v := e.chip.OTPVersion(); v != e.otpGen || e.otpRows == nil {
+		e.otpGen = v
+		e.otpRows = e.chip.OTPRowsCopy()
+	}
 	otp := &OTPState{
-		Rows:      e.chip.OTPRowsCopy(),
+		Rows:      e.otpRows,
 		Writes:    e.chip.OTPWrites(),
 		LastWrite: e.chip.OTPLastWriteRow(),
 	}
