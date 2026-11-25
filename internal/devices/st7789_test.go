@@ -209,3 +209,28 @@ func TestST7789SleepRetainsGRAM(t *testing.T) {
 		t.Fatalf("woken pixel = %v, want %v", got, colored)
 	}
 }
+
+// With MADCTL MV the 240x320 frame memory is addressed column by column: the
+// logical (X,Y) of the 320x240 landscape frame maps to index X*240+Y. Indexing
+// it as Y*240+X aliases pixels 240 columns apart, which duplicated right-edge
+// content on the left of the next row (the Touch-LCD-2 "copy of the click").
+func TestST7789MVFrameMemoryAliasing(t *testing.T) {
+	d := newTestDisplay()
+	d.sendCmd(0x11)                         // SLPOUT
+	d.sendCmd(0x3A, 0x55)                   // COLMOD RGB565
+	d.sendCmd(0x36, 0x60)                   // MADCTL MX|MV
+	d.sendCmd(0x29)                         // DISPON
+	d.sendCmd(0x2A, 0x01, 0x2C, 0x01, 0x2C) // CASET 300..300
+	d.sendCmd(0x2B, 0, 10, 0, 10)           // RASET 10..10
+	d.sendCmd(0x2C)                         // RAMWR
+	d.data(0xF8)
+	d.data(0x00) // red
+
+	img := d.Framebuffer()
+	if c := img.RGBAAt(300, 10); c.R != 248 || c.G != 0 || c.B != 0 {
+		t.Fatalf("(300,10) = %v, want red", c)
+	}
+	if c := img.RGBAAt(60, 11); c.R != 0 || c.G != 0 || c.B != 0 {
+		t.Fatalf("(60,11) = %v: frame memory aliased with (300,10)", c)
+	}
+}

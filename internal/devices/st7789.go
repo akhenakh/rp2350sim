@@ -32,8 +32,10 @@ type ST7789 struct {
 
 	// Width and Height are the visible panel dimensions in native orientation.
 	Width, Height int
-	// The full controller GRAM is independent of the visible panel. MV swaps
-	// the addressable axes, but never the physical row pitch.
+	// The full controller GRAM is independent of the visible panel: 240
+	// columns by 320 rows. MADCTL MV swaps the addressable axes; the memory
+	// itself keeps its 240-column pitch and is then written column by column
+	// (see gramOffset).
 	gramWidth, gramHeight int
 	stride                int
 
@@ -252,11 +254,23 @@ func (d *ST7789) data(b byte) {
 	}
 }
 
+// gramOffset maps a logical address-space pixel to the controller's frame
+// memory. Without MV the memory is 240 columns wide and written row by row
+// (Y*240+X). MV exchanges the axes, so the same physical memory is written
+// column by column: X*240+Y. Using one formula for both aliases pixels 240
+// columns apart and duplicates right-edge content on the left of the next row.
+func (d *ST7789) gramOffset(x, y int) int {
+	if d.madctl&0x20 != 0 {
+		return x*d.stride + y
+	}
+	return y*d.stride + x
+}
+
 func (d *ST7789) putPixel(px uint16) {
 	x, y := d.x, d.y
 	maxX, maxY := d.addressSize()
 	if x >= 0 && x < maxX && y >= 0 && y < maxY {
-		d.gram[y*d.stride+x] = px
+		d.gram[d.gramOffset(x, y)] = px
 		d.pixels++
 		d.visualGen++
 		if d.minX < 0 || x < d.minX {
@@ -326,6 +340,7 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 	}
 	bgr := d.madctl&0x08 != 0
 	addressWidth, addressHeight := d.addressSize()
+	mv := d.madctl&0x20 != 0
 	pix := img.Pix
 	for y := range h {
 		gramY := originY + y
@@ -334,7 +349,11 @@ func (d *ST7789) Framebuffer() *image.RGBA {
 			var px uint16
 			gramX := originX + x
 			if gramX >= 0 && gramX < addressWidth && gramY >= 0 && gramY < addressHeight {
-				px = d.gram[gramY*d.stride+gramX]
+				if mv {
+					px = d.gram[gramX*d.stride+gramY]
+				} else {
+					px = d.gram[gramY*d.stride+gramX]
+				}
 			}
 			r := rTab[(px>>11)&0x1f]
 			g := gTab[(px>>5)&0x3f]
