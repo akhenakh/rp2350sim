@@ -339,6 +339,11 @@ type periodicHook struct {
 // sources and other interval samplers use it: a per-cycle call would cost the
 // interpreter a function call for every cycle and, worse, forbid fast-forwarding
 // an idle core (see canIdleSkip). every is clamped to at least one cycle.
+//
+// Missed slots are skipped, never replayed, so this is for value samplers, not
+// edge-sensitive observers (use CycleHooks for those). A callback may add a
+// hook, but the new hook waits for the next dispatch pass; callbacks must not
+// remove hooks.
 func (c *Chip) AddPeriodicHook(every uint64, fn func()) {
 	if fn == nil {
 		return
@@ -378,11 +383,20 @@ func (c *Chip) runPeriodicHooks() {
 	}
 	n := len(c.periodicHooks)
 	for i := range n {
+		if i >= len(c.periodicHooks) {
+			break
+		}
 		h := &c.periodicHooks[i]
 		if h.next > c.Cycles {
 			continue
 		}
 		h.fn()
+		// Re-index: the callback may have appended a hook and reallocated the
+		// slice, leaving h pointing at the old backing array.
+		if i >= len(c.periodicHooks) {
+			continue
+		}
+		h = &c.periodicHooks[i]
 		// The hook may have reset the chip and rewound the clock.
 		if c.Cycles < h.next {
 			h.next = c.Cycles + h.every

@@ -170,6 +170,20 @@ func TestPIOInputLevelsFastPath(t *testing.T) {
 	check("isolated", false)
 	p.padISO = 0
 	check("isolation released", true)
+
+	// A PWM override is evaluated even when the pad summary is unchanged.
+	override := false
+	p.LevelOverride = func(int) (bool, bool) { return override, true }
+	p.Func[0] = pwmFuncSel
+	p.pwmPins = 1
+	p.Out, p.OE = 1, 1
+	check("pwm override low", false)
+	override = true
+	check("pwm override high", true)
+	p.pwmPins = 0
+	p.Func[0] = 0
+	p.LevelOverride = nil
+	check("pwm released", true)
 }
 
 // TestRunChunkInvariance runs the same program in one call and in small
@@ -204,6 +218,39 @@ func TestRunChunkInvariance(t *testing.T) {
 	for _, chunk := range []uint64{1, 7, 1000, 65_536} {
 		if got := run(chunk); got != want {
 			t.Fatalf("chunk %d: state hash %016x, want %016x", chunk, got, want)
+		}
+	}
+}
+
+// TestRunChunkInvarianceXIP runs the probe from flash, exercising the flat-XIP
+// instruction-fetch path that the SRAM copy above never reaches.
+func TestRunChunkInvarianceXIP(t *testing.T) {
+	run := func(chunk uint64) uint64 {
+		c := New()
+		copy(c.Flash, mmioProbeProgram)
+		c.CPU0.R[13] = SRAMBase + 0x1000
+		c.CPU0.R[15] = FlashBase
+		c.CPU1.Parked = true
+		c.Write32(SCSBase+0x10, 1|4)
+		c.Write32(SCSBase+0x14, 1000)
+		c.Write32(SCSBase+0x18, 0)
+		c.Write32(0x400b0010, 5000)
+		const total = 200_000
+		var done uint64
+		for done < total {
+			n := min(chunk, total-done)
+			d := c.Run(n)
+			if d == 0 {
+				t.Fatalf("XIP halted after %d cycles", done)
+			}
+			done += d
+		}
+		return hashMachine(c)
+	}
+	want := run(200_000)
+	for _, chunk := range []uint64{1, 7, 1000, 65_536} {
+		if got := run(chunk); got != want {
+			t.Fatalf("XIP chunk %d: state hash %016x, want %016x", chunk, got, want)
 		}
 	}
 }

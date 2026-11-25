@@ -70,6 +70,60 @@ func TestPeriodicHookSkipLandsOnDeadline(t *testing.T) {
 	}
 }
 
+// TestPeriodicHookAddDuringDispatch checks that a callback which appends a
+// hook does not leave the current hook pointing at a stale backing array.
+func TestPeriodicHookAddDuringDispatch(t *testing.T) {
+	c := New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Sleeping = true
+	ticks := 0
+	added := false
+	c.AddPeriodicHook(100, func() {
+		ticks++
+		if !added {
+			added = true
+			c.AddPeriodicHook(100, func() { ticks++ })
+		}
+	})
+	c.Run(1000)
+	// First hook: 10 samples. Hook added at cycle 100: 9 more.
+	if ticks != 19 {
+		t.Fatalf("hooks fired %d times, want 19", ticks)
+	}
+	if c.periodicNext != 1100 {
+		t.Fatalf("next deadline = %d, want 1100", c.periodicNext)
+	}
+}
+
+// TestResetRewindsLazyAnchors checks that a reset clears SysTick and the
+// microsecond anchors, not only the periodic-hook grid.
+func TestResetRewindsLazyAnchors(t *testing.T) {
+	c := New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	c.Write32(SCSBase+0x10, 1|4) // ENABLE | CLKSOURCE, no interrupt
+	c.Write32(SCSBase+0x14, 1000)
+	c.Run(500)
+	c.Reset()
+	if c.ppb[0].tick.baseCycle != 0 || c.ppb[0].tick.reloadAt != 0 {
+		t.Fatalf("SysTick anchor survived reset: base=%d reloadAt=%d",
+			c.ppb[0].tick.baseCycle, c.ppb[0].tick.reloadAt)
+	}
+	if c.nextMicros != cyclesPerMicrosecond || c.lastMicros != 0 {
+		t.Fatalf("microsecond anchors after reset: next=%d last=%d", c.nextMicros, c.lastMicros)
+	}
+	// Re-enable and run: a stale baseCycle would make sync spin on an
+	// unsigned underflow instead of returning.
+	c.Write32(SCSBase+0x10, 1|4)
+	c.Write32(SCSBase+0x14, 99)
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	c.Run(1000)
+	if c.Cycles != 1000 {
+		t.Fatalf("cycles after reset run = %d, want 1000", c.Cycles)
+	}
+}
+
 func TestPeriodicHookResetRephases(t *testing.T) {
 	c := New()
 	var last uint64
