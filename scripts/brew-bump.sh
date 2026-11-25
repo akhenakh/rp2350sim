@@ -53,14 +53,16 @@ cat >"$TMP/${BIN}.rb" <<EOF
 class ${CLASS} < Formula
   desc "${DESC}"
   homepage "https://github.com/${REPO}"
+  # Apple Silicon is the default; on_intel overrides it.
+  url "https://github.com/${REPO}/releases/download/${TAG}/${BIN}_${VERSION}_darwin_arm64.tar.gz"
+  sha256 "${DARWIN_ARM64}"
   license "${LICENSE}"
-  version "${VERSION}"
+
+  # Homebrew on Linux is not supported; Linux users install the release
+  # tarball directly.
+  depends_on :macos
 
   on_macos do
-    on_arm do
-      url "https://github.com/${REPO}/releases/download/${TAG}/${BIN}_${VERSION}_darwin_arm64.tar.gz"
-      sha256 "${DARWIN_ARM64}"
-    end
     on_intel do
       url "https://github.com/${REPO}/releases/download/${TAG}/${BIN}_${VERSION}_darwin_amd64.tar.gz"
       sha256 "${DARWIN_AMD64}"
