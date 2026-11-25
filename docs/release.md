@@ -34,13 +34,41 @@ with the prior tag. Do not hardcode the next version in committed documentation:
 
 ## Release sequence
 
-1. Update this document and the user-facing docs, then commit them.
+1. Update this document and the user-facing docs, then commit them. Keep the
+   **Next release** section current as work lands, and rename it to the version
+   at tag time.
 2. Tag that documentation commit as `v<version>` and push the tag.
 3. The release workflow builds, attests and publishes the archives.
 4. Update the Homebrew tap and AUR package from the published checksums.
 
 Committing the release notes before tagging keeps the tag, source archive and
 release page consistent without retroactively editing the tagged commit.
+
+## Next release (unreleased)
+
+Working notes for the next release, filled in as changes land. At tag time rename
+this heading to the version and trim anything that no longer applies.
+
+- Emulator interval samplers (scope and logic traces, analog waveform sources,
+  IMU, SD write-back, CH9120 and touch) moved to `Chip.AddPeriodicHook`: they
+  run on their virtual-time grid instead of every cycle, so they keep the idle
+  fast-forward available. CLI `-logic` captures and the UI scope/logic tabs no
+  longer cost throughput, and a pin trace takes its first sample at attach so
+  the capture window starts where it used to.
+- Desktop UI pacing: a live window keeps virtual time level with wall time
+  instead of running flat out. The status line shows the achieved ratio and
+  turns the virtual clock red when the interpreter cannot keep up; the new
+  `--turbo` flag runs as fast as the host allows. Headless snapshots are
+  unaffected.
+- UI loop: the 200 µs pacing sleep (about a millisecond of timer granularity on
+  Linux) is gone and repaint requests are capped at display rate. Measured on
+  the Touch-LCD-2 the window now runs at 1.0× real time (1.5× with `--turbo`);
+  the GEEK LCD example went from 0.11× to about 0.25×.
+- ST7789 frame memory is addressed column-wise under MADCTL MV (`X*240+Y`), as
+  the controller does. The Touch-LCD-2 no longer duplicates the right third of
+  the panel on the left, which made a touch marker near an edge look like a copy
+  on the opposite side; the GEEK output is unchanged.
+- Homebrew formula generation targets macOS only (Apple Silicon and Intel).
 
 ## v0.2 highlights
 
