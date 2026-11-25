@@ -233,10 +233,13 @@ type Emu struct {
 
 	// Real-time pacing: the loop keeps virtual time level with wall time and
 	// sleeps when it runs ahead. turbo disables that entirely.
-	turbo      bool
-	paceStart  time.Time
-	paceCycles uint64
-	speed      float64
+	turbo       bool
+	paceStart   time.Time
+	paceCycles  uint64
+	speedStart  time.Time
+	speedCycles uint64
+	speed       float64
+	slow        bool
 
 	i2cBuses  []*devices.I2CBridge
 	spiBuses  []*devices.SPIBridge
@@ -1941,6 +1944,7 @@ func (e *Emu) SetRunning(run bool) {
 		e.debugger.Resume()
 	} else if e.chip != nil {
 		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
+		e.slow = false
 	}
 	e.mu.Unlock()
 }
@@ -1992,6 +1996,9 @@ func (e *Emu) loop() {
 			sleepFor = e.paceLocked(done, started)
 		} else {
 			e.paceStart = time.Time{}
+			e.speedStart = time.Time{}
+			e.speedCycles = 0
+			e.slow = false
 		}
 		saveFlash := false
 		if boots != e.lastBoots {
@@ -2053,13 +2060,21 @@ func (e *Emu) paceLocked(cycles uint64, started time.Time) time.Duration {
 	if e.paceStart.IsZero() {
 		e.paceStart = started
 		e.paceCycles = 0
+		e.speedStart = started
+		e.speedCycles = 0
 		e.speed = 1
+		e.slow = false
 	}
 	e.paceCycles += cycles
+	e.speedCycles += cycles
 	virtual := cycleDuration(e.paceCycles)
 	wall := time.Since(e.paceStart)
-	if wall >= 250*time.Millisecond {
-		e.speed = virtual.Seconds() / wall.Seconds()
+	// The indicator uses a short window, not the lifetime average: a GC pause
+	// or a heavy phase must stop affecting it once the machine catches up.
+	if window := time.Since(e.speedStart); window >= time.Second {
+		e.speed = cycleDuration(e.speedCycles).Seconds() / window.Seconds()
+		e.speedStart = time.Now()
+		e.speedCycles = 0
 	}
 	if e.turbo {
 		return 0
@@ -2073,7 +2088,10 @@ func (e *Emu) SetTurbo(on bool) {
 	e.mu.Lock()
 	e.turbo = on
 	e.paceStart = time.Time{}
+	e.speedStart = time.Time{}
+	e.speedCycles = 0
 	e.speed = 1
+	e.slow = false
 	e.mu.Unlock()
 }
 
@@ -2092,11 +2110,17 @@ func (e *Emu) Snapshot() MachineState {
 	}
 	s.Pacing = !e.turbo
 	s.Speed = e.speed
-	// Report "too slow" only once the run has had time to settle, so boot and
-	// resume do not flash red.
-	if s.Pacing && s.Running && !e.paceStart.IsZero() &&
-		time.Since(e.paceStart) > time.Second && e.speed < 0.95 {
-		s.Slow = true
+	// Report "too slow" only once the run has had time to settle, with
+	// hysteresis so the status line does not flicker around the threshold.
+	if s.Pacing && s.Running && !e.paceStart.IsZero() && time.Since(e.paceStart) > time.Second {
+		if !e.slow && e.speed < 0.90 {
+			e.slow = true
+		} else if e.slow && e.speed > 0.97 {
+			e.slow = false
+		}
+		s.Slow = e.slow
+	} else if !s.Running {
+		e.slow = false
 	}
 	s.Firmware = e.fwPath
 	s.FlashPath = e.flashPath

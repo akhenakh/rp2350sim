@@ -231,12 +231,15 @@ func TestRealtimePacingAndTurbo(t *testing.T) {
 	if paced.Speed <= 0 || paced.Speed > 1.5 {
 		t.Fatalf("paced speed %.2f, want at most 1.5", paced.Speed)
 	}
-	if paced.Slow != (paced.Speed < 0.95) {
-		t.Fatalf("slow %v with speed %.2f", paced.Slow, paced.Speed)
+	if paced.Slow && paced.Speed > 0.97 {
+		t.Fatalf("slow %v with speed %.2f, want cleared above 0.97", paced.Slow, paced.Speed)
+	}
+	if !paced.Slow && paced.Speed < 0.90 {
+		t.Fatalf("not slow with speed %.2f, want set below 0.90", paced.Speed)
 	}
 
 	e.SetTurbo(true)
-	time.Sleep(700 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 	turbo := e.Snapshot()
 	if turbo.Pacing {
 		t.Fatal("turbo mode still paces")
@@ -244,7 +247,9 @@ func TestRealtimePacingAndTurbo(t *testing.T) {
 	if turbo.Slow {
 		t.Fatal("turbo mode cannot be reported as slow")
 	}
-	if turbo.Speed < paced.Speed {
+	// The windows are independent; allow the measurement noise of a loaded
+	// or race-enabled runner.
+	if turbo.Speed+0.05 < paced.Speed {
 		t.Fatalf("turbo speed %.2f < paced %.2f", turbo.Speed, paced.Speed)
 	}
 }
