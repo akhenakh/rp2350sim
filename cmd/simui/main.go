@@ -980,22 +980,27 @@ func toolbar(snap MachineState) {
 		if Button(NoIcon, "Reset") {
 			emu.Reset()
 		}
-		if gdbRunning() {
-			if Button(NoIcon, "Stop GDB") {
-				stopGDB()
-			}
-		} else if Button(NoIcon, "GDB") {
-			if err := startGDB(gdbDefaultAddr); err != nil {
-				fmt.Fprintln(os.Stderr, "gdb:", err)
+		// GDB needs a listening socket; the browser has none.
+		if webHostTools() {
+			if gdbRunning() {
+				if Button(NoIcon, "Stop GDB") {
+					stopGDB()
+				}
+			} else if Button(NoIcon, "GDB") {
+				if err := startGDB(gdbDefaultAddr); err != nil {
+					fmt.Fprintln(os.Stderr, "gdb:", err)
+				}
 			}
 		}
 		if Button(NoIcon, "Board…") {
 			pendingBoardPicker = true
 			RequestNextFrame()
 		}
-		if Button(NoIcon, "Build") {
-			buildPanelOpen = !buildPanelOpen
-			RequestNextFrame()
+		if webHostTools() {
+			if Button(NoIcon, "Build") {
+				buildPanelOpen = !buildPanelOpen
+				RequestNextFrame()
+			}
 		}
 		if Button(NoIcon, "All / Active") {
 			pinView = 1 - pinView

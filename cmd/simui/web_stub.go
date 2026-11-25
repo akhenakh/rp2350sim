@@ -19,6 +19,10 @@ func webFetch(string) ([]byte, error) {
 	return nil, fmt.Errorf("webFetch is not available on this platform")
 }
 
+// webHostTools is true on a desktop build: GDB can bind a port and the Build
+// drawer can run a command.
+func webHostTools() bool { return true }
+
 // webOpenFirmware lets the desktop open the Shirei file browser.
 func webOpenFirmware() bool { return false }
 

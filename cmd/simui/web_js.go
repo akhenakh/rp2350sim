@@ -139,6 +139,11 @@ func webInstallDrop() {
 	doc.Call("addEventListener", "drop", drop)
 }
 
+// webHostTools reports whether host-only tools are available. The browser has
+// no listening sockets (GDB) and no process execution (the Build drawer), so
+// those toolbar buttons are not offered.
+func webHostTools() bool { return false }
+
 // webBoot reads the demo configuration from the page URL:
 //
 //	index.html?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd
