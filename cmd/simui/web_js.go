@@ -9,7 +9,135 @@ import (
 	"sync"
 	"syscall/js"
 	"time"
+
+	"go.hasen.dev/shirei"
 )
+
+// webFirmware keeps the last image the page loaded so the toolbar's Load
+// button can restart it: in the browser there is no path to read again.
+var webFirmware struct {
+	name string
+	data []byte
+}
+
+// webInstallFirmware swaps in an image chosen or dropped by the user.
+func webInstallFirmware(name string, data []byte) {
+	if err := emu.LoadBytes(name, data, true); err != nil {
+		// LoadBytes records the error; the toolbar shows it.
+		shirei.RequestNextFrame()
+		return
+	}
+	webFirmware.name, webFirmware.data = name, data
+	fwPath = name
+	flashMode = false
+	shirei.RequestNextFrame()
+}
+
+// webFileInput is the hidden <input type=file> the Open… button drives. It is
+// created once so the same element handles every pick and tests can fill it.
+var webFileInput js.Value
+
+// webInstallFilePicker creates the hidden input and wires its change handler.
+func webInstallFilePicker() {
+	if !webFileInput.IsUndefined() {
+		return
+	}
+	doc := js.Global().Get("document")
+	input := doc.Call("createElement", "input")
+	input.Set("type", "file")
+	input.Set("accept", ".elf,.uf2,.bin")
+	input.Set("style", "display:none")
+	doc.Get("body").Call("appendChild", input)
+	webFileInput = input
+
+	var change js.Func
+	change = js.FuncOf(func(js.Value, []js.Value) any {
+		files := input.Get("files")
+		if files.Length() == 0 {
+			return nil
+		}
+		file := files.Index(0)
+		name := file.Get("name").String()
+		var read js.Func
+		read = js.FuncOf(func(_ js.Value, args []js.Value) any {
+			defer read.Release()
+			raw := args[0]
+			data := make([]byte, raw.Get("byteLength").Int())
+			js.CopyBytesToGo(data, js.Global().Get("Uint8Array").New(raw))
+			input.Set("value", "")
+			webInstallFirmware(name, data)
+			return nil
+		})
+		file.Call("arrayBuffer").Call("then", read)
+		return nil
+	})
+	input.Call("addEventListener", "change", change)
+	webFilePickerChange = change
+}
+
+// webFilePickerChange keeps the change callback alive for the page lifetime.
+var webFilePickerChange js.Func
+
+// webOpenFirmware opens the browser's file picker. It reports whether the
+// browser handled the request; the desktop Shirei file browser runs otherwise.
+func webOpenFirmware() bool {
+	webInstallFilePicker()
+	webFileInput.Call("click")
+	return true
+}
+
+// webReloadFirmware restarts the last picked image; false lets the desktop path
+// re-read the path from disk.
+func webReloadFirmware() bool {
+	if webFirmware.data == nil {
+		return false
+	}
+	webInstallFirmware(webFirmware.name, webFirmware.data)
+	return true
+}
+
+// webInstallDrop accepts a firmware dropped anywhere on the page. It uses the
+// same install path as the picker.
+func webInstallDrop() {
+	doc := js.Global().Get("document")
+	var drop js.Func
+	drop = js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) == 0 {
+			return nil
+		}
+		ev := args[0]
+		ev.Call("preventDefault")
+		dt := ev.Get("dataTransfer")
+		if dt.IsUndefined() || dt.IsNull() {
+			return nil
+		}
+		files := dt.Get("files")
+		if files.Length() == 0 {
+			return nil
+		}
+		file := files.Index(0)
+		name := file.Get("name").String()
+		var read js.Func
+		read = js.FuncOf(func(_ js.Value, args []js.Value) any {
+			defer read.Release()
+			raw := args[0]
+			data := make([]byte, raw.Get("byteLength").Int())
+			js.CopyBytesToGo(data, js.Global().Get("Uint8Array").New(raw))
+			webInstallFirmware(name, data)
+			return nil
+		})
+		file.Call("arrayBuffer").Call("then", read)
+		return nil
+	})
+	stop := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) > 0 {
+			args[0].Call("preventDefault")
+		}
+		return nil
+	})
+	doc.Call("addEventListener", "dragover", stop)
+	doc.Call("addEventListener", "drop", drop)
+}
 
 // webBoot reads the demo configuration from the page URL:
 //
@@ -34,6 +162,8 @@ func webBoot() (boardID, firmware, tab string, ok bool) {
 	if firmware == "" {
 		firmware = "firmware/lcd.elf"
 	}
+	webInstallDrop()
+	webInstallFilePicker()
 	return boardID, firmware, q.Get("tab"), true
 }
 

@@ -19,6 +19,12 @@ func webFetch(string) ([]byte, error) {
 	return nil, fmt.Errorf("webFetch is not available on this platform")
 }
 
+// webOpenFirmware lets the desktop open the Shirei file browser.
+func webOpenFirmware() bool { return false }
+
+// webReloadFirmware lets the desktop re-read the path from disk.
+func webReloadFirmware() bool { return false }
+
 // webYield hands the CPU to other goroutines on a desktop build.
 func webYield() { runtime.Gosched() }
 

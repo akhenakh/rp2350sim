@@ -962,10 +962,12 @@ func toolbar(snap MachineState) {
 			openFirmwareDialog()
 		}
 		if Button(NoIcon, "Load") {
-			if p := strings.TrimSpace(fwPath); p != "" {
-				_ = emu.Load(p)
-				flashMode = false
-				watchFile(p, "firmware")
+			if !webReloadFirmware() {
+				if p := strings.TrimSpace(fwPath); p != "" {
+					_ = emu.Load(p)
+					flashMode = false
+					watchFile(p, "firmware")
+				}
 			}
 		}
 		runLabel := "Run"

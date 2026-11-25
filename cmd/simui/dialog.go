@@ -17,6 +17,10 @@ var (
 // rendered by RootView on the UI thread, so no native dialog or goroutine is
 // involved.
 func openFirmwareDialog() {
+	// The browser has no filesystem to browse: its own picker loads the image.
+	if webOpenFirmware() {
+		return
+	}
 	firmwareBrowserSelection = strings.TrimSpace(fwPath)
 	firmwareBrowserOpen = true
 	shirei.RequestNextFrame()
