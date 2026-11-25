@@ -74,6 +74,12 @@ this heading to the version and trim anything that no longer applies.
   firmware and tab chosen by URL (`?board=…&fw=…&tab=…`). Host-only devices
   (sockets, SD directory backing, GDB, the file picker) are stripped before
   boot and firmware is fetched over HTTP; see `docs/wasm.md`.
+- Emulator hot-path pass: a one-entry MMIO register-block cache, monitor
+  invalidation without a per-write slice, cached PIO input levels, hoisted
+  SysTick/SHA/HSTX enable checks, a flat-XIP instruction-fetch path, and bus
+  taps that only format a trigger message when a trigger is armed. About 17%
+  more instructions per second natively (~36M/s) and ~24% on the LCD demo; the
+  browser build gains ~23% (2.6M → 3.2M cycles/s) plus `wasm-opt -O3`.
 
 ## v0.2 highlights
 

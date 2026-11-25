@@ -50,21 +50,26 @@ worklet wants. Other servers can copy `build/web/.headers`.
 
 ## Performance
 
-Go's WebAssembly backend runs the interpreter at roughly **2.6 million emulated
+Go's WebAssembly backend runs the interpreter at roughly **3.2 million emulated
 cycles per second** in Chrome (measured with the `internal/rp2350` two
-instruction loop), against about 30 million per second natively. Firmware that
-is compute-bound therefore runs well below real time:
+instruction loop after the hot-path pass below), against about 36 million per
+second natively. Firmware that is compute-bound therefore runs well below real
+time:
 
 | demo | speed in the browser |
 |---|---|
-| Touch-LCD-2 (`touchlcd.elf`) | ~0.13× |
-| GEEK LCD (`lcd.elf`) | ~0.03× |
+| Touch-LCD-2 (`touchlcd.elf`) | ~0.15× |
+| GEEK LCD (`lcd.elf`) | ~0.04× |
 | sleep-heavy firmware (blinky and friends) | ~1× (idle fast-forward is unaffected) |
 
 The status line shows the achieved ratio and turns the virtual clock red when it
 is below 0.95×. This is the Go wasm backend, not the UI: the same firmware runs
 at 1.0× in the desktop window. A faster core hot path, or TinyGo for the wasm
 build, would be the ways to close the gap.
+
+`task wasm:build` runs `wasm-opt -O3` over the module when binaryen is
+installed: about 9% smaller and ~10% faster. Without `wasm-opt` the plain Go
+module is served.
 
 ## Building by hand
 
