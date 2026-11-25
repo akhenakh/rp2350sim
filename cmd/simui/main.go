@@ -3110,6 +3110,18 @@ func main() {
 	flag.Parse()
 	busAutoConnect = *busConnect
 	emu.SetTurbo(*turboFlag)
+	// The browser build has no command line: the page URL names the board and
+	// the firmware (see web_js.go). Desktop builds return ok=false.
+	webFirmware := ""
+	if id, fw, tab, ok := webBoot(); ok {
+		if *boardID == "" {
+			*boardID = id
+		}
+		if tab != "" {
+			*tabName = tab
+		}
+		webFirmware = fw
+	}
 	if *showVer {
 		fmt.Println("rp2350sim-ui", version)
 		return
@@ -3140,6 +3152,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "unknown board %q (use --list-boards)\n", *boardID)
 			os.Exit(2)
 		}
+		webPrepareBoard(b)
 		selectBoard(b)
 	}
 
@@ -3152,6 +3165,18 @@ func main() {
 	if rest := flag.Args(); len(rest) > 0 {
 		fwPath = rest[0]
 		if err := emu.LoadPaused(fwPath); err != nil {
+			fmt.Fprintln(os.Stderr, "firmware load:", err)
+			os.Exit(1)
+		}
+	} else if webFirmware != "" {
+		// The browser cannot read files: fetch the image and install it.
+		data, err := webFetch(webFirmware)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "firmware load:", err)
+			os.Exit(1)
+		}
+		fwPath = webFirmware
+		if err := emu.LoadBytes(webFirmware, data, true); err != nil {
 			fmt.Fprintln(os.Stderr, "firmware load:", err)
 			os.Exit(1)
 		}

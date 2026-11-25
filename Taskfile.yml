@@ -48,6 +48,8 @@ tasks:
       - golangci-lint run ./...
       - go fix -diff ./...
       - cd cmd/simui && go vet ./... && golangci-lint run ./... && go fix -diff ./...
+      # The browser build is a supported target: keep it compiling.
+      - cd cmd/simui && GOOS=js GOARCH=wasm go build ./...
       - cd drivers/ch9120 && go vet ./... && golangci-lint run ./... && go fix -diff ./...
       - cd drivers/w6300 && go vet ./... && golangci-lint run ./... && go fix -diff ./...
 
@@ -548,6 +550,24 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board touch-lcd2 '../../{{.BUILD}}/touchlcd.elf'
+
+  wasm:build:
+    desc: Build the desktop UI for the browser (Shirei/WASM) into build/web
+    deps: [firmware:lcd, firmware:touchlcd]
+    cmds:
+      - mkdir -p {{.BUILD}}/web/firmware
+      - cp {{.BUILD}}/lcd.elf {{.BUILD}}/web/firmware/lcd.elf
+      - cp {{.BUILD}}/touchlcd.elf {{.BUILD}}/web/firmware/touchlcd.elf
+      - cd cmd/simui && go run go.hasen.dev/shirei/cmd/shirei_web -webcompiler=go -o ../../{{.BUILD}}/web .
+
+  wasm:serve:
+    desc: Build and serve the browser UI on http://127.0.0.1:8787
+    deps: [firmware:lcd, firmware:touchlcd]
+    cmds:
+      - mkdir -p {{.BUILD}}/web/firmware
+      - cp {{.BUILD}}/lcd.elf {{.BUILD}}/web/firmware/lcd.elf
+      - cp {{.BUILD}}/touchlcd.elf {{.BUILD}}/web/firmware/touchlcd.elf
+      - cd cmd/simui && go run go.hasen.dev/shirei/cmd/shirei_web -webcompiler=go -serve -n -o ../../{{.BUILD}}/web .
 
   ui:dvi:
     desc: Run the UI on the HSTX DVI board with the pico-examples DVI demo

@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1814,15 +1813,37 @@ func (e *Emu) loadFirmware(path string, start, preservePause bool) error {
 		e.mu.Unlock()
 		return err
 	}
+	var info *debug.Info
+	if img.Format == "elf" {
+		info, _ = debug.Load(path)
+	}
+	return e.installImage(img, path, info, start, preservePause)
+}
+
+// LoadBytes installs a firmware image already held in memory. The browser build
+// has no filesystem, so the page fetches the image and hands it over.
+func (e *Emu) LoadBytes(name string, data []byte, start bool) error {
+	img, err := firmware.Parse(name, data)
+	if err == nil {
+		err = img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize)
+	}
+	if err != nil {
+		e.mu.Lock()
+		e.errText = err.Error()
+		e.mu.Unlock()
+		return err
+	}
+	return e.installImage(img, name, nil, start, false)
+}
+
+// installImage swaps in a parsed image and restarts the machine.
+func (e *Emu) installImage(img *firmware.Image, name string, info *debug.Info, start, preservePause bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	wasRunning, paused := e.runStateLocked()
 	e.img = img
-	e.debugInfo = nil
-	if img.Format == "elf" {
-		e.debugInfo, _ = debug.Load(path)
-	}
-	e.fwPath = path
+	e.debugInfo = info
+	e.fwPath = name
 	e.errText = ""
 	if err := e.loadLocked(); err != nil {
 		e.errText = err.Error()
@@ -1905,13 +1926,14 @@ func (e *Emu) ToggleRunning() bool {
 func (e *Emu) loop() {
 	// Small chunks keep the mutex hold time low enough for a smooth UI while
 	// still running the firmware as fast as the interpreter allows.
-	const chunk = 150_000
+	chunk := webChunk()
 	// A render request makes the UI thread take the emulator lock for a full
 	// snapshot. Asking once per chunk (hundreds of times a second) starves
 	// stepping without making the picture smoother, so cap repaints at
 	// display rate.
 	const frameInterval = 16 * time.Millisecond
 	var frameAt time.Time
+	var lastYield time.Time
 	for {
 		started := time.Now()
 		if shirei.GetHost().HeadlessRender {
@@ -1968,11 +1990,12 @@ func (e *Emu) loop() {
 			// Paused, halted, or the board picker: nothing to step, so idle
 			// instead of spinning.
 			time.Sleep(2 * time.Millisecond)
-		case time.Since(started) < time.Millisecond:
-			// The chunk finished quickly and there is still catching up to do;
-			// yield so the UI thread can take the lock without paying the
-			// timer granularity of a short sleep.
-			runtime.Gosched()
+		case time.Since(lastYield) >= 8*time.Millisecond:
+			// Hand control back regularly. On a desktop this just yields the
+			// goroutine; in the browser the runtime must return to the page's
+			// event loop or nothing paints.
+			lastYield = time.Now()
+			webYield()
 		}
 	}
 }
