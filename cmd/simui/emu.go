@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1061,12 +1062,14 @@ func (e *Emu) resetChip() {
 			e.touch.Width, e.touch.Height = d.Width, d.Height
 			e.touch.TouchRotate = d.Rotation
 			c.AttachI2C(d.Bus, uint8(d.Addr), e.touch)
-			c.CycleHooks = append(c.CycleHooks, e.touch.Tick)
+			c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, e.touch.Tick)
 		}
 		if d := b.IMU; d != nil {
 			e.imu = devices.NewQMI8658(c, uint8(d.Addr), d.INT, d.INT2Pin())
 			c.AttachI2C(d.Bus, uint8(d.Addr), e.imu)
-			c.CycleHooks = append(c.CycleHooks, e.imu.Tick)
+			// The sample interval is milliseconds: a microsecond grid is
+			// plenty and keeps the idle fast-forward available.
+			c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, e.imu.Tick)
 		}
 		if d := b.Battery; d != nil {
 			c.Pins.SetAnalog(d.Pin, float32(d.Volts/d.Divider))
@@ -1078,7 +1081,9 @@ func (e *Emu) resetChip() {
 			} else {
 				e.sd = card
 				attachSPI(d.SPI, d.CS, card.Transfer)
-				c.CycleHooks = append(c.CycleHooks, card.Tick)
+				// The write-back timer is 50 ms; polling it every
+				// microsecond matches the previous behaviour closely enough.
+				c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, card.Tick)
 			}
 		}
 		if w := b.Wifi; w != nil {
@@ -1155,7 +1160,7 @@ func (e *Emu) resetChip() {
 			}
 			src := devices.NewSignalSource(c, sd.Pin, wave, hz, amp, off)
 			e.signals = append(e.signals, src)
-			c.CycleHooks = append(c.CycleHooks, src.Tick)
+			c.AddPeriodicHook(src.Interval, src.Tick)
 		}
 
 		e.attachBus(c, b, attachSPI)
@@ -1199,11 +1204,11 @@ func (e *Emu) resetChip() {
 			scopePins = b.ScopePins()
 		}
 		e.scope = devices.NewTrace(c, scopePins, devices.ScopeInterval, devices.ScopeDepth)
-		c.CycleHooks = append(c.CycleHooks, e.scope.Tick)
+		c.AddPeriodicHook(e.scope.Interval, e.scope.Tick)
 
 		if pins := b.LogicPins(); len(pins) > 0 {
 			e.logic = devices.NewTrace(c, pins, devices.LogicInterval, devices.LogicDepth)
-			c.CycleHooks = append(c.CycleHooks, e.logic.Tick)
+			c.AddPeriodicHook(e.logic.Interval, e.logic.Tick)
 		}
 		c.OnI2C = func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool) {
 			e.addI2C(bus, cycles, kind, addr, data, ack)
@@ -1885,10 +1890,18 @@ func (e *Emu) loop() {
 	// Small chunks keep the mutex hold time low enough for a smooth UI while
 	// still running the firmware as fast as the interpreter allows.
 	const chunk = 150_000
+	// A render request makes the UI thread take the emulator lock for a full
+	// snapshot. Asking once per chunk (hundreds of times a second) starves
+	// stepping without making the picture smoother, so cap repaints at
+	// display rate.
+	const frameInterval = 16 * time.Millisecond
+	var frameAt time.Time
 	for {
-		time.Sleep(200 * time.Microsecond)
+		started := time.Now()
 		if shirei.GetHost().HeadlessRender {
-			continue // keep snapshots deterministic
+			// Keep snapshots deterministic without spinning.
+			time.Sleep(time.Millisecond)
+			continue
 		}
 		e.mu.Lock()
 		// The picker screen has no board yet; keep the machine idle so an
@@ -1919,11 +1932,21 @@ func (e *Emu) loop() {
 			saveFlash = true
 		}
 		e.mu.Unlock()
-		if running {
+		if running && time.Since(frameAt) >= frameInterval {
+			frameAt = time.Now()
 			shirei.RequestNextFrame()
 		}
 		if saveFlash {
 			e.SaveFlash()
+		}
+		if !running {
+			// Paused, halted, or the board picker: nothing to step, so idle
+			// instead of spinning.
+			time.Sleep(2 * time.Millisecond)
+		} else if time.Since(started) < time.Millisecond {
+			// The chunk finished quickly; yield so the UI thread can take the
+			// lock without paying the timer granularity of a short sleep.
+			runtime.Gosched()
 		}
 	}
 }

@@ -124,10 +124,11 @@ func TestBusTerminalsDriveBusmaster(t *testing.T) {
 
 	e := NewEmu()
 	e.SetBoard(board)
-	if err := e.Load(fw); err != nil {
-		t.Fatal(err)
-	}
 
+	// Connect the bus terminals and queue their answers before the firmware
+	// runs: the busmaster example reads both buses immediately at boot, and a
+	// faster emulator loop would otherwise complete the first transfer before
+	// the answers exist.
 	infos := e.BusBridges()
 	if len(infos) != 2 {
 		t.Fatalf("bridges = %+v, want I2C and SPI", infos)
@@ -152,7 +153,10 @@ func TestBusTerminalsDriveBusmaster(t *testing.T) {
 		}
 	}
 
-	e.Reset()
+	if err := e.Load(fw); err != nil {
+		t.Fatal(err)
+	}
+
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		snap := e.Snapshot()
