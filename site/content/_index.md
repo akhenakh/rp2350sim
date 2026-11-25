@@ -17,6 +17,17 @@ It provides a CLI tool and a user interface to run, mock periphericals, debug rp
 
 ![Logic tab](./docs/images/logic.png)
 
+## Try it in the browser
+
+The desktop UI also runs as a WebAssembly demo — the same window, no install:
+
+[Open the web demo](demo/?board=touch-lcd2&fw=firmware/touchlcd.elf&tab=lcd) ·
+[GEEK LCD demo](demo/?board=geek&fw=firmware/lcd.elf&tab=lcd)
+
+It is a demo build: firmware comes from the page, host devices (Ethernet,
+bridges, GDB, file picker) are absent, and compute-heavy firmware runs slower
+than real time. See the [browser build notes](docs/wasm/) for the numbers.
+
 ## Run RP2350 firmware
 
 `rp2350sim` runs stock TinyGo `-target=pico2` and Pico SDK C firmware: a

@@ -13,6 +13,9 @@ reload.
 This directory is the user guide. The same pages are rendered with Hugo and
 the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 <https://akhenakh.github.io/rp2350sim/>; preview locally with `task docs:serve`.
+The desktop UI also runs in the browser as a
+[live demo](https://akhenakh.github.io/rp2350sim/demo/); see the
+[browser build notes](wasm.md) for its limits and speed.
 
 ## Recent features
 
@@ -37,7 +40,7 @@ the [Geekdoc](https://themes.gohugo.io/themes/hugo-geekdoc/) theme at
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
 | [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
 | [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer |
-| [wasm.md](wasm.md) | the same UI compiled to WebAssembly: build, URL parameters, stripped host devices and browser speed |
+| [wasm.md](wasm.md) | the same UI compiled to WebAssembly: live demo, build, URL parameters, stripped host devices and browser speed |
 | [debug.md](debug.md) | the Debug tab, symbols, breakpoints, watchpoints, memory and variables |
 | [boards.md](boards.md) | supported boards, wiring, peripherals and current limitations |
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |

@@ -71,9 +71,10 @@ this heading to the version and trim anything that no longer applies.
 - Homebrew formula generation targets macOS only (Apple Silicon and Intel).
 - Browser build: `task wasm:build` compiles the desktop UI to WebAssembly with
   Shirei's `shirei_web`, so the same window runs in a page with the board,
-  firmware and tab chosen by URL (`?board=…&fw=…&tab=…`). Host-only devices
-  (sockets, SD directory backing, GDB, the file picker) are stripped before
-  boot and firmware is fetched over HTTP; see `docs/wasm.md`.
+  firmware and tab chosen by URL (`?board=…&fw=…&tab=…`). The demo is published
+  with the documentation at <https://akhenakh.github.io/rp2350sim/demo/>. Host
+  devices (sockets, SD directory backing, GDB, the file picker) are stripped
+  before boot and firmware is fetched over HTTP; see `docs/wasm.md`.
 - Emulator hot-path pass: a one-entry MMIO register-block cache, monitor
   invalidation without a per-write slice, cached PIO input levels, hoisted
   SysTick/SHA/HSTX enable checks, a flat-XIP instruction-fetch path, and bus

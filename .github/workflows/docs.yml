@@ -41,6 +41,15 @@ jobs:
           hugo-version: "0.170.1"
           extended: true
 
+      # The Web demo is the desktop UI compiled to wasm; the page needs the
+      # demo firmware, so the docs job builds the two TinyGo examples.
+      - name: Install TinyGo
+        run: |
+          version=0.43.0
+          curl -fsSL "https://github.com/tinygo-org/tinygo/releases/download/v${version}/tinygo${version}.linux-amd64.tar.gz" \
+            | sudo tar -xz -C /opt
+          echo "/opt/tinygo/bin" >> "$GITHUB_PATH"
+
       - name: Configure Pages
         id: pages
         uses: actions/configure-pages@v5
@@ -49,6 +58,9 @@ jobs:
         run: task docs:build
         env:
           HUGO_BASEURL: ${{ steps.pages.outputs.base_url }}/
+
+      - name: Build web demo
+        run: task docs:demo
 
       - uses: actions/upload-pages-artifact@v3
         with:

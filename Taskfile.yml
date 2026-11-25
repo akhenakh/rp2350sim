@@ -877,6 +877,13 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean --skip=publish,announce
 
+  docs:demo:
+    desc: Add the WebAssembly demo to the built site (run after docs:build)
+    deps: [wasm:build]
+    cmds:
+      - rm -rf site/public/demo
+      - cp -r {{.BUILD}}/web site/public/demo
+
   docs:theme:
     desc: Fetch the pinned Geekdoc theme release
     cmds:
