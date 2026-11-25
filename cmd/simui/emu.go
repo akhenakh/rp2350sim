@@ -1204,10 +1204,14 @@ func (e *Emu) resetChip() {
 			scopePins = b.ScopePins()
 		}
 		e.scope = devices.NewTrace(c, scopePins, devices.ScopeInterval, devices.ScopeDepth)
+		// Sample the attach instant so the window opens at boot, not one
+		// interval later.
+		e.scope.Tick()
 		c.AddPeriodicHook(e.scope.Interval, e.scope.Tick)
 
 		if pins := b.LogicPins(); len(pins) > 0 {
 			e.logic = devices.NewTrace(c, pins, devices.LogicInterval, devices.LogicDepth)
+			e.logic.Tick()
 			c.AddPeriodicHook(e.logic.Interval, e.logic.Tick)
 		}
 		c.OnI2C = func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool) {
