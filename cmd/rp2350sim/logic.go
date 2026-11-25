@@ -220,7 +220,7 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 func (l *logicCapture) attach(c *rp2350.Chip) {
 	if len(l.pins) > 0 {
 		l.trace = devices.NewTrace(c, l.pins, l.interval, l.depth)
-		c.CycleHooks = append(c.CycleHooks, l.trace.Tick)
+		c.AddPeriodicHook(l.trace.Interval, l.trace.Tick)
 	}
 	prevU0, prevU1 := c.OnUART0, c.OnUART1
 	c.OnUART0 = func(b byte) {

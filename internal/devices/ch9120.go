@@ -153,7 +153,7 @@ func (d *CH9120) Attach() {
 	} else {
 		c.OnUART1 = d.ReceiveByte
 	}
-	c.CycleHooks = append(c.CycleHooks, d.Tick)
+	c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, d.Tick)
 }
 
 // ReceiveByte consumes one byte written by the MCU.

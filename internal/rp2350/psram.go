@@ -299,6 +299,9 @@ func (c *Chip) advanceEngines(cycles uint64) {
 		for _, h := range c.CycleHooks {
 			h()
 		}
+		if c.Cycles >= c.periodicNext {
+			c.runPeriodicHooks()
+		}
 	}
 	c.psramStall = false
 }

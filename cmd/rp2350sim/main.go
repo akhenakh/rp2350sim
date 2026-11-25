@@ -528,10 +528,10 @@ func main() {
 		}
 		touch = devices.NewCST816D(c, 0x15, 20, 29)
 		c.AttachI2C(0, 0x15, touch)
-		c.CycleHooks = append(c.CycleHooks, touch.Tick)
+		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, touch.Tick)
 		imu = devices.NewQMI8658(c, 0x6b, 14, -1)
 		c.AttachI2C(0, 0x6b, imu)
-		c.CycleHooks = append(c.CycleHooks, imu.Tick)
+		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, imu.Tick)
 		c.Pins.SetAnalog(28, 3.9/3) // battery divider
 		card, err = newRunnerCard(c, 25, *sdImage, *sdDir)
 		if err != nil {
@@ -686,7 +686,7 @@ func main() {
 		}
 	}
 	if card != nil {
-		c.CycleHooks = append(c.CycleHooks, card.Tick)
+		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, card.Tick)
 	}
 	spiHandler := func(devs []spiDev) func(byte) byte {
 		return func(tx byte) byte {

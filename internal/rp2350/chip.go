@@ -41,6 +41,9 @@ const (
 	// CPU is modelled at one instruction per cycle.
 	cyclesPerMicrosecond = sysClkHz / 1_000_000
 	cyclesPerMillisecond = sysClkHz / 1_000
+	// CyclesPerMicrosecond lets host-side devices schedule periodic hooks on
+	// a sub-microsecond polling grid.
+	CyclesPerMicrosecond = cyclesPerMicrosecond
 )
 
 // Chip is one RP2350 device: two M33 cores, memory and peripherals.
@@ -198,6 +201,12 @@ type Chip struct {
 	// levels that change without a bus access (for example chip select).
 	CycleHooks []func()
 
+	// periodicHooks run on a virtual-cycle grid instead of every cycle.
+	// periodicNext caches the earliest deadline so the per-cycle cost stays a
+	// single comparison (see AddPeriodicHook).
+	periodicHooks []periodicHook
+	periodicNext  uint64
+
 	// MMIO trace hook.
 	Trace func(addr uint32, write bool, val uint32, pc uint32)
 	// OnWrite is called for every memory write when set (debugging).
@@ -307,6 +316,81 @@ func (c *Chip) addRegBlock(b *regBlock) {
 	sort.Slice(c.regs, func(i, j int) bool { return c.regs[i].base < c.regs[j].base })
 }
 
+// noPeriodic marks the absence of a periodic hook deadline.
+const noPeriodic = ^uint64(0)
+
+// periodicHook is an interval sampler: it is interested in the virtual clock
+// only every `every` cycles, so the chip calls it on that grid instead of once
+// per cycle and lets an idle fast-forward land on the next grid point.
+type periodicHook struct {
+	every uint64
+	next  uint64
+	fn    func()
+}
+
+// AddPeriodicHook schedules fn on a fixed virtual-cycle grid. Traces, analog
+// sources and other interval samplers use it: a per-cycle call would cost the
+// interpreter a function call for every cycle and, worse, forbid fast-forwarding
+// an idle core (see canIdleSkip). every is clamped to at least one cycle.
+func (c *Chip) AddPeriodicHook(every uint64, fn func()) {
+	if fn == nil {
+		return
+	}
+	if every == 0 {
+		every = 1
+	}
+	c.periodicHooks = append(c.periodicHooks, periodicHook{every: every, next: c.Cycles + every, fn: fn})
+	c.refreshPeriodicNext()
+}
+
+// refreshPeriodicNext recomputes the earliest periodic deadline.
+func (c *Chip) refreshPeriodicNext() {
+	c.periodicNext = noPeriodic
+	for i := range c.periodicHooks {
+		if c.periodicHooks[i].next < c.periodicNext {
+			c.periodicNext = c.periodicHooks[i].next
+		}
+	}
+}
+
+// rewindPeriodicHooks restores the grid after the virtual clock restarts at
+// zero, so a reset cannot leave a sampler waiting on a stale deadline.
+func (c *Chip) rewindPeriodicHooks() {
+	for i := range c.periodicHooks {
+		c.periodicHooks[i].next = c.Cycles + c.periodicHooks[i].every
+	}
+	c.refreshPeriodicNext()
+}
+
+// runPeriodicHooks fires every hook whose deadline has been reached and moves
+// it to its next grid point. Missed slots (a PSRAM stall or an idle jump) are
+// skipped rather than replayed: interval samplers only need the current value.
+func (c *Chip) runPeriodicHooks() {
+	if c.Cycles < c.periodicNext {
+		return
+	}
+	n := len(c.periodicHooks)
+	for i := range n {
+		h := &c.periodicHooks[i]
+		if h.next > c.Cycles {
+			continue
+		}
+		h.fn()
+		// The hook may have reset the chip and rewound the clock.
+		if c.Cycles < h.next {
+			h.next = c.Cycles + h.every
+			continue
+		}
+		if missed := (c.Cycles - h.next) / h.every; missed > 0 {
+			h.next += missed * h.every
+		}
+		if h.next <= c.Cycles {
+			h.next = c.Cycles + h.every
+		}
+	}
+	c.refreshPeriodicNext()
+}
+
 // coreIdle reports whether a core has no instructions to run this cycle.
 func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 
@@ -349,6 +433,11 @@ func (c *Chip) Run(n uint64) uint64 {
 			// microsecond boundary.
 			skip = min(skip, c.ppb[0].cyclesUntilSysTick(c.Cycles))
 			skip = min(skip, c.ppb[1].cyclesUntilSysTick(c.Cycles))
+			// Interval samplers must be called on their grid, so the jump
+			// cannot pass the next deadline.
+			if c.periodicNext > c.Cycles {
+				skip = min(skip, c.periodicNext-c.Cycles)
+			}
 			if skip == 0 {
 				skip = 1
 			}
@@ -372,7 +461,9 @@ func (c *Chip) Run(n uint64) uint64 {
 
 // canIdleSkip reports whether a jump to the next microsecond tick cannot
 // change any observable state: both cores are asleep or parked, no DMA or PIO
-// engine is running, no cycle hook samples pins, and the USB device is off.
+// engine is running, no per-cycle hook samples pins, and the USB device is off.
+// Periodic hooks (traces, analog sources) do not forbid the jump: Run bounds it
+// by their next deadline and tickPeripherals fires them on arrival.
 func (c *Chip) canIdleSkip() bool {
 	if c.Paused || c.pendingReset || !coreIdle(c.CPU0) || !coreIdle(c.CPU1) {
 		return false
@@ -564,6 +655,9 @@ func (c *Chip) tickPeripherals() {
 	for _, h := range c.CycleHooks {
 		h()
 	}
+	if c.Cycles >= c.periodicNext {
+		c.runPeriodicHooks()
+	}
 }
 
 // NVIC delivers interrupts to the cores.
@@ -664,6 +758,7 @@ func (c *Chip) Reset() {
 	c.pendingReset = false
 	c.usbPoll = 0
 	c.pioLogN = 0
+	c.rewindPeriodicHooks()
 	c.CPU0.Reset()
 	c.CPU1.Reset()
 	c.CPU0.Parked = false
