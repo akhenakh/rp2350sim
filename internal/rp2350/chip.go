@@ -666,12 +666,20 @@ func (c *Chip) tickPeripherals() {
 		}
 	}
 	// PIO clock dividers are free-running and GPIO inputs are synchronized
-	// even while every state machine is disabled.
-	pioInputs := c.pioInputLevels()
+	// even while every state machine is disabled. Both the level computation
+	// and the per-block tick are skipped when they provably have nothing to do.
+	pioInputs := c.pioInputCacheLevels
+	if !c.pioInputStable() {
+		pioInputs = c.pioInputLevels()
+	}
 	for _, p := range c.pio {
-		if p != nil {
-			p.tickWithInputs(pioInputs)
+		if p == nil {
+			continue
 		}
+		if p.active|p.clocking == 0 && p.inputPending == 0 && p.inputLast == pioInputs {
+			continue
+		}
+		p.tickWithInputs(pioInputs)
 	}
 	for _, h := range c.CycleHooks {
 		h()

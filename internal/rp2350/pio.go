@@ -1512,17 +1512,22 @@ func (s *pioSM) execSet(instr uint16) {
 
 // ---- input synchronizers and block tick ----
 
-func (c *Chip) pioInputLevels() uint64 {
+// pioInputStable reports whether the cached input levels are still current.
+// It is small enough to inline, so the per-cycle caller can skip both the
+// padView computation and the pioInputLevels call when nothing changed.
+func (c *Chip) pioInputStable() bool {
 	p := c.Pins
-	// Fast path: compare the raw summaries and the pad controls before paying
-	// for padView. Pad writes clear pioInputValid, so the cached levels are
-	// still the ones these summaries produced.
-	if c.pioInputValid && p.pwmPins == 0 &&
+	return c.pioInputValid && p.pwmPins == 0 &&
 		c.pioInputOut == p.Out && c.pioInputOE == p.OE &&
 		c.pioInputExtLevel == p.ExtLevel && c.pioInputExtValid == p.ExtValid &&
 		c.pioInputPulls == p.pullUpMask &&
 		c.pioInputPadIE == p.padIE && c.pioInputPadISO == p.padISO &&
-		c.pioInputPadOD == p.padOD {
+		c.pioInputPadOD == p.padOD
+}
+
+func (c *Chip) pioInputLevels() uint64 {
+	p := c.Pins
+	if c.pioInputStable() {
 		return c.pioInputCacheLevels
 	}
 	out, oe, pulls := p.Out, p.OE, p.pullUpMask
