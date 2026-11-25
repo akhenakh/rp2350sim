@@ -644,11 +644,16 @@ func (e *Emu) LogicTriggered() (bool, string) {
 
 // checkTriggerLocked captures the trace and event rings on a match. The
 // caller holds e.mu.
+// triggerArmed reports whether a trigger of this kind is still waiting. Bus taps
+// build a message per byte; when nothing is armed that formatting is pure
+// overhead, so they check this first.
+func (e *Emu) triggerArmed(kind string) bool {
+	return !e.frozen.triggered && e.trigger.Kind != "" &&
+		(e.trigger.Kind == "any" || e.trigger.Kind == kind)
+}
+
 func (e *Emu) checkTriggerLocked(kind, info string) {
-	if e.frozen.triggered || e.trigger.Kind == "" {
-		return
-	}
-	if e.trigger.Kind != "any" && e.trigger.Kind != kind {
+	if !e.triggerArmed(kind) {
 		return
 	}
 	e.frozen.triggered = true
@@ -964,7 +969,7 @@ func (e *Emu) addUART(bus int, cycle uint64, in bool, b byte) {
 	if len(e.uartEvents) > 512 {
 		e.uartEvents = e.uartEvents[len(e.uartEvents)-256:]
 	}
-	if !in {
+	if !in && e.triggerArmed("uart") {
 		e.checkTriggerLocked("uart", fmt.Sprintf("UART TX 0x%02x", b))
 	}
 }
@@ -974,13 +979,18 @@ func (e *Emu) addSPI(bus int, cycle uint64, tx, rx byte) {
 	if len(e.spiEvents) > 512 {
 		e.spiEvents = e.spiEvents[len(e.spiEvents)-256:]
 	}
-	e.checkTriggerLocked("spi", fmt.Sprintf("SPI MOSI 0x%02x", tx))
+	if e.triggerArmed("spi") {
+		e.checkTriggerLocked("spi", fmt.Sprintf("SPI MOSI 0x%02x", tx))
+	}
 }
 
 func (e *Emu) addI2C(bus int, cycle uint64, kind string, addr uint8, data byte, ack bool) {
 	e.i2cEvents = append(e.i2cEvents, I2CEvent{Bus: bus, Cycle: cycle, Kind: kind, Addr: addr, Data: data, Ack: ack})
 	if len(e.i2cEvents) > 512 {
 		e.i2cEvents = e.i2cEvents[len(e.i2cEvents)-256:]
+	}
+	if !e.triggerArmed("i2c") {
+		return
 	}
 	info := fmt.Sprintf("I2C %s", kind)
 	if kind == "addr" || kind == "data" {
