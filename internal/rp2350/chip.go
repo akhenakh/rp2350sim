@@ -141,12 +141,18 @@ type Chip struct {
 	pioInputExtValid    uint64
 	pioInputPulls       uint64
 	pioInputPWMPins     uint64
+	pioInputPadIE       uint64
+	pioInputPadISO      uint64
+	pioInputPadOD       uint64
 	pioInputCacheLevels uint64
 
 	regs    []*regBlock
 	byBase  map[uint32]*regBlock
 	qmi     *qmiBlock
 	xipCtrl *regBlock
+	// regBlockFor's one-entry cache (see regBlockFor).
+	lastPage  uint32
+	lastBlock *regBlock
 
 	// OnDMA reports DMA transfers (diagnostics).
 	OnDMA func(ch int, readAddr, writeAddr, count, ctrl uint32)
@@ -313,6 +319,7 @@ func New() *Chip {
 func (c *Chip) addRegBlock(b *regBlock) {
 	c.regs = append(c.regs, b)
 	c.byBase[b.base] = b
+	c.lastBlock = nil
 	sort.Slice(c.regs, func(i, j int) bool { return c.regs[i].base < c.regs[j].base })
 }
 
@@ -398,15 +405,21 @@ func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
 // is the writing core, or -1 for DMA/host writes. A local store clears only its
 // own monitor; another master's write signals an exclusive-loss event.
 func (c *Chip) invalidateMonitors(addr uint32, writer int) {
-	for core, cpu := range []*m33.CPU{c.CPU0, c.CPU1} {
-		if cpu == nil || !cpu.MonitorCovers(addr) {
-			continue
-		}
-		if writer == core {
+	// Two explicit checks: this runs on every store, and a slice literal plus a
+	// range loop here shows up in MMIO-heavy firmware.
+	if cpu := c.CPU0; cpu != nil && cpu.MonitorCovers(addr) {
+		if writer == 0 {
 			cpu.ClearMonitor()
-			continue
+		} else {
+			cpu.InvalidateMonitor()
 		}
-		cpu.InvalidateMonitor()
+	}
+	if cpu := c.CPU1; cpu != nil && cpu.MonitorCovers(addr) {
+		if writer == 1 {
+			cpu.ClearMonitor()
+		} else {
+			cpu.InvalidateMonitor()
+		}
 	}
 }
 
@@ -597,8 +610,14 @@ func (c *Chip) advancePIO(cycles uint64) {
 func (c *Chip) tickPeripherals() {
 	// SysTick is cycle-accurate: the lazy comparison is cheap enough to run on
 	// every cycle, and a WFI wake must happen before the cores are stepped.
-	c.ppb[0].tickSysTick(c.Cycles)
-	c.ppb[1].tickSysTick(c.Cycles)
+	// The enable check is the first thing sync() does, so hoisting it only
+	// saves a call.
+	if c.ppb[0].tick.enabled() {
+		c.ppb[0].tickSysTick(c.Cycles)
+	}
+	if c.ppb[1].tick.enabled() {
+		c.ppb[1].tickSysTick(c.Cycles)
+	}
 	for i := range c.tmr {
 		c.tmr[i].tick(c.Cycles)
 	}
@@ -623,10 +642,12 @@ func (c *Chip) tickPeripherals() {
 	if c.dma != nil && c.dma.busy() {
 		c.dma.tick()
 	}
-	if c.sha != nil {
+	// Same predicate as the first line of each tick: hoist it to skip the call
+	// on chips that never enable the block (the common case).
+	if c.sha != nil && c.sha.pending {
 		c.sha.tick(c)
 	}
-	if c.hstx != nil {
+	if c.hstx != nil && c.hstx.csr&1 != 0 {
 		c.hstx.tick()
 	}
 	// Host input and the USB host state machine are asynchronous to the
@@ -1074,6 +1095,11 @@ func (c *Chip) Read16(addr uint32) uint16 {
 		o := addr - SRAMBase
 		return binary.LittleEndian.Uint16(c.SRAM[o:])
 	}
+	// Flat XIP is the common case for instruction fetch: skip the partition
+	// translation call.
+	if c.partSize == 0 && addr >= FlashBase && addr < FlashBase+FlashSize-1 {
+		return binary.LittleEndian.Uint16(c.Flash[addr-FlashBase:])
+	}
 	if o, ok := c.flashIndex(addr, 2); ok {
 		return binary.LittleEndian.Uint16(c.Flash[o:])
 	}
@@ -1297,12 +1323,23 @@ func (c *Chip) unhandledWrite(addr, v uint32) {
 
 // regBlockFor finds the block containing addr. The common case is an access
 // on the block's first 4 KB page, which byBase resolves without scanning.
+// lastPage/lastBlock cache the previous hit: firmware bursts (SPI bytes, GPIO
+// writes) hit the same block thousands of times in a row, and a map lookup per
+// access is expensive under wasm.
 func (c *Chip) regBlockFor(addr uint32) *regBlock {
-	if b := c.byBase[addr&^0xFFF]; b != nil && addr >= b.base && addr < b.base+b.size {
+	page := addr &^ 0xFFF
+	if page == c.lastPage {
+		if b := c.lastBlock; b != nil && addr >= b.base && addr < b.base+b.size {
+			return b
+		}
+	}
+	if b := c.byBase[page]; b != nil && addr >= b.base && addr < b.base+b.size {
+		c.lastPage, c.lastBlock = page, b
 		return b
 	}
 	for _, b := range c.regs {
 		if addr >= b.base && addr < b.base+b.size {
+			c.lastPage, c.lastBlock = page, b
 			return b
 		}
 	}

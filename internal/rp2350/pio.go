@@ -1514,6 +1514,17 @@ func (s *pioSM) execSet(instr uint16) {
 
 func (c *Chip) pioInputLevels() uint64 {
 	p := c.Pins
+	// Fast path: compare the raw summaries and the pad controls before paying
+	// for padView. Pad writes clear pioInputValid, so the cached levels are
+	// still the ones these summaries produced.
+	if c.pioInputValid && p.pwmPins == 0 &&
+		c.pioInputOut == p.Out && c.pioInputOE == p.OE &&
+		c.pioInputExtLevel == p.ExtLevel && c.pioInputExtValid == p.ExtValid &&
+		c.pioInputPulls == p.pullUpMask &&
+		c.pioInputPadIE == p.padIE && c.pioInputPadISO == p.padISO &&
+		c.pioInputPadOD == p.padOD {
+		return c.pioInputCacheLevels
+	}
 	out, oe, pulls := p.Out, p.OE, p.pullUpMask
 	pwmPins := p.pwmPins
 	if !c.pioInputValid {
@@ -1531,12 +1542,6 @@ func (c *Chip) pioInputLevels() uint64 {
 		}
 	}
 	out, oe, pulls = p.padView(out, oe, pulls)
-	stable := c.pioInputValid && c.pioInputOut == p.Out && c.pioInputOE == p.OE &&
-		c.pioInputExtLevel == p.ExtLevel && c.pioInputExtValid == p.ExtValid &&
-		c.pioInputPulls == pulls && c.pioInputPWMPins == pwmPins
-	if stable && pwmPins == 0 {
-		return c.pioInputCacheLevels
-	}
 
 	ext := p.ExtValid
 	levels := (out & oe) | (p.ExtLevel &^ oe & ext) | (pulls &^ oe &^ ext)
@@ -1564,7 +1569,8 @@ func (c *Chip) pioInputLevels() uint64 {
 	c.pioInputValid = true
 	c.pioInputOut, c.pioInputOE = p.Out, p.OE
 	c.pioInputExtLevel, c.pioInputExtValid = p.ExtLevel, p.ExtValid
-	c.pioInputPulls, c.pioInputPWMPins = pulls, p.pwmPins
+	c.pioInputPulls, c.pioInputPWMPins = p.pullUpMask, p.pwmPins
+	c.pioInputPadIE, c.pioInputPadISO, c.pioInputPadOD = p.padIE, p.padISO, p.padOD
 	c.pioInputCacheLevels = levels
 	return levels
 }
