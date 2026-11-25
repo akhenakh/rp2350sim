@@ -328,7 +328,9 @@ func (d *CH9120) send(b []byte) {
 	d.Chip.SendUART(d.UART, b)
 }
 
-// Tick services the module once per millisecond of virtual time.
+// Tick is called on the 1 µs periodic grid and services the module once per
+// millisecond. A sub-microsecond RST pulse can be missed; firmware holds reset
+// for milliseconds in practice.
 func (d *CH9120) Tick() {
 	now := d.Chip.Cycles
 	if now < d.nextTick {
