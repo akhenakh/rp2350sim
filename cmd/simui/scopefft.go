@@ -107,7 +107,6 @@ func (s *scopeSpectrum) compute(samples []devices.TraceSample, ch int, rate, ful
 
 // scopeSpectrumPanel draws the live FFT of one visible scope channel.
 func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint64, vmax float32) {
-	const h = 150
 	var (
 		ch             int
 		bins           []float64
@@ -120,7 +119,7 @@ func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint
 		bins, peakHz, peakDB, binHz, ok = scopeAnalyzer.compute(
 			samples, ch, 150e6/float64(interval), float64(vmax))
 	}
-	Container(Attrs(Grow(1), Gap(4)), func() {
+	Container(Attrs(Grow(1), Expand, Gap(4)), func() {
 		Container(Attrs(Row, CrossMid, Gap(10)), func() {
 			Label("Spectrum", FontSize(12), FontWeight(700))
 			if !ok {
@@ -138,8 +137,12 @@ func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint
 			Label(fmt.Sprintf("peak %s · %.1f dBFS", formatFreq(peakHz), peakDB),
 				FontSize(11), FontWeight(600), TextColor(20, 60, 80, 1))
 		})
-		Container(Attrs(Row, Gap(6), Expand), func() {
-			Container(Attrs(FixWidth(38), FixHeight(h)), func() {
+		Container(Attrs(Row, Gap(6), Expand, Grow(1)), func() {
+			h := int(GetContentHeight())
+			if h < 40 {
+				h = 150
+			}
+			Container(Attrs(FixWidth(38), FixHeight(float32(h))), func() {
 				Label("0 dB", FontSize(10))
 				Filler(1)
 				Label("-120", FontSize(10))
@@ -151,10 +154,10 @@ func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint
 				}
 				img := scopeSpectrumImage(bins, int(w), h, -120, binHz, scopeFFTLog, paletteAt(ch))
 				id := UseImage("scopefft", img)
-				ImageViewAt(id, Vec2{w, h})
+				ImageViewAt(id, Vec2{w, float32(h)})
 			})
 		})
-		Container(Attrs(Row, Gap(8)), func() {
+		Container(Attrs(Row, Gap(8), Pad4(0, 0, 0, 44)), func() {
 			if !ok {
 				return
 			}

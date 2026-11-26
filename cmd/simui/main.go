@@ -1916,10 +1916,6 @@ func scopePanel() {
 			marker = trigIdx - start
 		}
 	}
-	plotH := 420
-	if scopeFFT {
-		plotH = 200
-	}
 	if len(pins) > 0 {
 		scopeFFTChannel = min(max(scopeFFTChannel, 0), len(pins)-1)
 	}
@@ -2016,8 +2012,12 @@ func scopePanel() {
 			}
 		})
 		scopePinPicker()
-		Container(Attrs(Row, Gap(6), Expand), func() {
-			Container(Attrs(FixWidth(38), FixHeight(float32(plotH))), func() {
+		Container(Attrs(Row, Gap(6), Expand, Grow(1)), func() {
+			h := int(GetContentHeight())
+			if h < 40 {
+				h = 200 // first frame, before layout has resolved
+			}
+			Container(Attrs(FixWidth(38), FixHeight(float32(h))), func() {
 				Label(fmt.Sprintf("%s V", strconv.FormatFloat(float64(vmax), 'g', 3, 32)), FontSize(10))
 				Filler(1)
 				Label("0 V", FontSize(10))
@@ -2027,9 +2027,9 @@ func scopePanel() {
 				if w < 200 {
 					w = 1100 // first frame, before layout has resolved
 				}
-				img := scopeImage(pins, visible, int(w), plotH, vmax, marker)
+				img := scopeImage(pins, visible, int(w), h, vmax, marker)
 				id := UseImage("scope", img)
-				ImageViewAt(id, Vec2{w, float32(plotH)})
+				ImageViewAt(id, Vec2{w, float32(h)})
 			})
 		})
 		if scopeFFT {
