@@ -97,9 +97,9 @@ them for other hosts.
   symbols and DWARF; the packed tinychess demo has none, so its Debug tab shows
   registers and memory and Profile shows PC buckets.
 - **Scripted device plugins work in the page.** `.lua` and `.wasm` device
-  files from `plugins/examples/` are fetched by URL and run under wazero; a
-  custom board entry can point `url:` at another same-origin plugin. See
-  [device plugins](plugins.md).
+  files from `plugins/examples/` are fetched by URL and instantiated by the
+  browser's native WebAssembly engine; a custom board entry can point `url:`
+  at another same-origin plugin. See [device plugins](plugins.md).
 - **Host devices are stripped** before boot by `webPrepareBoard`: SD directory
   backing (the built-in FAT16 image is used), UART/I2C/SPI TCP bridges, the
   W5500/W6300/CH9120 controllers, the GDB server and the Build drawer. Boards

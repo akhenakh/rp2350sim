@@ -7,11 +7,11 @@ the emulator. Two formats are supported:
   WebAssembly;
 - **WASM** (`.wasm`) runs directly.
 
-Both use the same small bus ABI and the same host runtime (`wazero`), so a
-model behaves the same on the desktop, in the headless runner and in the
-browser demo. This is how the four built-in presets grow into a device
-ecosystem: anyone can share a BME280, a flash chip, a modem or a companion
-radio as a file.
+Both use the same small bus ABI. Desktop and the headless runner execute them
+with wazero's compiler; the browser uses the native WebAssembly engine, with
+JavaScript host imports bridging back to Go. This is how the four built-in
+presets grow into a device ecosystem: anyone can share a BME280, a flash chip,
+a modem or a companion radio as a file.
 
 ![Scripted plugins in the Bus tab](images/plugins.png)
 
@@ -198,13 +198,19 @@ seconds, `presets.elf`):
 
 A four-call SPI transaction (select + three bytes) benchmarks at roughly
 9.5 µs in Lua and 6 µs as compiled C WASM. These are host timings, not
-emulated bus rates; the compiler is used on desktop and the interpreter in the
-browser.
+emulated bus rates.
+
+In the browser the native engine executes the same files. 12-second
+`presets.elf` runs in headless Chromium reached 3.3–3.5 virtual seconds both
+with and without the six-plugin `pico2-plugins` board, so the native plugin
+path adds no measurable cost beyond run-to-run noise.
 
 The Lua interpreter artifact itself is checked in at
 `internal/deviceplugin/assets/device_lua.wasm` and embedded in the binaries.
 Users never need a Lua or C toolchain; `task plugins:build` is only for
-maintainers changing the shim.
+maintainers changing the shim. In the browser the embedded Lua module is
+instantiated by the page's native WebAssembly engine, with the small WASI
+subset provided by the host bridge.
 
 ## Limits
 
@@ -212,18 +218,22 @@ maintainers changing the shim.
   spend CPU or loop forever; link limits are not a security boundary. Lua
   libraries are still restricted and WASM has no filesystem or network
   imports.
-- Lua runs under wazero's interpreter in both desktop and browser builds. The
-  browser therefore has a wasm-in-wasm interpreter; use compiled WASM or keep
-  transactions modest for high-rate SPI.
+- Desktop and headless runs use wazero's compiler; the browser uses the native
+  WebAssembly engine with JavaScript/Go host imports. A browser still pays the
+  JS/Go boundary on each callback, so use compiled WASM for hot SPI paths.
 - Plan on a reset to re-create plugin state; plugins are attached when the
   chip is built. Board YAML changes require a reload.
 - The ABI is versioned (`plugin_abi_version` = 1). An unsupported version or
   missing export is a load error, not a silent default.
+- The browser path needs native WebAssembly exception handling for the Lua
+  runtime (current Chrome and Firefox). A browser without it reports the
+  instantiation error in the Bus tab instead of using a fallback interpreter.
 
 ## Tasks
 
 ```sh
 task plugins:build    # rebuild device_lua.wasm (needs wasi-sdk + Lua source)
+task test:js          # plugin tests on the native engine (Node, js/wasm)
 task ui:plugins       # the pico2-plugins board in the Bus tab
 task ui:plugins:png   # render it to build/ui-plugins.png
 ```

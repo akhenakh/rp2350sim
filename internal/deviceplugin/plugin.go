@@ -1,26 +1,18 @@
 // Package deviceplugin runs external I2C, SPI and UART device models supplied
 // as files. Lua scripts run inside a bundled Lua interpreter compiled to
 // WebAssembly; compiled plugins are ordinary WASM modules. Both expose the
-// same small ABI and run under wazero, so desktop and browser builds use the
-// same host code.
+// same small ABI. Desktop uses wazero; the browser uses the native WebAssembly
+// engine through a build-tagged backend.
 package deviceplugin
 
 import (
-	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
-	"github.com/tetratelabs/wazero/experimental"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
 //go:embed assets/device_lua.wasm
@@ -55,11 +47,26 @@ type Config struct {
 	Log func(line string)
 }
 
+// backend is the language/runtime-specific half. It is implemented by
+// plugin_wazero.go on desktop and plugin_native_js.go in the browser.
+type backend interface {
+	Init(config []byte) error
+	Close() error
+	Tick(us uint64)
+	Reset()
+	I2CBegin(addr uint8)
+	I2CWrite(b byte) bool
+	I2CRead() (byte, bool)
+	I2CEnd()
+	SPISelect(active bool)
+	SPITransfer(tx byte) byte
+	UARTTX(b byte)
+}
+
 // Plugin is one loaded device model.
 type Plugin struct {
-	name string
-	rt   wazero.Runtime
-	mod  api.Module
+	name    string
+	backend backend
 
 	mu      sync.Mutex
 	logs    []string
@@ -84,141 +91,29 @@ func Load(cfg Config) (*Plugin, error) {
 	default:
 		return nil, fmt.Errorf("deviceplugin: unknown language %d", cfg.Lang)
 	}
-
-	ctx := context.Background()
-	// Desktop uses wazero's compiler; the browser can only interpret. The
-	// plugin ABI is the same either way.
-	var rconf wazero.RuntimeConfig
-	if runtime.GOOS == "js" {
-		rconf = wazero.NewRuntimeConfigInterpreter()
-	} else {
-		rconf = wazero.NewRuntimeConfigCompiler()
-	}
-	rconf = rconf.WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling)
-	rt := wazero.NewRuntimeWithConfig(ctx, rconf)
-
-	p := &Plugin{name: cfg.Name, rt: rt, log: cfg.Log}
+	p := &Plugin{name: cfg.Name, log: cfg.Log}
 	if p.name == "" {
 		p.name = "plugin"
 	}
-	closeOnError := func(err error) (*Plugin, error) {
-		_ = rt.Close(ctx)
+	b, err := newBackend(p, cfg, artifact)
+	if err != nil {
 		return nil, err
 	}
-
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
-		return closeOnError(fmt.Errorf("deviceplugin: wasi: %w", err))
-	}
-
-	// Build all host functions in one module, not one module per function.
-	_, err := rt.NewHostModuleBuilder("plugin").
-		NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, mod api.Module, ptr, n uint32) {
-			line := readString(mod, ptr, n, 4096)
-			if line != "" {
-				p.addLog(line)
-			}
-		}).Export("host_log").
-		NewFunctionBuilder().
-		WithFunc(func() uint64 {
-			// The emulator installs a virtual clock later; plugins that only
-			// need a monotonic value get a deterministic count.
-			return p.nowUS()
-		}).Export("host_now_us").
-		NewFunctionBuilder().
-		WithFunc(func(pin, level int32) int32 {
-			if cfg.GPIOWrite != nil {
-				cfg.GPIOWrite(int(pin), level != 0)
-			}
-			return 0
-		}).Export("host_gpio_write").
-		NewFunctionBuilder().
-		WithFunc(func(pin int32) int32 {
-			if cfg.GPIORead != nil {
-				return int32(cfg.GPIORead(int(pin)))
-			}
-			return 0
-		}).Export("host_gpio_read").
-		NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, mod api.Module, ptr, n uint32) int32 {
-			if cfg.UARTWrite == nil || n > 4096 {
-				return 0
-			}
-			data := readBytes(mod, ptr, n)
-			cfg.UARTWrite(data)
-			return int32(len(data))
-		}).Export("host_uart_send").
-		Instantiate(ctx)
-	if err != nil {
-		return closeOnError(fmt.Errorf("deviceplugin: host: %w", err))
-	}
-
-	program := cfg.Source
-	if cfg.Lang == Lua {
-		// The Lua runtime reads the script through plugin_rt; a compiled
-		// plugin needs no program channel.
-		if _, err := rt.NewHostModuleBuilder("plugin_rt").
-			NewFunctionBuilder().WithFunc(func() uint32 { return uint32(len(program)) }).Export("program_len").
-			NewFunctionBuilder().WithFunc(func(ctx context.Context, mod api.Module, ptr, cap uint32) uint32 {
-			return uint32(copyToMemory(mod, ptr, cap, program))
-		}).Export("program_read").
-			Instantiate(ctx); err != nil {
-			return closeOnError(fmt.Errorf("deviceplugin: runtime: %w", err))
-		}
-	}
-
-	compiled, err := rt.CompileModule(ctx, artifact)
-	if err != nil {
-		return closeOnError(fmt.Errorf("deviceplugin: compile %s: %w", p.name, err))
-	}
-	mod, err := rt.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().
-		WithName(p.name).
-		WithStartFunctions().
-		WithStdout(io.Discard).
-		WithStderr(io.Discard))
-	if err != nil {
-		return closeOnError(fmt.Errorf("deviceplugin: instantiate %s: %w", p.name, err))
-	}
-	p.mod = mod
-
-	if err := p.init(cfg.Config); err != nil {
-		return closeOnError(err)
+	p.backend = b
+	if err := b.Init(cfg.Config); err != nil {
+		_ = b.Close()
+		return nil, err
 	}
 	return p, nil
 }
 
-// init writes the config through plugin_alloc and calls plugin_init.
-func (p *Plugin) init(config []byte) error {
-	if v := p.call("plugin_abi_version"); v != 1 {
-		return fmt.Errorf("deviceplugin: %s ABI %d, want 1", p.name, v)
-	}
-	alloc := p.mod.ExportedFunction("plugin_alloc")
-	initf := p.mod.ExportedFunction("plugin_init")
-	if alloc == nil || initf == nil {
-		return fmt.Errorf("deviceplugin: %s does not export plugin_alloc/plugin_init", p.name)
-	}
-	ptr, err := p.callErr(alloc, uint64(len(config)))
-	if err != nil {
-		return fmt.Errorf("deviceplugin: %s alloc: %w", p.name, err)
-	}
-	if len(config) > 0 {
-		mem := p.mod.Memory()
-		if mem == nil || !mem.Write(uint32(ptr), config) {
-			return fmt.Errorf("deviceplugin: %s config does not fit memory", p.name)
-		}
-	}
-	res, err := p.callErr(initf, ptr, uint64(len(config)))
-	if err != nil {
-		return fmt.Errorf("deviceplugin: %s init: %w", p.name, err)
-	}
-	if uint32(res) != 0 {
-		return fmt.Errorf("deviceplugin: %s init failed (status %d)", p.name, uint32(res))
-	}
-	return nil
-}
-
 // Close releases the plugin runtime.
-func (p *Plugin) Close() error { return p.rt.Close(context.Background()) }
+func (p *Plugin) Close() error {
+	if p.backend == nil {
+		return nil
+	}
+	return p.backend.Close()
+}
 
 // Name is the instance name.
 func (p *Plugin) Name() string { return p.name }
@@ -268,108 +163,15 @@ func (p *Plugin) nowUS() uint64 { return p.clockUS }
 // SetNowUS advances the plugin clock, usually from the emulator's periodic hook.
 func (p *Plugin) SetNowUS(us uint64) { p.clockUS = us }
 
-// --- ABI calls ------------------------------------------------------------
-
-func (p *Plugin) call(name string, args ...uint64) int32 {
-	f := p.mod.ExportedFunction(name)
-	if f == nil {
-		return -1
-	}
-	v, err := p.callErr(f, args...)
-	if err != nil {
-		p.setErr(err)
-		return -1
-	}
-	return int32(v)
-}
-
-func (p *Plugin) callErr(f api.Function, args ...uint64) (uint64, error) {
-	res, err := f.Call(context.Background(), args...)
-	if err != nil {
-		return 0, err
-	}
-	if len(res) == 0 {
-		return 0, nil
-	}
-	return res[0], nil
-}
-
-func (p *Plugin) tick(us uint64) {
-	if f := p.mod.ExportedFunction("plugin_tick"); f != nil {
-		_, err := f.Call(context.Background(), us)
-		if err != nil {
-			p.setErr(err)
-		}
-	}
-}
-
-func (p *Plugin) reset() {
-	if f := p.mod.ExportedFunction("plugin_reset"); f != nil {
-		_, err := f.Call(context.Background())
-		if err != nil {
-			p.setErr(err)
-		}
-	}
-}
-
-func (p *Plugin) i2cBegin(addr uint8)  { p.call("i2c_begin", uint64(addr)) }
-func (p *Plugin) i2cEnd()              { p.call("i2c_end") }
-func (p *Plugin) i2cWrite(b byte) bool { return p.call("i2c_write", uint64(b)) == 1 }
-func (p *Plugin) i2cRead() (byte, bool) {
-	v := p.call("i2c_read")
-	if v < 0 {
-		return 0, false
-	}
-	return byte(v), true
-}
-
-func (p *Plugin) spiSelect(active bool) {
-	v := uint64(0)
-	if active {
-		v = 1
-	}
-	p.call("spi_select", v)
-}
-func (p *Plugin) spiTransfer(tx byte) byte {
-	v := p.call("spi_transfer", uint64(tx))
-	if v < 0 {
-		return 0xFF
-	}
-	return byte(v)
-}
-func (p *Plugin) uartTX(b byte) { p.call("uart_tx", uint64(b)) }
-
-func readString(mod api.Module, ptr, n uint32, limit uint32) string {
-	if n > limit || mod.Memory() == nil {
-		return ""
-	}
-	data := readBytes(mod, ptr, n)
-	return string(data)
-}
-
-func readBytes(mod api.Module, ptr, n uint32) []byte {
-	if n == 0 || mod.Memory() == nil {
-		return nil
-	}
-	data, ok := mod.Memory().Read(ptr, n)
-	if !ok {
-		return nil
-	}
-	return append([]byte(nil), data...)
-}
-
-func copyToMemory(mod api.Module, ptr, cap uint32, data []byte) int {
-	if mod.Memory() == nil || cap == 0 {
-		return 0
-	}
-	if uint32(len(data)) > cap {
-		data = data[:cap]
-	}
-	if !mod.Memory().Write(ptr, data) {
-		return 0
-	}
-	return len(data)
-}
+func (p *Plugin) i2cBegin(addr uint8)      { p.backend.I2CBegin(addr) }
+func (p *Plugin) i2cEnd()                  { p.backend.I2CEnd() }
+func (p *Plugin) i2cWrite(b byte) bool     { return p.backend.I2CWrite(b) }
+func (p *Plugin) i2cRead() (byte, bool)    { return p.backend.I2CRead() }
+func (p *Plugin) spiSelect(active bool)    { p.backend.SPISelect(active) }
+func (p *Plugin) spiTransfer(tx byte) byte { return p.backend.SPITransfer(tx) }
+func (p *Plugin) uartTX(b byte)            { p.backend.UARTTX(b) }
+func (p *Plugin) tick(us uint64)           { p.backend.Tick(us) }
+func (p *Plugin) reset()                   { p.backend.Reset() }
 
 // I2C adapts a plugin to rp2350.I2CDevice/I2CTransaction.
 type I2C struct {

@@ -35,6 +35,22 @@ tasks:
     cmds:
       - go test ./...
 
+  test:js:
+    desc: Run the browser plugin backend tests under Node's native WebAssembly engine
+    cmds:
+      - |
+        if ! command -v node >/dev/null 2>&1; then
+          echo "node not found: skipping the js/wasm plugin tests"
+          exit 0
+        fi
+        # wasm_exec passes the whole environment to Node, which rejects large
+        # environments, so run the test binary with the few variables Go needs.
+        env -i PATH="$PATH" HOME="$HOME" \
+          GOCACHE="$(go env GOCACHE)" GOMODCACHE="$(go env GOMODCACHE)" \
+          GOOS=js GOARCH=wasm \
+          go test ./internal/deviceplugin/ -count=1 \
+          -exec "$(go env GOROOT)/lib/wasm/go_js_wasm_exec"
+
   test:race:
     desc: Run the unit tests with the Go race detector
     cmds:
@@ -82,6 +98,7 @@ tasks:
     cmds:
       - task: lint
       - go test ./...
+      - task: test:js
       - cd cmd/simui && go test ./...
       - 'go test -tags qemu ./internal/m33 -run TestQEMUInstructions'
       - 'go build -o {{.BUILD}}/ethhost ./tools/ethhost'
