@@ -427,6 +427,24 @@ task ui:hid:composite # pico-sdk keyboard/mouse/media/gamepad, BOOTSEL latched
 task ui:hid:png      # render this tab to build/ui-hid.png
 ```
 
+### BOOTSEL
+
+The virtual RPI-RP2 drive. It is shown when the board holds BOOTSEL, when no
+firmware is loaded, or when the tab is selected. **Flash UF2…** opens a file
+picker; the path field accepts one directly. The chosen file must carry a valid
+RP2350 boot vector, but its UF2 family may be any RP2350 family: only flash
+segments are installed, the flash is replaced and the machine boots the new
+image. `UUID`/absolute metadata blocks are ignored.
+
+The desktop window uses the click/path flow because Shirei (v0.10.0) exposes no
+native OS file-drop event. The browser build also accepts a `.uf2` dropped
+anywhere on the page.
+
+```sh
+task ui:bootsel      # open the virtual drive with no firmware
+task ui:bootsel:png  # render it to build/ui-bootsel.png
+```
+
 ### OTP
 
 The RP2350 OTP array: 64 pages of 64 rows, each page showing its programmed-row
