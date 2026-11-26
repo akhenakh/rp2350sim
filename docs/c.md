@@ -90,7 +90,8 @@ works: `multicore_launch_core1` uses the same SIO FIFO handshake as TinyGo.
   `printf`, GPIO and multicore.
 - Single-precision floating point (VFPv5-SP): arithmetic, comparisons,
   conversions, loads/stores and callee-saved `d8`-`d15` push/pop. The
-  `floatdemo` example asserts exact IEEE bit patterns.
+  `floatdemo` example asserts exact IEEE bit patterns. `itmdemo` writes a
+  string through ITM stimulus port 0; run it with `-itm`.
 - Double-precision arithmetic goes through the RP2350 double coprocessor
   (DCP, CP4). `firmware/c/dcp` asserts the IEEE bit patterns for `+ - * /` and
   `sqrt` through the SDK's canned sequences. A double `%f` value itself renders

@@ -209,6 +209,8 @@ the tabs accordingly:
   zoom/range controls, generated `analog:` waveforms and a toggleable Hann
   FFT/spectrum with a log frequency axis and peak readout.
 - **Logic** (always): UART/I2C/SPI/USB decoding, triggers and **Save trace**.
+- **Timed hobbies**: 1-Wire DS18B20, DHT11/22, HC-SR04, NMEA GPS and MCP2515
+  CAN are Go device models with cycle-accurate edge timing.
 - **OTP**: pages, rows, ECC status and locks.
 - **Debug**: breakpoints, cycle stepping, registers, memory, source lines and
   DWARF variables, plus a GDB remote server (`--gdb` / toolbar **GDB**).

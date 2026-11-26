@@ -357,6 +357,12 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   attached when a board or `-psram` asks for it.
 - **Network tests** depend on host servers and wall-clock timing; see
   [ci.md](ci.md).
+- **CAN FD and RMII/MII Ethernet** are not modelled. The MCP2515 model is
+  classic CAN 2.0B; the W5500/W6300/CH9120 SPI MACs cover Ethernet. A PIO RMII
+  PHY needs a specific reference firmware and a 50 MHz pin model, so it stays a
+  future spike until one is validated.
+- **SWO** is debugger-side ITM/DWT only; the physical SWO pin bitstream is not
+  decoded.
 
 ## Firmware examples in this repository
 
@@ -375,6 +381,12 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/cores` | `-scheduler=cores` and core 1 |
 | `firmware/echo` | USB CDC console input |
 | `firmware/uart` | UART output for the logic analyzer |
+| `firmware/onewire` | bit-banged DS18B20 |
+| `firmware/dht` | bit-banged DHT22 |
+| `firmware/ultrasonic` | HC-SR04 echo timing |
+| `firmware/gps` | NMEA parser on UART1 |
+| `firmware/can` | MCP2515 classic CAN peer exchange |
+| `firmware/pluginlcd` | Lua I2C + WASM UART dashboard on Touch-LCD-2 |
 | `firmware/protocols` | UART/I2C/SPI traffic for the logic analyzer |
 | `firmware/serialbridge` | UART1 echoed over TCP |
 | `firmware/busmaster`, `firmware/busdevice` | I2C/SPI Bus Pirate bridges |
