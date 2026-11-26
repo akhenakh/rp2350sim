@@ -79,6 +79,10 @@ type Report struct {
 	IRQSlowest uint64        `json:"irq_slowest"`
 	IRQCount   uint64        `json:"irq_count"`
 	Stack      [2]StackWater `json:"stack"`
+
+	// Symbolized is false when the firmware has no usable DWARF/symbols and
+	// the function list is a set of PC buckets instead.
+	Symbolized bool `json:"symbolized"`
 }
 
 // Symbolizer is the subset of debug.Info the report needs.
@@ -90,6 +94,10 @@ type Symbolizer interface {
 // Build maps raw counts and samples onto functions and lines. read fetches
 // code bytes for the static instruction count and may be nil; when it is, the
 // instruction totals stay zero and only sample/line data is available.
+//
+// Without a symbolizer (or without any usable functions) the report falls
+// back to 256-byte PC buckets, so a packed demo firmware that dropped DWARF
+// still shows where its cycles go. Symbolized is false in that case.
 func Build(src Symbolizer, in Input, read func(addr uint32, size int) ([]byte, bool)) *Report {
 	rep := &Report{
 		SampleCycles:  in.SampleCycles,
@@ -99,12 +107,11 @@ func Build(src Symbolizer, in Input, read func(addr uint32, size int) ([]byte, b
 		IRQCount:      in.IRQCount,
 		Stack:         in.Stack,
 	}
-	if src == nil {
-		return rep
-	}
 
-	fns := src.CoverageFunctions()
-	ranges := make([]fnRange, 0, len(fns))
+	var fns []debug.Function
+	if src != nil {
+		fns = src.CoverageFunctions()
+	}
 	stats := make([]FunctionStat, 0, len(fns))
 	for _, fn := range fns {
 		if fn.Addr == 0 {
@@ -114,14 +121,21 @@ func Build(src Symbolizer, in Input, read func(addr uint32, size int) ([]byte, b
 			Name: fn.Name, File: fn.File, Line: fn.Line, Addr: fn.Addr, Size: fn.Size,
 		})
 	}
+	if len(stats) > 0 {
+		rep.Symbolized = true
+	} else {
+		stats = pcBuckets(in)
+	}
+
 	// Effective end: the symbol size, or the next function when the symbol
-	// table leaves it at zero.
+	// table leaves it at zero. Buckets always carry their own size.
 	sort.Slice(stats, func(i, j int) bool {
 		if stats[i].Addr == stats[j].Addr {
 			return stats[i].Name < stats[j].Name
 		}
 		return stats[i].Addr < stats[j].Addr
 	})
+	ranges := make([]fnRange, 0, len(stats))
 	for i := range stats {
 		end := stats[i].Addr + stats[i].Size
 		if stats[i].Size == 0 && i+1 < len(stats) && stats[i+1].Addr > stats[i].Addr {
@@ -130,14 +144,7 @@ func Build(src Symbolizer, in Input, read func(addr uint32, size int) ([]byte, b
 		if end > stats[i].Addr {
 			ranges = append(ranges, fnRange{idx: i, start: stats[i].Addr, end: end})
 		}
-	}
-
-	if read != nil {
-		for i := range stats {
-			end := stats[i].Addr + stats[i].Size
-			if stats[i].Size == 0 && i+1 < len(stats) && stats[i+1].Addr > stats[i].Addr {
-				end = stats[i+1].Addr
-			}
+		if read != nil {
 			stats[i].Instructions = staticInstructions(read, stats[i].Addr, end)
 		}
 	}
@@ -155,7 +162,10 @@ func Build(src Symbolizer, in Input, read func(addr uint32, size int) ([]byte, b
 	}
 
 	if in.Counts != nil {
-		lines := src.CoverageLines()
+		var lines []debug.LineRow
+		if src != nil {
+			lines = src.CoverageLines()
+		}
 		lineCounts := make(map[lineKey]uint64, len(lines))
 		for _, pc := range sortedKeys(in.Counts) {
 			n := in.Counts[pc]
@@ -212,6 +222,36 @@ func Build(src Symbolizer, in Input, read func(addr uint32, size int) ([]byte, b
 	})
 	rep.Functions = stats
 	return rep
+}
+
+// pcBucketSize is the fallback aggregation window when no symbols exist. It
+// is small enough to separate hot loops and large enough to keep the table
+// manageable for a stripped 190 KB firmware.
+const pcBucketSize = 256
+
+func pcBuckets(in Input) []FunctionStat {
+	starts := map[uint32]bool{}
+	add := func(m map[uint32]uint64) {
+		for pc := range m {
+			starts[pc&^(pcBucketSize-1)] = true
+		}
+	}
+	add(in.Counts)
+	add(in.Samples)
+	keys := make([]uint32, 0, len(starts))
+	for start := range starts {
+		keys = append(keys, start)
+	}
+	slices.Sort(keys)
+	stats := make([]FunctionStat, 0, len(keys))
+	for _, start := range keys {
+		stats = append(stats, FunctionStat{
+			Name: fmt.Sprintf("pc %#08x", start),
+			Addr: start,
+			Size: pcBucketSize,
+		})
+	}
+	return stats
 }
 
 type fnRange struct {

@@ -31,8 +31,10 @@ parameter is only for links to the bundled demos.
 Limitations of the demo build:
 
 - **No filesystem**: firmware arrives from the picker, a drop, or `?fw=`. There
-  is no flash backing file and no DWARF symbols (the Debug tab shows registers
-  and memory, not variables).
+  is no flash backing file. The bundled tinychess image is packed without
+  DWARF, so its Debug tab shows registers and memory, and the Profile tab falls
+  back to 256-byte PC buckets. A picked/dropped ELF is parsed in memory and
+  keeps its symbols and DWARF; UF2/raw images use the same PC-bucket fallback.
 - **No host devices**: no Ethernet/Wi-Fi controllers, no Bus Pirate or UART TCP
   bridges, no GDB server, no SD directory backing (the built-in FAT16 card is
   used) and no Build drawer.
@@ -89,9 +91,10 @@ them for other hosts.
 
 - **Firmware comes from the page.** `Emu.LoadBytes` installs the picked,
   dropped or fetched image; the **Open…** button uses the browser's file
-  picker because there is no filesystem to list. There is no flash backing file
-  and no DWARF symbol load, so the Debug tab shows registers and memory but no
-  named variables.
+  picker because there is no filesystem to list. There is no flash backing
+  file. ELF bytes are parsed with `debug.LoadBytes`, so a picked ELF keeps its
+  symbols and DWARF; the packed tinychess demo has none, so its Debug tab shows
+  registers and memory and Profile shows PC buckets.
 - **Host devices are stripped** before boot by `webPrepareBoard`: SD directory
   backing (the built-in FAT16 image is used), UART/I2C/SPI TCP bridges, the
   W5500/W6300/CH9120 controllers, the GDB server and the Build drawer. Boards

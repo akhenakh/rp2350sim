@@ -40,12 +40,16 @@ func profilePanel(snap MachineState) {
 		})
 
 		if rep == nil {
-			Label("No profile data. Load an ELF firmware and press Start.", FontSize(13),
+			Label("No profile data yet. Press Start to collect one.", FontSize(13),
 				TextColor(220, 6, 68, 1))
 			return
 		}
 
 		profileSummary(rep)
+		if !rep.Symbolized {
+			Label("No DWARF in this firmware — showing 256-byte PC buckets for samples and hits.",
+				FontSize(11), TextColor(230, 60, 55, 1))
+		}
 		Container(Attrs(Row, Grow(1), Expand, Gap(10)), func() {
 			profileFunctions(rep)
 			Container(Attrs(FixWidth(float32(viewW)*0.34), Expand, Gap(10)), func() {
@@ -83,13 +87,20 @@ func profileFunctions(rep *coverage.Report) {
 	Container(Attrs(Grow(1), Expand, Gap(4), Pad2(4, 8), Background(220, 10, 12, 1),
 		Corners(6), Clip, Viewport), func() {
 		ScrollOnInput()
-		Label("Functions by sampled cycles", FontSize(12), FontWeight(700))
+		title := "Functions by sampled cycles"
+		first := "function"
+		if !rep.Symbolized {
+			title = "PC buckets by sampled cycles"
+			first = "region"
+		}
+		Label(title, FontSize(12), FontWeight(700))
 		Container(Attrs(Row, Gap(8)), func() {
-			colLabel(240, "function", FontSize(10), TextColor(220, 6, 68, 1))
-			colLabel(90, "cycles", FontSize(10), TextColor(220, 6, 68, 1))
-			colLabel(150, "share", FontSize(10), TextColor(220, 6, 68, 1))
-			colLabel(70, "samples", FontSize(10), TextColor(220, 6, 68, 1))
-			colLabel(70, "instr %", FontSize(10), TextColor(220, 6, 68, 1))
+			colLabel(240, first, FontSize(10), TextColor(220, 6, 68, 1))
+			colLabel(80, "cycles", FontSize(10), TextColor(220, 6, 68, 1))
+			colLabel(130, "share", FontSize(10), TextColor(220, 6, 68, 1))
+			colLabel(55, "%", FontSize(10), TextColor(220, 6, 68, 1))
+			colLabel(65, "samples", FontSize(10), TextColor(220, 6, 68, 1))
+			colLabel(60, "instr %", FontSize(10), TextColor(220, 6, 68, 1))
 			Label("hits", FontSize(10), TextColor(220, 6, 68, 1))
 
 		})
@@ -118,14 +129,16 @@ func profileFunctionRow(rep *coverage.Report, f coverage.FunctionStat) {
 	if len(name) > 44 {
 		name = "…" + name[len(name)-43:]
 	}
-	bars := min(int(share/2+0.5), 50)
 	Container(Attrs(Row, Gap(8)), func() {
 		colLabel(240, name, Fonts(Monospace...), FontSize(11))
-		colLabel(90, fmt.Sprintf("%.1f ms", float64(f.Cycles)/150_000), Fonts(Monospace...), FontSize(11))
-		colLabel(150, strings.Repeat("▇", bars), Fonts(Monospace...), FontSize(11),
-			TextColor(150, 55, 70, 1))
-		colLabel(70, fmt.Sprintf("%5.1f%%", share), Fonts(Monospace...), FontSize(11))
-		colLabel(70, fmt.Sprintf("%5.1f%%", instr), Fonts(Monospace...), FontSize(11))
+		colLabel(80, fmt.Sprintf("%.1f ms", float64(f.Cycles)/150_000), Fonts(Monospace...), FontSize(11))
+		Container(Attrs(FixWidth(130), CrossMid), func() {
+			Container(Attrs(FixWidth(float32(130*share/100)), FixHeight(8),
+				Background(150, 55, 70, 1), Corners(2)), func() {})
+		})
+		colLabel(55, fmt.Sprintf("%5.1f%%", share), Fonts(Monospace...), FontSize(11))
+		colLabel(65, fmt.Sprintf("%d", f.Samples), Fonts(Monospace...), FontSize(11))
+		colLabel(60, fmt.Sprintf("%5.1f%%", instr), Fonts(Monospace...), FontSize(11))
 		Label(fmt.Sprintf("%d", f.Hits), Fonts(Monospace...), FontSize(11),
 			TextColor(220, 6, 68, 1))
 	})
@@ -156,7 +169,7 @@ func profileIRQ(rep *coverage.Report) {
 			if max > 0 {
 				bars = int(n * 24 / max)
 			}
-			Label(fmt.Sprintf("%10s cyc %5d %s", labels[i], n, strings.Repeat("▇", bars)),
+			Label(fmt.Sprintf("%10s cyc %5d %s", labels[i], n, strings.Repeat("#", bars)),
 				Fonts(Monospace...), FontSize(10))
 		}
 	})

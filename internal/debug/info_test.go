@@ -139,3 +139,34 @@ func TestCDebugVariables(t *testing.T) {
 	}
 	t.Fatalf("local never became 0xaaaaaaaa; last variables: %+v", vars)
 }
+
+// TestLoadBytesMatchesLoad checks the in-memory parser used by the browser
+// against the filesystem path used by the desktop.
+func TestLoadBytesMatchesLoad(t *testing.T) {
+	path := "../../build/pico-c/debug.elf"
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("%s is not built", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromDisk, err := debug.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromBytes, err := debug.LoadBytes(path, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fromBytes.Functions) != len(fromDisk.Functions) {
+		t.Fatalf("functions = %d, want %d", len(fromBytes.Functions), len(fromDisk.Functions))
+	}
+	addr, ok := fromBytes.Resolve("debug_marker")
+	if !ok {
+		t.Fatal("debug_marker missing from LoadBytes")
+	}
+	if want, ok := fromDisk.Resolve("debug_marker"); !ok || want != addr {
+		t.Fatalf("debug_marker = %#x, want %#x", addr, want)
+	}
+}

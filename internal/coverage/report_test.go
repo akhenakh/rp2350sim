@@ -124,3 +124,43 @@ func (r *Report) SampledPC(pc uint32) bool {
 	}
 	return false
 }
+
+func TestBuildFallsBackToPCBuckets(t *testing.T) {
+	code := make([]byte, 0x200)
+	for i := 0; i < len(code); i += 2 {
+		code[i] = 0x00
+		code[i+1] = 0xBF // nop, one 16-bit instruction
+	}
+	read := func(addr uint32, size int) ([]byte, bool) {
+		base := addr &^ 0xFF
+		off := int(addr - base)
+		if off+size > len(code) {
+			return nil, false
+		}
+		return code[off : off+size], true
+	}
+	rep := Build(nil, Input{
+		Counts:       map[uint32]uint64{0x1001: 3, 0x1010: 1, 0x1100: 2},
+		Samples:      map[uint32]uint64{0x1001: 4, 0x1100: 1},
+		SampleCycles: 100,
+	}, read)
+	if rep.Symbolized {
+		t.Fatal("stripped firmware reported as symbolized")
+	}
+	if len(rep.Functions) != 2 {
+		t.Fatalf("buckets = %+v", rep.Functions)
+	}
+	if rep.Functions[0].Name != "pc 0x00001000" || rep.Functions[0].Samples != 4 ||
+		rep.Functions[0].Hits != 4 || rep.Functions[0].Cycles != 400 {
+		t.Fatalf("hot bucket = %+v", rep.Functions[0])
+	}
+	if rep.Functions[1].Name != "pc 0x00001100" || rep.Functions[1].Samples != 1 {
+		t.Fatalf("cold bucket = %+v", rep.Functions[1])
+	}
+	if rep.TotalInstructions == 0 || rep.ExecutedInstructions != 3 {
+		t.Fatalf("totals = %+v", rep)
+	}
+	if len(rep.Lines) != 0 {
+		t.Fatalf("fallback produced lines: %+v", rep.Lines)
+	}
+}

@@ -10,6 +10,7 @@
 package debug
 
 import (
+	"bytes"
 	"debug/dwarf"
 	"debug/elf"
 	"fmt"
@@ -84,17 +85,27 @@ type lineUnit struct {
 	compDir string
 }
 
-// Load parses an ELF image. A missing or malformed DWARF section is not an
-// error: the symbol table still supports breakpoints and function names.
+// Load parses an ELF image from disk. A missing or malformed DWARF section is
+// not an error: the symbol table still supports breakpoints and function names.
 func Load(path string) (*Info, error) {
-	f, err := elf.Open(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return LoadBytes(path, data)
+}
+
+// LoadBytes parses an ELF image already held in memory. The browser build uses
+// it for picked and dropped firmware, where there is no filesystem path.
+func LoadBytes(name string, data []byte) (*Info, error) {
+	f, err := elf.NewFile(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 
 	info := &Info{
-		Path:      path,
+		Path:      name,
 		locals:    map[uint32][]localVar{},
 		frameBase: map[uint32][]byte{},
 	}

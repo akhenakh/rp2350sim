@@ -1816,7 +1816,7 @@ func (e *Emu) SetProfiling(on bool) {
 func (e *Emu) ProfileReport() *coverage.Report {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.chip == nil || e.debugInfo == nil {
+	if e.chip == nil {
 		return nil
 	}
 	data, ok := e.chip.ProfileData()
@@ -1847,7 +1847,11 @@ func (e *Emu) ProfileReport() *coverage.Report {
 			MSPValid: data.Stack[i].MSPValid, PSPValid: data.Stack[i].PSPValid,
 		}
 	}
-	rep := coverage.Build(e.debugInfo, in, func(addr uint32, size int) ([]byte, bool) {
+	var src coverage.Symbolizer
+	if e.debugInfo != nil {
+		src = e.debugInfo
+	}
+	rep := coverage.Build(src, in, func(addr uint32, size int) ([]byte, bool) {
 		return e.chip.PeekBytes(addr, size)
 	})
 	e.profileCache = rep
@@ -2153,7 +2157,13 @@ func (e *Emu) LoadBytes(name string, data []byte, start bool) error {
 		e.mu.Unlock()
 		return err
 	}
-	return e.installImage(img, name, nil, start, false)
+	// The browser has no file path for debug.Load; parse the same bytes so a
+	// picked ELF keeps its symbols and DWARF.
+	var info *debug.Info
+	if img.Format == "elf" {
+		info, _ = debug.LoadBytes(name, data)
+	}
+	return e.installImage(img, name, info, start, false)
 }
 
 // installImage swaps in a parsed image and restarts the machine.

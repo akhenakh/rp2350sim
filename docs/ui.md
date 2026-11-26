@@ -479,9 +479,11 @@ function's share, samples, instruction coverage and hit count. The right column
 shows the IRQ entry-latency histogram and the sampled MSP/PSP low-water marks
 per core.
 
-The tab needs an ELF with symbols/DWARF. The same data is available headlessly
-through `-coverage`, `-profile-out` and `-profile-top` (see
-[cli.md](cli.md#profiling-and-coverage)).
+The tab uses ELF symbols and DWARF when available. A firmware without them
+(the browser demo's packed tinychess, or a UF2/raw image) still profiles, but
+the table shows 256-byte PC buckets and the tab says no DWARF was found. The
+same data is available headlessly through `-coverage`, `-profile-out` and
+`-profile-top` (see [cli.md](cli.md#profiling-and-coverage)).
 
 ### Bus
 
