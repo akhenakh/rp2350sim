@@ -50,7 +50,8 @@ commands and UI steps; the register-level wiring lives in
 | HC-SR04 ultrasonic | `-ultrasonic TRIG:ECHO[:CM]` | `ultrasonic`, Board | `ultrasonic` |
 | GPS / NMEA 0183 | `-gps UART[:LAT:LON]` | `gps`, Board and Console | `gps` |
 | CAN 2.0B / MCP2515 | `-can CS[:INT[:PEER_ID]]` | `can`, Board and Console | `can` |
-| ITM / DWT trace | `-itm` | Debug / CLI trace | `firmware/c/itmdemo` |
+| ITM / DWT trace | `-itm` | Trace / CLI trace | `firmware/c/itmdemo` |
+| Sensor lab dashboard | all of the above | LCD, Scope, GPS, CAN, Trace | `lab` |
 
 Build the demo firmware once with:
 
@@ -841,6 +842,37 @@ stdio. The chip exposes the same events through `Chip.OnTrace`; the UI Trace
 tab groups them into lines (`task ui:trace`, `ui:trace:png`). SWO pin decoding
 is a separate follow-up.
 
+## LCD sensor lab
+
+`pico2-lcd-lab` combines every timed device on one RP2350-Touch-LCD-2:
+DS18B20 on GP2, DHT22 on GP3, HC-SR04 trigger/echo on GP5/GP6, GPS on UART1
+GP8/GP9 and an MCP2515 on SPI0 CS GP13. The ST7789 stays on SPI0 CS GP17, so
+the CAN controller shares the bus with the panel.
+
+`firmware/lab` paints the readings on the LCD and mirrors them on UART0. It
+also writes ITM stimulus lines, so the same run feeds the Trace tab. Each
+device is optional: a missing sensor leaves its row at `n/a`.
+
+```sh
+rp2350sim -fw build/lab.elf -seconds 4 \
+  -onewire 2:22.5 -dht 3:dht22:45:23 -ultrasonic 5:6:100 \
+  -gps 1 -can 13:14:0x123 -itm
+```
+
+```yaml
+onewire:
+  - { pin: 2, type: ds18b20, temperature: 22.5 }
+dht:
+  - { pin: 3, kind: dht22, humidity: 45, temperature: 23 }
+ultrasonic:
+  - { trig: 5, echo: 6, distance_cm: 100 }
+gps: { uart: 1 }
+can: { bus: 0, cs: 13, int: 14 }
+```
+
+Reference firmware: `firmware/lab`; board `pico2-lcd-lab`; tasks `run:lab`,
+`ui:lab` and `ui:lab:png`.
+
 ## Board-to-flag map
 
 | UI board | Headless flags | Task |
@@ -866,6 +898,7 @@ is a separate follow-up.
 | `pico2-ultrasonic` | `-ultrasonic 6:7` | `task run:ultrasonic` |
 | `pico2-gps` | `-gps 1` | `task run:gps` |
 | `pico2-can` | `-can 17:20` | `task run:can` |
+| `pico2-lcd-lab` | all timed devices | `task ui:lab`, `task run:lab` |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
 | `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task run:audio`, `task ui:audio` |
 | `pico2-midi` | `-usb-midi -midi-monitor` | `task run:midi`, `task ui:midi` |

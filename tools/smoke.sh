@@ -346,6 +346,14 @@ out=$("$EMU" -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm 2>/dev/null
 contains "ITM stimulus trace" "itm: hello from ITM" "$out"
 out=$("$EMU" -fw "$BUILD/can.elf" -seconds 2 -quiet -can 17:20:0x123 2>/dev/null)
 contains "MCP2515 CAN" "can: tx=123 rx=124 data=42" "$out"
+out=$("$EMU" -fw "$BUILD/lab.elf" -seconds 4 -quiet -onewire 2:22.5 -dht 3:dht22:45:23 \
+	-ultrasonic 5:6:100 -gps 1 -can 13:14:0x123 -itm 2>/dev/null)
+contains "LCD sensor lab 1-Wire" "lab onewire=22.50 C" "$out"
+contains "LCD sensor lab DHT22" "lab dht=45.0% 23.0 C" "$out"
+contains "LCD sensor lab HC-SR04" "lab distance=100 cm" "$out"
+contains "LCD sensor lab GPS" "gps=true" "$out"
+contains "LCD sensor lab CAN" "lab can tx=123 rx=124 data=42" "$out"
+contains "LCD sensor lab ITM" "lab: itm tick" "$out"
 out=$("$EMU" -fw "$BUILD/gps.elf" -seconds 2 -quiet -gps 1 2>/dev/null)
 contains "NMEA GPS" "gps: fix=1 lat=45.501700 lon=-73.567300" "$out"
 out=$("$EMU" -fw "$BUILD/dht.elf" -seconds 2 -quiet -dht 6:dht22:45:23 2>/dev/null)
@@ -368,6 +376,14 @@ if (cd cmd/simui && go run . --board pico2-plugins --tab bus --run 0.5 \
 	ok "UI scripted plugins tab"
 else
 	bad "UI scripted plugins tab" "$(cat "$BUILD/smoke.log")"
+fi
+
+if (cd cmd/simui && go run . --board pico2-lcd-lab --tab lcd --run 3 \
+	--png "../../$BUILD/ui-lab-smoke.png" "../../$BUILD/lab.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-lab-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI LCD sensor lab"
+else
+	bad "UI LCD sensor lab" "$(cat "$BUILD/smoke.log")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-gps --tab gps --run 1 \

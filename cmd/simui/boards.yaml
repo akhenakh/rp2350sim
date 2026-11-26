@@ -239,6 +239,43 @@ boards:
       cs: 25
       dir: sdcards/touch-lcd2
 
+  - id: pico2-lcd-lab
+    name: RP2350-Touch-LCD-2 sensor lab
+    description: ST7789 320x240 · DS18B20 GP2 · DHT22 GP3 · HC-SR04 GP5/6 · GPS UART1 GP8/9 · MCP2515 SPI0 CS GP13
+    scope: [2, 3, 5, 6, 8, 9, 13]
+    logic:
+      uart: { bus: 1, tx: 8, rx: 9, baud: 115200 }
+      spi: { bus: 0, sck: 18, mosi: 19, miso: 4, cs: 13 }
+    lcd:
+      spi: 0
+      cs: 17
+      dc: 16
+      rst: 20
+      width: 320
+      height: 240
+      rotation: 90
+      backlight: 15
+    onewire:
+      - { pin: 2, type: ds18b20, temperature: 22.5 }
+    dht:
+      - { pin: 3, kind: dht22, humidity: 45, temperature: 23 }
+    ultrasonic:
+      - { trig: 5, echo: 6, distance_cm: 100 }
+    gps:
+      uart: 1
+      lat: 45.5017
+      lon: -73.5673
+      altitude: 82
+      speed_knots: 3.2
+      course: 270
+      satellites: 9
+    can:
+      bus: 0
+      cs: 13
+      int: 14
+      peer_id: 0x123
+      reply_id: 0x124
+
   - id: touch-lcd2-plugins
     name: RP2350-Touch-LCD-2 + mocked devices
     description: ST7789 LCD · Lua I2C env sensor at 0x76 · WASM UART air sensor on UART1

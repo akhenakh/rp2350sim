@@ -303,6 +303,12 @@ duty and card size. The card state is read-only.
 
 ![Sensors tab](images/sensors.png)
 
+The `pico2-lcd-lab` board puts every timed device on one Touch-LCD-2; the LCD
+tab shows the `firmware/lab` dashboard with 1-Wire, DHT, ultrasonic, GPS and CAN
+readings at once. `task ui:lab` opens it; `ui:lab:png` renders it.
+
+![LCD sensor lab](images/lab.png)
+
 ### Ethernet / Wi-Fi
 
 The guest identity (IP, mask, gateway, MAC), one row per socket and a live log

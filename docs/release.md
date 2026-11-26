@@ -53,6 +53,16 @@ Working notes for changes after v0.4 go here.
   in a bundled wasm interpreter and both formats share one ABI; desktop and
   headless runs use wazero, while the browser uses native WebAssembly. Plugin
   `print`/`host_log` lines are shown in the Bus tab.
+- Timed wire devices: a DS18B20 on 1-Wire, DHT11/DHT22 and HC-SR04 models use
+  cycle-exact edge deadlines rather than scripted bus transactions. A
+  deterministic NMEA GPS source, a classic CAN 2.0B bus with a responding peer
+  and an MCP2515 SPI controller join them. `-onewire`, `-dht`, `-ultrasonic`,
+  `-gps` and `-can` attach them headlessly; `pico2-lcd-lab` and
+  `firmware/lab` show all of them on one LCD dashboard.
+- Cortex-M33 ITM stimulus ports and the DWT cycle/PC counters are modelled,
+  including byte and halfword ITM accesses. The Trace tab groups ITM writes
+  into lines, and `-itm` prints them headlessly. The GPS, CAN and Trace tabs
+  have `ui:gps`, `ui:can` and `ui:trace` tasks.
 
 ## v0.4 highlights
 

@@ -43,6 +43,44 @@ func (c *Chip) traceRead32(addr uint32) (uint32, bool) {
 	return 0, false
 }
 
+// traceReadN reads a byte or halfword from the trace registers by extracting
+// the selected lanes from the containing word.
+func (c *Chip) traceReadN(addr uint32, size int) (uint32, bool) {
+	v, ok := c.traceRead32(addr &^ 3)
+	if !ok {
+		return 0, false
+	}
+	shift := (addr & 3) * 8
+	mask := uint32(0xFF) << shift
+	if size == 2 {
+		mask = 0xFFFF << shift
+	}
+	return (v & mask) >> shift, true
+}
+
+// traceWriteN writes a byte or halfword. Stimulus ports accept narrow writes;
+// the data is shifted into the containing word, and the word writer emits the
+// non-zero lanes. Other ITM/DWT registers get a read-modify-write.
+func (c *Chip) traceWriteN(addr uint32, v uint32, size int) bool {
+	if addr >= itmBase && addr < itmBase+0x80 {
+		c.traceWrite32(addr&^3, v<<((addr&3)*8))
+		return true
+	}
+	aligned := addr &^ 3
+	switch aligned {
+	case itmTER, itmTPR, itmTCR, dwtCTRL:
+		old, _ := c.traceRead32(aligned)
+		shift := (addr & 3) * 8
+		mask := uint32(0xFF) << shift
+		if size == 2 {
+			mask = 0xFFFF << shift
+		}
+		c.traceWrite32(aligned, old&^mask|(v<<shift)&mask)
+		return true
+	}
+	return false
+}
+
 // traceWrite32 services ITM/DWT writes. ok is false for other addresses.
 func (c *Chip) traceWrite32(addr, v uint32) bool {
 	switch {

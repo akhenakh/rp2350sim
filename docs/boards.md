@@ -386,6 +386,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/ultrasonic` | HC-SR04 echo timing |
 | `firmware/gps` | NMEA parser on UART1 |
 | `firmware/can` | MCP2515 classic CAN peer exchange |
+| `firmware/lab` | LCD sensor lab: 1-Wire, DHT, ultrasonic, GPS and CAN |
 | `firmware/pluginlcd` | Lua I2C + WASM UART dashboard on Touch-LCD-2 |
 | `firmware/protocols` | UART/I2C/SPI traffic for the logic analyzer |
 | `firmware/serialbridge` | UART1 echoed over TCP |

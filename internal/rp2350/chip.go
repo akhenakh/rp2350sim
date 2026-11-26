@@ -1366,6 +1366,9 @@ func (c *Chip) LoadSegment(addr uint32, data []byte) error {
 // Bus interface implementation.
 
 func (c *Chip) Read8(addr uint32) uint8 {
+	if v, ok := c.traceReadN(addr, 1); ok {
+		return uint8(v)
+	}
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
 		return c.SRAM[addr-SRAMBase]
 	}
@@ -1401,6 +1404,9 @@ func (c *Chip) Read8(addr uint32) uint8 {
 }
 
 func (c *Chip) Read16(addr uint32) uint16 {
+	if v, ok := c.traceReadN(addr, 2); ok {
+		return uint16(v)
+	}
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-1 {
 		o := addr - SRAMBase
 		return binary.LittleEndian.Uint16(c.SRAM[o:])
@@ -1479,6 +1485,9 @@ func (c *Chip) Read32(addr uint32) uint32 {
 }
 
 func (c *Chip) Write8(addr uint32, v uint8) {
+	if c.traceWriteN(addr, uint32(v), 1) {
+		return
+	}
 	if c.OnWrite != nil {
 		c.OnWrite(addr, uint32(v), 1)
 	}
@@ -1524,6 +1533,9 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 }
 
 func (c *Chip) Write16(addr uint32, v uint16) {
+	if c.traceWriteN(addr, uint32(v), 2) {
+		return
+	}
 	if c.OnWrite != nil {
 		c.OnWrite(addr, uint32(v), 2)
 	}

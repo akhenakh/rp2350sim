@@ -98,6 +98,7 @@ tasks:
       - firmware:ultrasonic
       - firmware:gps
       - firmware:can
+      - firmware:lab
       - c:build
       - firmware:ch9120
       - firmware:wifi
@@ -307,6 +308,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/can.elf -seconds 2 -can 17:20:0x123'
 
+  run:lab:
+    desc: Run the LCD sensor lab with every timed device attached
+    deps: [build, firmware:lab]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/lab.elf -seconds 4 -onewire 2:22.5 -dht 3:dht22:45:23 -ultrasonic 5:6:100 -gps 1 -can 13:14:0x123 -itm'
+
   run:gps:
     desc: Run the NMEA GPS example on UART1
     deps: [build, firmware:gps]
@@ -498,6 +505,15 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/can.elf .'
+
+  firmware:lab:
+    desc: Build the LCD sensor lab dashboard
+    dir: firmware/lab
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/lab.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/lab.elf .'
 
   firmware:gps:
     desc: Build the NMEA GPS example
@@ -1016,6 +1032,20 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-can --tab can --run 1 --png '../../{{.BUILD}}/ui-can.png' '../../{{.BUILD}}/can.elf'
+
+  ui:lab:
+    desc: Run the UI on the LCD sensor lab dashboard
+    deps: [firmware:lab]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-lcd-lab --tab lcd '../../{{.BUILD}}/lab.elf'
+
+  ui:lab:png:
+    desc: Render the LCD sensor lab to build/ui-lab.png
+    deps: [firmware:lab]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-lcd-lab --tab lcd --run 3 --png '../../{{.BUILD}}/ui-lab.png' '../../{{.BUILD}}/lab.elf'
 
   ui:trace:
     desc: Run the UI Trace tab on the ITM stimulus demo
