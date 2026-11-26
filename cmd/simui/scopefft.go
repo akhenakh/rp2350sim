@@ -119,7 +119,7 @@ func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint
 		bins, peakHz, peakDB, binHz, ok = scopeAnalyzer.compute(
 			samples, ch, 150e6/float64(interval), float64(vmax))
 	}
-	Container(Attrs(Grow(1), Expand, Gap(4)), func() {
+	Container(Attrs(Grow(1), Expand, Extrinsic, Gap(4)), func() {
 		Container(Attrs(Row, CrossMid, Gap(10)), func() {
 			Label("Spectrum", FontSize(12), FontWeight(700))
 			if !ok {
@@ -137,7 +137,7 @@ func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint
 			Label(fmt.Sprintf("peak %s · %.1f dBFS", formatFreq(peakHz), peakDB),
 				FontSize(11), FontWeight(600), TextColor(20, 60, 80, 1))
 		})
-		Container(Attrs(Row, Gap(6), Expand, Grow(1)), func() {
+		Container(Attrs(Row, Gap(6), Expand, Grow(1), Extrinsic), func() {
 			h := int(GetContentHeight())
 			if h < 40 {
 				h = 150
@@ -147,10 +147,10 @@ func scopeSpectrumPanel(pins []int, samples []devices.TraceSample, interval uint
 				Filler(1)
 				Label("-120", FontSize(10))
 			})
-			Container(Attrs(Grow(1), Expand, Clip), func() {
+			Container(Attrs(Grow(1), Expand, Extrinsic, Clip), func() {
 				w := GetContentWidth()
 				if w < 200 {
-					w = 1100
+					w = 800
 				}
 				img := scopeSpectrumImage(bins, int(w), h, -120, binHz, scopeFFTLog, paletteAt(ch))
 				id := UseImage("scopefft", img)

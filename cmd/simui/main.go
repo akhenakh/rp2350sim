@@ -2012,7 +2012,7 @@ func scopePanel() {
 			}
 		})
 		scopePinPicker()
-		Container(Attrs(Row, Gap(6), Expand, Grow(1)), func() {
+		Container(Attrs(Row, Gap(6), Expand, Grow(1), Extrinsic), func() {
 			h := int(GetContentHeight())
 			if h < 40 {
 				h = 200 // first frame, before layout has resolved
@@ -2022,10 +2022,10 @@ func scopePanel() {
 				Filler(1)
 				Label("0 V", FontSize(10))
 			})
-			Container(Attrs(Grow(1), Expand, Clip), func() {
+			Container(Attrs(Grow(1), Expand, Extrinsic, Clip), func() {
 				w := GetContentWidth()
 				if w < 200 {
-					w = 1100 // first frame, before layout has resolved
+					w = 800 // first frame, before layout has resolved
 				}
 				img := scopeImage(pins, visible, int(w), h, vmax, marker)
 				id := UseImage("scope", img)
