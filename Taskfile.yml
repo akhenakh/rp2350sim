@@ -599,6 +599,8 @@ tasks:
       # Prebuilt from github.com/akhenakh/tinychess; its sources are not
       # vendored here, so the browser demo ships the packed ELF as an asset.
       - cp site/static/demo/firmware/tinychess.elf {{.BUILD}}/web/firmware/tinychess.elf
+      - mkdir -p {{.BUILD}}/web/plugins/examples
+      - cp plugins/examples/*.lua plugins/examples/*.wasm {{.BUILD}}/web/plugins/examples/
       - cd cmd/simui && go run go.hasen.dev/shirei/cmd/shirei_web -webcompiler=go -o ../../{{.BUILD}}/web .
       # Optional: wasm-opt shrinks the module (~8%) and buys about 10% throughput.
       - |
@@ -832,6 +834,25 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-presets --tab bus --run 0.05 --png '../../{{.BUILD}}/ui-presets.png' '../../{{.BUILD}}/presets.elf'
+
+  plugins:build:
+    desc: Rebuild the bundled device_lua.wasm (needs wasi-sdk and a Lua 5.4 source tree)
+    cmds:
+      - scripts/plugins/build.sh
+
+  ui:plugins:
+    desc: Run the UI with the Lua/WASM scripted device examples
+    deps: [firmware:presets]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-plugins --tab bus '../../{{.BUILD}}/presets.elf'
+
+  ui:plugins:png:
+    desc: Render the Scripted plugins Bus tab to build/ui-plugins.png
+    deps: [firmware:presets]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-plugins --tab bus --run 0.5 --png '../../{{.BUILD}}/ui-plugins.png' '../../{{.BUILD}}/presets.elf'
 
   ui:build:
     desc: Open the Source/Build drawer with live reload for the blinky firmware
@@ -1069,7 +1090,7 @@ tasks:
       - test -f site/themes/hugo-geekdoc/theme.toml || (curl -fsSL https://github.com/thegeeklab/hugo-geekdoc/releases/download/v5.0.0/hugo-geekdoc.tar.gz | tar -xz -C site/themes/hugo-geekdoc --strip-components=1)
 
   docs:images:
-    desc: Regenerate every guide screenshot (Board, inputs, LCD, sensors, tabs, DVI, MIDI, audio, scope, profile, HID, logic, OTA)
+    desc: Regenerate every guide screenshot (Board, inputs, LCD, sensors, tabs, DVI, MIDI, audio, scope, profile, HID, plugins, logic, OTA)
     deps:
       - firmware:audio
       - firmware:midi
@@ -1081,6 +1102,7 @@ tasks:
       - firmware:wifi
       - firmware:ch9120
       - firmware:busmaster
+      - firmware:presets
       - c:build
       - picoexamples:build
     cmds:

@@ -4,12 +4,22 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 )
 
 // webBoot reports the browser demo configuration; a desktop build takes the
 // board and firmware from the command line instead.
 func webBoot() (boardID, firmware, tab string, ok bool) { return "", "", "", false }
+
+// pluginSource loads a device plugin on the desktop. The URL form is for the
+// browser; a board entry must provide a file there.
+func pluginSource(file, url string) ([]byte, error) {
+	if file == "" {
+		return nil, fmt.Errorf("plugin %q has no file path", url)
+	}
+	return os.ReadFile(file)
+}
 
 // webPrepareBoard leaves a desktop board definition untouched.
 func webPrepareBoard(*BoardDef) {}

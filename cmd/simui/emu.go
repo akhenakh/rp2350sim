@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/akhenakh/rp2350sim/internal/coverage"
 	"github.com/akhenakh/rp2350sim/internal/debug"
+	"github.com/akhenakh/rp2350sim/internal/deviceplugin"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/hang"
@@ -231,6 +233,10 @@ type Emu struct {
 
 	// Profile tab state: the chip owns raw collection; the report is rebuilt
 	// at most every few virtual milliseconds and frozen once stopped.
+	plugins     []*deviceplugin.Plugin
+	pluginSlots []string
+	pluginErrs  []string
+
 	profWanted      bool
 	profileCache    *coverage.Report
 	profileCacheAt  uint64
@@ -1151,6 +1157,7 @@ func (e *Emu) resetChip() {
 	e.scope = nil
 	e.logic = nil
 	e.signals = e.signals[:0]
+	e.closePlugins()
 	logEth := e.ethLog.logger()
 
 	if b := e.board; b != nil {
@@ -1290,6 +1297,18 @@ func (e *Emu) resetChip() {
 
 		e.attachBus(c, b, attachSPI)
 		e.attachBusPresets(c, b, attachSPI)
+		pluginSelects := e.attachPlugins(c, b, attachSPI)
+		if len(pluginSelects) > 0 {
+			prev := c.Pins.OnChange
+			c.Pins.OnChange = func(pin int, level bool) {
+				if prev != nil {
+					prev(pin, level)
+				}
+				if f := pluginSelects[pin]; f != nil {
+					f(!level)
+				}
+			}
+		}
 
 		// A protocol without an attached chip still records bytes clocked by
 		// firmware through that SPI controller.
@@ -1411,6 +1430,158 @@ func (e *Emu) resetChip() {
 	e.lcdFrame = nil
 	e.otpGen, e.otpRows = 0, nil
 	e.lcdDuty = -1
+}
+
+// PluginInfo is the UI view of one loaded Lua/WASM device model.
+type PluginInfo struct {
+	Name  string
+	Kind  string
+	Slot  string
+	Logs  []string
+	Error string
+}
+
+// Plugins returns the loaded plug-ins for the current board.
+func (e *Emu) Plugins() []PluginInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]PluginInfo, 0, len(e.plugins)+len(e.pluginErrs))
+	for i, p := range e.plugins {
+		info := PluginInfo{Name: p.Name(), Logs: p.Logs()}
+		if i < len(e.pluginSlots) {
+			info.Kind, info.Slot = pluginKindSlot(e.pluginSlots[i])
+		}
+		if err := p.Err(); err != nil {
+			info.Error = err.Error()
+		}
+		out = append(out, info)
+	}
+	for _, msg := range e.pluginErrs {
+		out = append(out, PluginInfo{Name: "plugin", Error: msg})
+	}
+	return out
+}
+
+func pluginKindSlot(slot string) (kind, name string) {
+	kind, name, _ = strings.Cut(slot, " ")
+	return kind, name
+}
+
+func (e *Emu) closePlugins() {
+	for _, p := range e.plugins {
+		_ = p.Close()
+	}
+	e.plugins = e.plugins[:0]
+	e.pluginSlots = e.pluginSlots[:0]
+	e.pluginErrs = e.pluginErrs[:0]
+}
+
+// attachPlugins loads the board's Lua/WASM models and binds them to the bus.
+// The returned callbacks receive SPI chip-select edges.
+func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs int, fn func(byte) byte)) map[int]func(bool) {
+	selects := map[int]func(bool){}
+	if b == nil {
+		return selects
+	}
+	add := func(def PluginDef, slot, kind string, pins map[string]int) *deviceplugin.Plugin {
+		name := def.Name
+		if name == "" {
+			name = kind + " plugin"
+		}
+		srcName := def.File
+		if srcName == "" {
+			srcName = def.URL
+		}
+		lang, err := deviceplugin.LanguageForPath(srcName)
+		if err != nil {
+			e.pluginErrs = append(e.pluginErrs, fmt.Sprintf("%s: %v", name, err))
+			return nil
+		}
+		source, err := pluginSource(def.File, def.URL)
+		if err != nil {
+			e.pluginErrs = append(e.pluginErrs, fmt.Sprintf("%s: %v", name, err))
+			return nil
+		}
+		cfgMap := maps.Clone(def.Config)
+		if len(pins) > 0 {
+			if cfgMap == nil {
+				cfgMap = map[string]any{}
+			}
+			pinMap := map[string]any{}
+			for k, v := range pins {
+				pinMap[k] = v
+			}
+			cfgMap["pins"] = pinMap
+		}
+		config, err := deviceplugin.ConfigBytes(lang, cfgMap)
+		if err != nil {
+			e.pluginErrs = append(e.pluginErrs, fmt.Sprintf("%s: %v", name, err))
+			return nil
+		}
+		allowed := map[int]bool{}
+		for _, pin := range pins {
+			allowed[pin] = true
+		}
+		var uart int
+		if _, number, ok := strings.Cut(slot, " "); ok {
+			uart, _ = strconv.Atoi(number)
+		}
+		p, err := deviceplugin.Load(deviceplugin.Config{
+			Name:   name,
+			Lang:   lang,
+			Source: source,
+			Config: config,
+			GPIORead: func(pin int) int {
+				if len(allowed) > 0 && !allowed[pin] {
+					return 0
+				}
+				if c.Pins.Level(pin) {
+					return 1
+				}
+				return 0
+			},
+			GPIOWrite: func(pin int, level bool) {
+				if len(allowed) > 0 && !allowed[pin] {
+					return
+				}
+				c.Pins.SetExternal(pin, level)
+			},
+			UARTWrite: func(data []byte) {
+				c.SendUART(uart, data)
+			},
+		})
+		if err != nil {
+			e.pluginErrs = append(e.pluginErrs, fmt.Sprintf("%s: %v", name, err))
+			return nil
+		}
+		e.plugins = append(e.plugins, p)
+		e.pluginSlots = append(e.pluginSlots, kind+" "+slot)
+		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, func() {
+			p.Tick(c.NowMicros())
+		})
+		return p
+	}
+	for _, d := range b.I2CPlugins {
+		p := add(d.PluginDef, fmt.Sprintf("i2c%d 0x%02x", d.Bus, d.Addr), "i2c", nil)
+		if p != nil {
+			c.AttachI2C(d.Bus, uint8(d.Addr), deviceplugin.NewI2C(p, uint8(d.Addr)))
+		}
+	}
+	for _, d := range b.SPIPlugins {
+		p := add(d.PluginDef, fmt.Sprintf("spi%d cs%d", d.Bus, d.CS), "spi", nil)
+		if p != nil {
+			spi := deviceplugin.NewSPI(p)
+			attachSPI(d.Bus, d.CS, spi.Transfer)
+			selects[d.CS] = spi.Select
+		}
+	}
+	for _, d := range b.UARTPlugins {
+		p := add(d.PluginDef, fmt.Sprintf("%d", d.UART), "uart", d.Pins)
+		if p != nil {
+			c.AttachUART(d.UART, deviceplugin.NewUART(p))
+		}
+	}
+	return selects
 }
 
 // attachBusPresets attaches the board's built-in I2C/SPI device presets to a

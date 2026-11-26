@@ -44,6 +44,7 @@ commands and UI steps; the register-level wiring lives in
 | Oscilloscope | power trace + `pincheck` | Scope | `pico2-analog` |
 | Bus Pirate target | `-i2c-tcp`, `-spi-tcp` | `i2c_tcp` / `spi_tcp`, Bus | `busmaster`, `busdevice` |
 | Built-in bus presets | `-i2c-preset`, `-spi-preset`, `-list-presets` | `i2c_presets` / `spi_presets`, Bus | `presets` |
+| Scripted I2C/SPI/UART devices | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `i2c_plugins` / `spi_plugins` / `serial_plugins`, Bus and Console | `plugins/examples` |
 
 Build the demo firmware once with:
 
@@ -103,7 +104,9 @@ FIFO; firmware TX returns on the same connection. Connect promptly: virtual
 time runs fast, so use `task ui:serial` for an interactive session.
 
 `-logic-uart tx[,rx],baud` decodes a pin trace. Hardware UART traffic is also
-tapped automatically in the logic trace.
+tapped automatically in the logic trace. A Lua/WASM `serial_plugins` entry (or
+`-uart-plugin`) can act as the device on a UART, with `uart_tx`/`uart_send`
+for request/response framing; see [device plugins](plugins.md).
 
 **UI.** Add a `serial` entry to a board and connect with `nc`; the assigned
 address is listed in the **Console** tab and stays stable across firmware
@@ -125,7 +128,9 @@ rp2350sim -fw build/protocols.elf -seconds 0.5 \
 
 `-logic-spi SCK,MOSI[,MISO[,CS]]` and `-logic-i2c SDA,SCL` use the same
 decoders as the UI. To make an external program act as the target instead, use
-the [Bus Pirate bridges](#bus-pirate-i2c-and-spi-targets).
+the [Bus Pirate bridges](#bus-pirate-i2c-and-spi-targets), or attach a Lua/WASM
+`i2c_plugins`/`spi_plugins` model with `-i2c-plugin`/`-spi-plugin`; see
+[device plugins](plugins.md).
 
 **UI.** The **Logic** tab synthesises waveforms from the controller models
 (no pin-rate sampling needed) and falls back to pin decoding for PIO or
@@ -696,6 +701,33 @@ paused: connect both terminals, queue the answers, then press **Run**.
 Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 `task ui:bus`, `task ui:bus:png`.
 
+## Scripted I2C, SPI and UART devices
+
+A device model can be a `.lua` script or a compiled `.wasm` file. The Lua
+interpreter is bundled as WebAssembly and both formats run under wazero, so the
+same board works on the desktop, in the runner and in the browser. The full
+model, ABI, examples and limits are in [plugins.md](plugins.md).
+
+```sh
+rp2350sim -fw build/presets.elf -seconds 1   -i2c-plugin 0:0x76=plugins/examples/bme280.lua   -spi-plugin 0:17=plugins/examples/w25q16.lua   -uart-plugin 1=plugins/examples/uart-modem.lua
+```
+
+In a board:
+
+```yaml
+i2c_plugins:
+  - { bus: 0, addr: 0x76, file: plugins/examples/bme280.lua }
+spi_plugins:
+  - { bus: 0, cs: 17, file: plugins/examples/w25q16.lua }
+serial_plugins:
+  - { uart: 1, file: plugins/examples/uart-modem.lua }
+```
+
+The **Bus** tab lists loaded plugin instances and their `print`/`host_log`
+output, so a script's debug lines are visible without a separate console. The
+CLI writes the same lines as `plugin` log records. `pico2-plugins` is a
+ready-made board; `task ui:plugins` opens it.
+
 ## Board-to-flag map
 
 | UI board | Headless flags | Task |
@@ -715,6 +747,7 @@ Reference boards: `pico2-bus`; firmware `busmaster` and `busdevice`. Tasks:
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` | `task ui:serial` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` | `task ui:bus` |
 | `pico2-presets` | `-i2c-preset`, `-spi-preset` | — (built-in models) |
+| `pico2-plugins` | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `task ui:plugins` |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
 | `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task run:audio`, `task ui:audio` |
 | `pico2-midi` | `-usb-midi -midi-monitor` | `task run:midi`, `task ui:midi` |

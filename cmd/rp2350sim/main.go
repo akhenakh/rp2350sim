@@ -20,6 +20,7 @@ import (
 
 	"github.com/akhenakh/rp2350sim/internal/coverage"
 	"github.com/akhenakh/rp2350sim/internal/debug"
+	"github.com/akhenakh/rp2350sim/internal/deviceplugin"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/gdb"
@@ -235,11 +236,15 @@ func main() {
 	var expectFlag stringList
 	var i2cTCPFlag, spiTCPFlag stringList
 	var i2cPresetFlag, spiPresetFlag stringList
+	var i2cPluginFlag, spiPluginFlag, uartPluginFlag stringList
 	flag.Var(&expectFlag, "expect", "fail unless this console output appears (repeatable)")
 	flag.Var(&i2cTCPFlag, "i2c-tcp", "I2C target over TCP: bus:addr[,addr][@listen|=connect] (repeatable)")
 	flag.Var(&spiTCPFlag, "spi-tcp", "SPI device over TCP: bus:cs[@listen|=connect] (repeatable)")
 	flag.Var(&i2cPresetFlag, "i2c-preset", "built-in I2C device: bus:name[@addr] (repeatable)")
 	flag.Var(&spiPresetFlag, "spi-preset", "built-in SPI device: bus:name@cs (repeatable)")
+	flag.Var(&i2cPluginFlag, "i2c-plugin", "Lua/WASM I2C device: bus:addr=path (repeatable)")
+	flag.Var(&spiPluginFlag, "spi-plugin", "Lua/WASM SPI device: bus:cs=path (repeatable)")
+	flag.Var(&uartPluginFlag, "uart-plugin", "Lua/WASM UART device: uart=path (repeatable)")
 	listPresets := flag.Bool("list-presets", false, "list built-in I2C/SPI device presets and exit")
 	flag.Parse()
 	if *listPresets {
@@ -666,6 +671,46 @@ func main() {
 			spi1 = append(spi1, spiDev{cs, fn})
 		}
 	}
+	pluginSelects := map[int]func(bool){}
+	loadPlugins := func(kind string, specs []string) {
+		for _, raw := range specs {
+			spec, err := parsePluginSpec(kind, raw)
+			if err != nil {
+				log.Error("plugin", slog.String("spec", raw), slog.Any("err", err))
+				exit(2)
+			}
+			p, err := loadPlugin(kind, spec, c, log)
+			if err != nil {
+				log.Error("plugin", slog.String("spec", raw), slog.Any("err", err))
+				exit(2)
+			}
+			switch kind {
+			case "i2c":
+				c.AttachI2C(spec.bus, uint8(spec.addr), deviceplugin.NewI2C(p, uint8(spec.addr)))
+			case "spi":
+				spi := deviceplugin.NewSPI(p)
+				if spec.bus == 1 {
+					spi1 = append(spi1, spiDev{spec.cs, spi.Transfer})
+				} else {
+					spi0 = append(spi0, spiDev{spec.cs, spi.Transfer})
+				}
+				pluginSelects[spec.cs] = spi.Select
+			case "uart":
+				c.AttachUART(spec.uart, deviceplugin.NewUART(p))
+			}
+		}
+	}
+	loadPlugins("i2c", i2cPluginFlag)
+	loadPlugins("spi", spiPluginFlag)
+	loadPlugins("uart", uartPluginFlag)
+	if len(pluginSelects) > 0 {
+		c.Pins.OnChange = chainPinCallbacks(c.Pins.OnChange, func(pin int, level bool) {
+			if f := pluginSelects[pin]; f != nil {
+				f(!level)
+			}
+		})
+	}
+
 	var busBridges []*devices.BusBridge
 	var spiBridges []*devices.SPIBridge
 	busBridges, spiBridges, err = attachBusBridges(c, log, *busTimeout, *busWait, i2cSpecs, spiSpecs, addSPI)

@@ -95,6 +95,9 @@ Useful flags:
 | `-i2c-preset 0:bme280@0x76` | attach a built-in I2C device (repeatable) |
 | `-spi-preset 0:w25q16@17` | attach a built-in SPI device (repeatable) |
 | `-list-presets` | print the built-in device registry |
+| `-i2c-plugin 0:0x76=dev.lua` | attach a Lua/WASM I2C device file (repeatable) |
+| `-spi-plugin 0:17=dev.wasm` | attach a Lua/WASM SPI device file (repeatable) |
+| `-uart-plugin 1=dev.lua` | attach a Lua/WASM serial companion (repeatable) |
 | `-continue-after-halt` | keep PIO/PWM/DMA running after a core halts (firmware that returns from `main`) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-bootsel` | hold BOOTSEL/QSPI CS low at boot and during the run |
@@ -187,7 +190,8 @@ The UI starts with a board picker. The list comes from `cmd/simui/boards.yaml`
 hardware: an ST7789 LCD with its CS/DC/RST pins, touch and IMU controllers, a
 W5500/W6300/CH9120 network controller, virtual Wi-Fi, a microSD directory, a
 WS2812B data pin, scope channels, generated analog signals, logic-analyzer
-protocols, UART TCP bridges, built-in I2C/SPI presets or remote Bus Pirate devices.
+protocols, UART TCP bridges, built-in I2C/SPI presets, scripted Lua/WASM device
+files or remote Bus Pirate devices.
 `rp2350sim-ui --list-boards` prints the ids.
 
 Selecting a board attaches only those devices to the emulated chip and builds
@@ -208,7 +212,8 @@ the tabs accordingly:
 - **OTP**: pages, rows, ECC status and locks.
 - **Debug**: breakpoints, cycle stepping, registers, memory, source lines and
   DWARF variables, plus a GDB remote server (`--gdb` / toolbar **GDB**).
-- **Bus**: I2C/SPI Bus Pirate TCP terminals and built-in device presets.
+- **Bus**: I2C/SPI Bus Pirate TCP terminals, built-in presets and scripted
+  Lua/WASM device plugins (with their debug log).
 - **Console** (always): USB CDC + UART, click to type into the firmware.
 
 The toolbar shows the selected board, a **Board…** button to return to the
@@ -292,6 +297,9 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:presets` | built-in BME280/SSD1306/MPU6050/W25Q16 board |
 | `task ui:presets:png` | headless render of the built-in presets tab to `build/ui-presets.png` |
 | `task run:presets` | probe the four built-in bus presets and print their IDs |
+| `task ui:plugins` | Lua/WASM scripted device examples in the Bus tab |
+| `task ui:plugins:png` | headless render of the Scripted plugins card to `build/ui-plugins.png` |
+| `task plugins:build` | rebuild the bundled Lua device runtime (wasi-sdk + Lua source) |
 | `task ui:build` | live-reload Source/Build drawer for the blinky example |
 | `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
 | `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |

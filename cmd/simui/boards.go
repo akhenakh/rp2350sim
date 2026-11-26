@@ -16,29 +16,32 @@ var embeddedBoards []byte
 
 // BoardDef describes one selectable board and the devices attached to it.
 type BoardDef struct {
-	ID          string         `yaml:"id"`
-	Name        string         `yaml:"name"`
-	Description string         `yaml:"description"`
-	LCD         *LCDDevice     `yaml:"lcd"`
-	Touch       *TouchDevice   `yaml:"touch"`
-	IMU         *IMUDevice     `yaml:"imu"`
-	Battery     *BatteryDevice `yaml:"battery"`
-	SD          *SDDevice      `yaml:"sd"`
-	Ethernet    *EthDevice     `yaml:"ethernet"`
-	WS2812      *LEDDevice     `yaml:"ws2812"`
-	PSRAM       *PSRAMDevice   `yaml:"psram"`
-	Analog      []SignalDef    `yaml:"analog"`
-	Inputs      []InputDef     `yaml:"inputs"`
-	Scope       []int          `yaml:"scope"`
-	Logic       *LogicDevice   `yaml:"logic"`
-	Serial      []SerialDevice `yaml:"serial"`
-	I2CTCP      []I2CTCPBridge `yaml:"i2c_tcp"`
-	SPITCP      []SPITCPBridge `yaml:"spi_tcp"`
-	I2CPresets  []I2CPresetDef `yaml:"i2c_presets"`
-	SPIPresets  []SPIPresetDef `yaml:"spi_presets"`
-	Wifi        *WifiDevice    `yaml:"wifi"`
-	Audio       *AudioDevice   `yaml:"audio"`
-	MIDI        *MIDIDevice    `yaml:"midi"`
+	ID          string          `yaml:"id"`
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description"`
+	LCD         *LCDDevice      `yaml:"lcd"`
+	Touch       *TouchDevice    `yaml:"touch"`
+	IMU         *IMUDevice      `yaml:"imu"`
+	Battery     *BatteryDevice  `yaml:"battery"`
+	SD          *SDDevice       `yaml:"sd"`
+	Ethernet    *EthDevice      `yaml:"ethernet"`
+	WS2812      *LEDDevice      `yaml:"ws2812"`
+	PSRAM       *PSRAMDevice    `yaml:"psram"`
+	Analog      []SignalDef     `yaml:"analog"`
+	Inputs      []InputDef      `yaml:"inputs"`
+	Scope       []int           `yaml:"scope"`
+	Logic       *LogicDevice    `yaml:"logic"`
+	Serial      []SerialDevice  `yaml:"serial"`
+	I2CTCP      []I2CTCPBridge  `yaml:"i2c_tcp"`
+	SPITCP      []SPITCPBridge  `yaml:"spi_tcp"`
+	I2CPresets  []I2CPresetDef  `yaml:"i2c_presets"`
+	SPIPresets  []SPIPresetDef  `yaml:"spi_presets"`
+	I2CPlugins  []I2CPluginDef  `yaml:"i2c_plugins"`
+	SPIPlugins  []SPIPluginDef  `yaml:"spi_plugins"`
+	UARTPlugins []UARTPluginDef `yaml:"serial_plugins"`
+	Wifi        *WifiDevice     `yaml:"wifi"`
+	Audio       *AudioDevice    `yaml:"audio"`
+	MIDI        *MIDIDevice     `yaml:"midi"`
 	// Package selects the RP2350 variant: qfn60 (RP2350A, 30 GPIOs) or
 	// qfn80 (RP2350B, 48 GPIOs).
 	Package string `yaml:"package"`
@@ -102,6 +105,36 @@ type SPIPresetDef struct {
 	Bus    int    `yaml:"bus"`
 	CS     int    `yaml:"cs"`
 	Preset string `yaml:"preset"`
+}
+
+// PluginDef is the common part of a scripted device model. File is the
+// desktop path; URL is the browser source. Config is passed to the plugin.
+type PluginDef struct {
+	Name   string         `yaml:"name"`
+	File   string         `yaml:"file"`
+	URL    string         `yaml:"url"`
+	Config map[string]any `yaml:"config"`
+}
+
+// I2CPluginDef attaches a plugin at one 7-bit address.
+type I2CPluginDef struct {
+	PluginDef `yaml:",inline"`
+	Bus       int `yaml:"bus"`
+	Addr      int `yaml:"addr"`
+}
+
+// SPIPluginDef attaches a plugin on one SPI chip select.
+type SPIPluginDef struct {
+	PluginDef `yaml:",inline"`
+	Bus       int `yaml:"bus"`
+	CS        int `yaml:"cs"`
+}
+
+// UARTPluginDef attaches a serial device model to one hardware UART.
+type UARTPluginDef struct {
+	PluginDef `yaml:",inline"`
+	UART      int            `yaml:"uart"`
+	Pins      map[string]int `yaml:"pins"`
 }
 
 // WifiDevice is the virtual Wi-Fi transport: a host-backed serial netdev.
@@ -652,6 +685,42 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
+		for i := range b.I2CPlugins {
+			d := &b.I2CPlugins[i]
+			if d.Bus != 0 && d.Bus != 1 {
+				return nil, fmt.Errorf("boards: %s: i2c plugin bus must be 0 or 1", b.ID)
+			}
+			if d.Addr < 0x08 || d.Addr > 0x77 {
+				return nil, fmt.Errorf("boards: %s: i2c plugin address %#x is not 7-bit", b.ID, d.Addr)
+			}
+			if err := preparePlugin(&d.PluginDef, baseDir); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+			if err := addI2C(d.Bus, d.Addr, "plugin "+d.Name); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+		}
+		for i := range b.SPIPlugins {
+			d := &b.SPIPlugins[i]
+			if err := validSPI(spi, spiCS, d.Bus, d.CS, "plugin "+d.Name); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+			if err := preparePlugin(&d.PluginDef, baseDir); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+		}
+		for i := range b.UARTPlugins {
+			d := &b.UARTPlugins[i]
+			if d.UART < 0 || d.UART > 1 {
+				return nil, fmt.Errorf("boards: %s: uart plugin uart must be 0 or 1", b.ID)
+			}
+			if err := preparePlugin(&d.PluginDef, baseDir); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+			if err := claimUART(d.UART, "plugin "+d.Name); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+		}
 		if w := b.Wifi; w != nil {
 			if w.UART < 0 || w.UART > 1 {
 				return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
@@ -940,6 +1009,27 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 	}
 	return file.Boards, nil
+}
+
+// preparePlugin resolves a plugin source and gives it a stable display name.
+func preparePlugin(d *PluginDef, baseDir string) error {
+	if d.File == "" && d.URL == "" {
+		return fmt.Errorf("plugin needs file or url")
+	}
+	if d.File != "" {
+		d.File = expandPath(d.File)
+		if !filepath.IsAbs(d.File) && baseDir != "" {
+			d.File = filepath.Join(baseDir, d.File)
+		}
+	}
+	if d.Name == "" {
+		src := d.File
+		if src == "" {
+			src = d.URL
+		}
+		d.Name = filepath.Base(src)
+	}
+	return nil
 }
 
 // expandPath expands ~ and environment variables in a board path.

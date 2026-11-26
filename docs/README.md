@@ -36,6 +36,9 @@ The desktop UI also runs in the browser as a
   the HID tab, with host-to-device output reports. See [USB HID](hid.md).
 - **Board configuration**: every `boards.yaml` device, input, bridge and
   validation rule is documented in the [reference](boards-yaml.md).
+- **Scripted device plugins**: a BME280, SPI flash, modem or companion radio
+  can be shipped as a `.lua` or `.wasm` file and loaded from a board or the
+  Bus tab. See [device plugins](plugins.md).
 - **Distribution**: Homebrew on macOS, AUR on Arch, and release archives with
   verifiable GitHub build provenance.
 
@@ -47,6 +50,7 @@ The desktop UI also runs in the browser as a
 | [profiler.md](profiler.md) | Profile tab, exact coverage, LCOV/JSON, IRQ latency and stack watermarks |
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
 | [hid.md](hid.md) | USB HID host: keyboard, mouse, media and gamepad reports, HID tab and flags |
+| [plugins.md](plugins.md) | Lua and WASM I2C/SPI/UART device models, ABI, examples and logs |
 | [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
 | [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer |
 | [wasm.md](wasm.md) | the same UI compiled to WebAssembly: live demo, build, URL parameters, stripped host devices and browser speed |

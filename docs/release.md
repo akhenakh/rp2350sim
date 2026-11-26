@@ -48,6 +48,12 @@ release page consistent without retroactively editing the tagged commit.
 
 Working notes for changes after v0.4 go here.
 
+- Scripted device plugins: I2C, SPI and UART models can be shipped as Lua or
+  WASM files and loaded from `boards.yaml`, the CLI or the Bus tab. Lua runs
+  in a bundled wasm interpreter and both formats use one wazero ABI, including
+  in the browser demo; plugin `print`/`host_log` lines are shown in the Bus
+  tab.
+
 ## v0.4 highlights
 
 v0.4 adds observability (profiling, coverage and hang explanations), deeper

@@ -28,6 +28,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=
+github.com/tetratelabs/wazero v1.12.0/go.mod h1:LvKtzl2RqO4gyF27BiXU+nKAjcV8f38U+kP/q2vgxh0=
 go.hasen.dev/generic v0.1.8 h1:T0xTGnS4zPpKG4RDL5nD4GycZPQGZ0yCP2L4pZqlttw=
 go.hasen.dev/generic v0.1.8/go.mod h1:SB5p5H5YYQHnqjSFHXW89C6iH6qF/669p4640DPWGbA=
 go.hasen.dev/shirei v0.10.0 h1:p6If1Ro9LGG+T//aOYSP3ZyhEMlWtUhPZwBidBXIe7Q=

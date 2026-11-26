@@ -48,6 +48,12 @@ render pico2-psram board 0.6 psram "$ROOT/firmware/c/build/psram.elf"
 render pico2 otp 0.5 otp "$ROOT/firmware/c/build/otp.elf"
 render pico2 console 1 console "$ROOT/firmware/c/build/usbhello.elf"
 render pico2 profile 0.5 profile "$ROOT/$BUILD/blinky.elf"
+# The plugin board's file: paths are relative to cmd/simui.
+(cd "$ROOT/cmd/simui" && "$UI" --board pico2-plugins --tab bus --run 0.5 \
+	--width 1280 --height 820 --png "$ROOT/$BUILD/docs-plugins-2x.png" \
+	"$ROOT/$BUILD/presets.elf" >/dev/null)
+ffmpeg -v error -y -i "$ROOT/$BUILD/docs-plugins-2x.png" \
+	-vf scale=1280:820:flags=lanczos "$IMAGES/plugins.png"
 render pico2-inputs hid 1 hid --input bootsel=on "$ROOT/$BUILD/pico-examples/build/dev_hid_composite/dev_hid_composite.elf"
 
 # Debug and Bus need extra flags; the picker has no board.
@@ -106,4 +112,4 @@ ffmpeg -v error -y -i "$ROOT/$BUILD/docs-ota-2x.png" -vf scale=1280:820:flags=la
 	"$IMAGES/ota.png"
 rm -f "$flash"
 
-echo "updated docs/images: dvi midi audio scope scope-fft logic board inputs rp2350b lcd sensors ws2812 psram otp console profile hid debug bus picker ethernet wifi ota"
+echo "updated docs/images: dvi midi audio scope scope-fft logic board inputs rp2350b lcd sensors ws2812 psram otp console profile hid plugins debug bus picker ethernet wifi ota"

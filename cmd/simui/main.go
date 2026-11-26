@@ -624,6 +624,7 @@ func boardHasSensors(b *BoardDef) bool {
 
 func boardHasBuses(b *BoardDef) bool {
 	return b != nil && (len(b.I2CTCP) > 0 || len(b.SPITCP) > 0 ||
+		len(b.I2CPlugins) > 0 || len(b.SPIPlugins) > 0 || len(b.UARTPlugins) > 0 ||
 		len(b.I2CPresets) > 0 || len(b.SPIPresets) > 0)
 }
 
@@ -2988,6 +2989,28 @@ func busPanel(snap MachineState) {
 				Label(fmt.Sprintf("%d line(s)", len(snap.Buses)), FontSize(11), TextColor(140, 45, 65, 1))
 			}
 		})
+		plugins := emu.Plugins()
+		if len(plugins) > 0 {
+			Container(Attrs(Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
+				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
+				Label("Scripted plugins", FontSize(12), FontWeight(700))
+				for _, p := range plugins {
+					state := "loaded"
+					if p.Error != "" {
+						state = "error: " + p.Error
+					}
+					Label(fmt.Sprintf("%s %s · %s · %s", strings.ToUpper(p.Kind), p.Slot, p.Name, state),
+						FontSize(11), Fonts(Monospace...), TextColor(140, 45, 68, 1))
+					logs := p.Logs
+					if len(logs) > 8 {
+						logs = logs[len(logs)-8:]
+					}
+					for _, line := range logs {
+						Label("  "+line, FontSize(10), Fonts(Monospace...), TextColor(220, 6, 68, 1))
+					}
+				}
+			})
+		}
 		if selectedBoard != nil && (len(selectedBoard.I2CPresets) > 0 || len(selectedBoard.SPIPresets) > 0) {
 			Container(Attrs(Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
 				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
@@ -3008,8 +3031,9 @@ func busPanel(snap MachineState) {
 		}
 		infos := emu.BusBridges()
 		if len(infos) == 0 {
-			if selectedBoard == nil || (len(selectedBoard.I2CPresets) == 0 && len(selectedBoard.SPIPresets) == 0) {
-				Label("This board has no i2c_tcp, spi_tcp or preset entries.", FontSize(13))
+			if selectedBoard == nil || (len(selectedBoard.I2CPresets) == 0 &&
+				len(selectedBoard.SPIPresets) == 0 && len(plugins) == 0) {
+				Label("This board has no i2c_tcp, spi_tcp, preset or plugin entries.", FontSize(13))
 			}
 			return
 		}

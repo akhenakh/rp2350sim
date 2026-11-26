@@ -69,6 +69,8 @@ has no tab.
 | `serial` | Console | UART TCP bridge |
 | `i2c_tcp` / `spi_tcp` | Bus | Bus Pirate token bridge |
 | `i2c_presets` / `spi_presets` | Bus | built-in device models |
+| `i2c_plugins` / `spi_plugins` | Bus | Lua or WASM device files |
+| `serial_plugins` | Console | Lua or WASM UART device files |
 
 The Board, Scope, Logic, OTP, Debug, Profile and Console tabs always exist.
 
@@ -456,6 +458,46 @@ Built-in presets:
 
 Run `rp2350sim -list-presets` for the current list.
 
+## `i2c_plugins`, `spi_plugins` and `serial_plugins`
+
+Scripted device models are files: a `.lua` script runs in the bundled Lua
+wasm runtime, or a `.wasm` module implements the device ABI directly. The
+complete plugin guide is [plugins.md](plugins.md).
+
+```yaml
+i2c_plugins:
+  - bus: 0
+    addr: 0x76
+    name: bme280
+    file: plugins/examples/bme280.lua      # desktop
+    url: plugins/examples/bme280.lua       # browser
+    config: { seed: 1 }
+
+spi_plugins:
+  - { bus: 0, cs: 17, file: plugins/examples/w25q16.lua }
+
+serial_plugins:
+  - uart: 1
+    file: plugins/examples/uart-modem.lua
+    config: { baud: 115200 }
+```
+
+| key | fields |
+|---|---|
+| `i2c_plugins` | `bus` 0/1, `addr` (7-bit), `file` and/or `url`, optional `name`, `config` |
+| `spi_plugins` | `bus` 0/1, `cs`, `file` and/or `url`, optional `name`, `config` |
+| `serial_plugins` | `uart` 0/1, `file` and/or `url`, optional `name`, `config`, `pins` |
+
+`file` is the desktop path and `url` is the browser source; provide the one
+your target needs. A relative `file` is resolved against the custom
+`boards.yaml` directory. `config` is a Lua table for `.lua` files and JSON for
+`.wasm` files.
+
+`pins` maps logical plugin lines to GPIOs, for example
+`{ irq: 20, reset: 21 }`; the plugin can read/write them through its host API.
+Plugin addresses, chip selects and UARTs follow the same conflict rules as
+presets and bridges.
+
 ## Validation rules
 
 The loader rejects a board file at startup when an id is missing or duplicated,
@@ -477,6 +519,8 @@ or when any of these conflicts exist:
 - **Inputs** need unique ids and non-conflicting pins. ADC pins are the
   loader's 26–29 range. There is at most one `bootsel`; the id is reserved when
   it is another kind.
+- **Plugins** need a `file` or `url`, a valid slot, and cannot reuse an I2C
+  address, SPI chip select or UART already claimed by another device.
 
 Unknown YAML keys are ignored by the parser, so use the exact names above.
 
@@ -525,6 +569,8 @@ boards:
 
     i2c_presets:
       - { bus: 0, preset: bme280, addr: 0x76 }
+    i2c_plugins:
+      - { bus: 0, addr: 0x77, file: plugins/examples/bme280.lua }
     ws2812:
       pin: 4
 

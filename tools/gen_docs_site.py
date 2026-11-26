@@ -32,6 +32,7 @@ PAGES = [
     ("debug.md", "Debugging", 40),
     ("profiler.md", "Profiler and coverage", 41),
     ("hid.md", "USB HID", 42),
+    ("plugins.md", "Device plugins", 43),
     ("boards.md", "Boards and peripherals", 50),
     ("tinygo.md", "TinyGo", 60),
     ("c.md", "Pico SDK C", 70),

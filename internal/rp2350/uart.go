@@ -52,6 +52,17 @@ type uartBlock struct {
 	// NextRx supplies a byte when the receive queue is empty; ok=false means
 	// no data is available.
 	NextRx func() (b byte, ok bool)
+	// dev is an optional attached device model (a plugin serial target).
+	// Its TX runs before the observation callbacks.
+	dev UARTDevice
+}
+
+// UARTDevice is an external device on a hardware UART. TX receives bytes the
+// firmware writes; the device sends bytes back with Chip.SendUART (typically
+// from a host callback while handling TX).
+type UARTDevice interface {
+	TX(b byte)
+	Reset()
 }
 
 const (
@@ -85,17 +96,18 @@ func newUART(c *Chip, base uint32, id int) *uartBlock {
 	u := &uartBlock{block: newRegBlock(base, 0x1000), chip: c, id: id, irq: uartRXIRQ + id}
 	u.block.resetFn = func(c *Chip) { u.reset() }
 	u.reset()
-	if id == 0 {
-		u.OnByte = func(b byte) {
+	u.OnByte = func(b byte) {
+		if u.dev != nil {
+			u.dev.TX(b)
+		}
+		if id == 0 {
 			if c.OnUART0 != nil {
 				c.OnUART0(b)
 			}
+			return
 		}
-	} else {
-		u.OnByte = func(b byte) {
-			if c.OnUART1 != nil {
-				c.OnUART1(b)
-			}
+		if c.OnUART1 != nil {
+			c.OnUART1(b)
 		}
 	}
 	u.block.readFn = func(c *Chip, off uint32) (uint32, bool) {

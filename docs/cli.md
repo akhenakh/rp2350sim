@@ -491,10 +491,18 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-i2c-tcp bus:addr[,addr][@listen|=connect]` | expose I2C targets over TCP (repeatable) |
 | `-spi-tcp bus:cs[@listen|=connect]` | expose an SPI device over TCP (repeatable) |
 | `-i2c-preset bus:name[@addr]` | attach a built-in I2C device (repeatable) |
+| `-i2c-plugin bus:addr=path` | attach a Lua/WASM I2C device (repeatable) |
+| `-spi-plugin bus:cs=path` | attach a Lua/WASM SPI device (repeatable) |
+| `-uart-plugin uart=path` | attach a Lua/WASM UART device (repeatable) |
 | `-spi-preset bus:name@cs` | attach a built-in SPI device (repeatable) |
 | `-list-presets` | print the built-in device registry |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
 | `-bus-wait D` | first-client wait for an I2C/SPI bridge (default 2s) |
+
+`-i2c-plugin`, `-spi-plugin` and `-uart-plugin` take a `.lua` or `.wasm`
+device file. Lua runs in the bundled wasm interpreter and both formats use the
+same ABI; `print`/`host_log` lines are emitted as `plugin` records. See
+[device plugins](plugins.md) for the schema and examples.
 
 `-watch-reg` installs its own trace callback and works without `-bp` or
 `-trace-last`. Address zero is a valid breakpoint; the runner tracks whether

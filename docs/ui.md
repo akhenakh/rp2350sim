@@ -131,6 +131,8 @@ reserved BOOTSEL id.
 | `spi_tcp` | `{bus, cs, listen \| connect}` | Bus |
 | `i2c_presets` | list of `{bus, preset, addr}` (built-in target) | Bus |
 | `spi_presets` | list of `{bus, cs, preset}` (built-in target) | Bus |
+| `i2c_plugins` / `spi_plugins` | list of `{bus, addr or cs, file, url, config}` (Lua/WASM target) | Bus |
+| `serial_plugins` | list of `{uart, file, url, config}` (Lua/WASM serial target) | Console |
 
 `listen` defaults to `127.0.0.1:0` (a free port). `connect: host:port` makes the
 emulator dial an external device server instead of listening.
@@ -491,10 +493,14 @@ same data is available headlessly through `-coverage`, `-profile-out` and
 ### Bus
 
 The I2C/SPI tab lists the board's built-in presets (`i2c_presets` /
-`spi_presets`) and TCP bridges. A preset is attached directly to the emulated
-controller, so firmware sees a real BME280, SSD1306, MPU6050 or W25Q16 without
-an external script. The panel names each preset and its address or chip select;
-no terminal is involved.
+`spi_presets`), scripted device files (`i2c_plugins`, `spi_plugins`,
+`serial_plugins`) and TCP bridges. A preset or plugin is attached directly to
+the emulated controller, so firmware sees a real BME280, SSD1306, MPU6050 or
+W25Q16 without an external script. The Scripted plugins card names each model,
+its slot and load state, and shows the last `print`/`host_log` lines. See
+[device plugins](plugins.md).
+
+![Scripted plugins](images/plugins.png)
 
 For TCP bridges, select a listening bridge and **Connect terminal** to act as
 the device: the panel shows the Bus Pirate request tokens and sends the

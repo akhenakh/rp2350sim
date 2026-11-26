@@ -429,3 +429,52 @@ func TestBoardsValidatePresets(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddedPluginBoard(t *testing.T) {
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b *BoardDef
+	for i := range boards {
+		if boards[i].ID == "pico2-plugins" {
+			b = &boards[i]
+		}
+	}
+	if b == nil {
+		t.Fatal("pico2-plugins board is missing")
+	}
+	if len(b.I2CPlugins) != 1 || len(b.SPIPlugins) != 2 || len(b.UARTPlugins) != 1 {
+		t.Fatalf("plugins = %d/%d/%d", len(b.I2CPlugins), len(b.SPIPlugins), len(b.UARTPlugins))
+	}
+	if b.I2CPlugins[0].Addr != 0x76 || b.SPIPlugins[0].CS != 17 {
+		t.Fatalf("plugin slots = %+v / %+v", b.I2CPlugins[0], b.SPIPlugins[0])
+	}
+}
+
+func TestBoardsValidatePlugins(t *testing.T) {
+	bad := []string{
+		`i2c_plugins: [{ bus: 0, addr: 0x76 }]`,
+		`i2c_plugins: [{ bus: 2, addr: 0x76, file: p.lua }]`,
+		`i2c_plugins: [{ bus: 0, addr: 0x76, file: p.lua }, { bus: 0, addr: 0x76, file: q.lua }]`,
+		`i2c_presets: [{ bus: 0, preset: bme280, addr: 0x76 }]
+		 i2c_plugins: [{ bus: 0, addr: 0x76, file: p.lua }]`,
+		`spi_plugins: [{ bus: 0, cs: 17, file: p.wasm }, { bus: 0, cs: 17, file: q.wasm }]`,
+		`serial_plugins: [{ uart: 2, file: p.lua }]`,
+	}
+	for _, snippet := range bad {
+		writeBoards(t, "boards:\n  - id: t\n    "+snippet+"\n")
+		if _, err := LoadBoards(); err == nil {
+			t.Fatalf("invalid plugin accepted: %s", snippet)
+		}
+	}
+	writeBoards(t, `boards:
+  - id: ok
+    i2c_plugins: [{ bus: 0, addr: 0x76, file: p.lua }]
+    spi_plugins: [{ bus: 1, cs: 9, file: p.wasm }]
+    serial_plugins: [{ uart: 1, file: p.lua }]
+`)
+	if _, err := LoadBoards(); err != nil {
+		t.Fatal(err)
+	}
+}

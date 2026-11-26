@@ -1982,6 +1982,15 @@ func (c *Chip) SendUSBHID(data []byte) bool { return c.usb != nil && c.usb.SendH
 // USBHIDReady reports whether a HID OUT endpoint is armed.
 func (c *Chip) USBHIDReady() bool { return c.usb != nil && c.usb.HIDReady() }
 
+// AttachUART attaches an external device to a hardware UART. The device
+// receives firmware TX bytes and can answer through SendUART.
+func (c *Chip) AttachUART(idx int, dev UARTDevice) {
+	if idx < 0 || idx >= len(c.uart) || c.uart[idx] == nil {
+		return
+	}
+	c.uart[idx].dev = dev
+}
+
 // SendUART delivers host bytes to a UART receive FIFO (0 or 1).
 func (c *Chip) SendUART(idx int, data []byte) {
 	if idx < 0 || idx >= len(c.uart) || c.uart[idx] == nil {

@@ -177,6 +177,15 @@ func webBoot() (boardID, firmware, tab string, ok bool) {
 	return boardID, firmware, tab, true
 }
 
+// pluginSource loads a device plugin in the browser. Board files use a URL;
+// the desktop file path is meaningless there.
+func pluginSource(file, url string) ([]byte, error) {
+	if url == "" {
+		return nil, fmt.Errorf("plugin %q has no url for the browser", file)
+	}
+	return webFetch(url)
+}
+
 // webPrepareBoard strips the host-only parts of a board definition: the browser
 // has no filesystem directory backing and no listening sockets.
 func webPrepareBoard(b *BoardDef) {

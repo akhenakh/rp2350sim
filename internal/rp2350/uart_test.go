@@ -187,3 +187,33 @@ func TestUARTConcurrentSendAndRead(t *testing.T) {
 		}
 	}
 }
+
+type recordingUART struct {
+	tx []byte
+	c  *Chip
+}
+
+func (d *recordingUART) TX(b byte) {
+	d.tx = append(d.tx, b)
+	if b == '?' {
+		d.c.SendUART(1, []byte("ok"))
+	}
+}
+func (d *recordingUART) Reset() {}
+
+func TestAttachUARTDevice(t *testing.T) {
+	c := New()
+	dev := &recordingUART{c: c}
+	c.AttachUART(1, dev)
+	// UART1 data register at 0x40078000: TX '?' and read the plugin's reply.
+	c.Write32(0x40078000, '?')
+	if got := string(dev.tx); got != "?" {
+		t.Fatalf("plugin TX = %q", got)
+	}
+	if got := c.Read32(0x40078000) & 0xFF; got != 'o' {
+		t.Fatalf("UART RX = %#x, want 'o'", got)
+	}
+	if got := c.Read32(0x40078000) & 0xFF; got != 'k' {
+		t.Fatalf("UART RX = %#x, want 'k'", got)
+	}
+}
