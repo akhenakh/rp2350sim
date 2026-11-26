@@ -18,6 +18,9 @@ func put16(t *testing.T, bus *testBus, addr uint32, hws ...uint16) {
 
 func stepAt(t *testing.T, cpu *CPU, addr uint32) {
 	t.Helper()
+	// Tests rewrite the test bus behind the CPU's back; invalidate the
+	// predecode cache as a Chip store would.
+	cpu.InvalidatePredecodeAll(cpu.PredecodeGeneration() + 1)
 	cpu.R[15] = addr
 	cpu.Step()
 }

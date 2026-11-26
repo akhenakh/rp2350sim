@@ -118,6 +118,10 @@ type CPU struct {
 	Parked bool
 	// Halted is set when the core executes a terminal condition (UDF, lockup).
 	Halted bool
+	// predecode caches fetched instruction bytes keyed by PC. Both cores on a
+	// chip share one cache and one memory generation; SRAM stores clear the
+	// affected entries explicitly.
+	predecode *PredecodeCache
 	// HaltReason describes why the core halted.
 	HaltReason string
 
@@ -327,6 +331,92 @@ func (c *CPU) branch(offset int32) {
 	c.R[15] = uint32(int32(c.R[15]) + offset)
 }
 
+const predecodeEntries = 1 << 14
+
+// PredecodeCache is a bounded direct-mapped instruction cache shared by the
+// cores of one chip. gen invalidates the whole cache lazily after a flash or
+// mapping change.
+type PredecodeCache struct {
+	entries []predecodeEntry
+	gen     uint32
+}
+
+// NewPredecodeCache creates an empty shared predecode cache.
+func NewPredecodeCache() *PredecodeCache { return &PredecodeCache{} }
+
+// SetPredecodeCache makes cpu use a cache shared with another core.
+func (c *CPU) SetPredecodeCache(p *PredecodeCache) { c.predecode = p }
+
+// predecodeEntry stores one halfword-aligned fetch. tagPlus is pc+2 so a
+// zeroed entry can never match; gen gates the whole cache on a memory
+// generation change without clearing 16K entries on every flash write.
+type predecodeEntry struct {
+	tagPlus uint32
+	hw1     uint16
+	hw2     uint16
+	gen     uint32
+}
+
+// PredecodeGeneration reports the current cache generation.
+func (c *CPU) PredecodeGeneration() uint32 { return c.cache().gen }
+
+// InvalidatePredecodeAll drops every cached instruction after a mapping or
+// bulk memory change. gen is the new chip memory generation; stale entries
+// fail the generation check and are replaced lazily.
+func (c *CPU) InvalidatePredecodeAll(gen uint32) {
+	c.cache().gen = gen
+}
+
+// InvalidatePredecode clears entries that could cover [addr, addr+size).
+// A 32-bit instruction starting two bytes before addr overlaps the first
+// written byte, and a 32-bit instruction starting at addr+size-1 overlaps the
+// last one, so the scan is widened by two bytes on each side.
+func (c *CPU) InvalidatePredecode(addr, size uint32) {
+	if c.predecode == nil || size == 0 {
+		return
+	}
+	start := addr &^ 1
+	if start >= 2 {
+		start -= 2
+	}
+	end := addr + size
+	p := c.predecode
+	if len(p.entries) == 0 {
+		return
+	}
+	for pc := start; pc < end; pc += 2 {
+		e := &p.entries[(pc>>1)&uint32(len(p.entries)-1)]
+		if e.tagPlus == pc+2 {
+			*e = predecodeEntry{}
+		}
+	}
+}
+
+func (c *CPU) cache() *PredecodeCache {
+	if c.predecode == nil {
+		c.predecode = &PredecodeCache{}
+	}
+	return c.predecode
+}
+
+func (c *CPU) fetch(pc uint32) (hw1, hw2 uint16, wide bool) {
+	p := c.cache()
+	if len(p.entries) == 0 {
+		p.entries = make([]predecodeEntry, predecodeEntries)
+	}
+	e := &p.entries[(pc>>1)&uint32(len(p.entries)-1)]
+	if e.gen == p.gen && e.tagPlus == pc+2 {
+		return e.hw1, e.hw2, e.hw1 >= 0xE800
+	}
+	hw1 = c.Bus.Read16(pc)
+	wide = hw1 >= 0xE800
+	if wide {
+		hw2 = c.Bus.Read16(pc + 2)
+	}
+	*e = predecodeEntry{tagPlus: pc + 2, hw1: hw1, hw2: hw2, gen: p.gen}
+	return hw1, hw2, wide
+}
+
 // Step executes one instruction and returns the number of cycles consumed.
 func (c *CPU) Step() int {
 	if c.Halted {
@@ -353,7 +443,7 @@ func (c *CPU) Step() int {
 
 	pc := c.R[15]
 	c.curPC = pc
-	hw1 := c.Bus.Read16(pc)
+	hw1, hw2, wide := c.fetch(pc)
 	if c.TracePC != nil {
 		c.TracePC(c, pc, hw1)
 	}
@@ -377,8 +467,8 @@ func (c *CPU) Step() int {
 	}
 
 	c.Cycles++
-	if hw1 >= 0xE800 {
-		c.exec32(pc, hw1)
+	if wide {
+		c.exec32(pc, hw1, hw2)
 	} else {
 		c.R[15] = pc + 2
 		c.itNoFlags = itBefore != 0

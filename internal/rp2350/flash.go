@@ -14,6 +14,7 @@ func (c *Chip) LoadFlashImage(data []byte) {
 	}
 	copy(c.Flash, data)
 	c.flashWrites = 0
+	c.invalidateCodeAll()
 }
 
 // FlashCopy returns a snapshot of the flash array.
@@ -45,6 +46,7 @@ func (c *Chip) eraseFlashRange(offset, count uint32) bool {
 	}
 	if changed {
 		c.flashChanged()
+		c.invalidateCodeAll()
 	}
 	return true
 }
@@ -66,6 +68,7 @@ func (c *Chip) programFlashRange(offset uint32, data []byte) bool {
 	}
 	if changed {
 		c.flashChanged()
+		c.invalidateCodeAll()
 	}
 	return true
 }

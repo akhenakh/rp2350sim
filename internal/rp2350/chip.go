@@ -229,6 +229,10 @@ type Chip struct {
 	OnHang     func(HangInfo)
 	hang       [2]hangTrack
 
+	// memGen invalidates the instruction predecode cache after flash/QMI
+	// changes or DMA code writes. CPU SRAM stores clear individual entries.
+	memGen uint32
+
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
 	// OnUnhandled is called for each unmapped access (may be nil).
@@ -270,6 +274,7 @@ func New() *Chip {
 		resetReason:        "power-on",
 		writeCore:          -1,
 		deadlineNext:       noPeriodic,
+		memGen:             1,
 		packageSel:         1, // QFN-60 / RP2350A
 		preferredPartition: -1,
 	}
@@ -288,6 +293,9 @@ func New() *Chip {
 	c.CPU0.Interrupts = c.ppb[0]
 	c.CPU1 = m33.New(c)
 	c.CPU1.Interrupts = c.ppb[1]
+	predecode := m33.NewPredecodeCache()
+	c.CPU0.SetPredecodeCache(predecode)
+	c.CPU1.SetPredecodeCache(predecode)
 
 	c.addRegBlock(newResets(c))
 	c.addRegBlock(newPSM(c))
@@ -1006,6 +1014,47 @@ func (c *Chip) GPIOs() int {
 	return 30
 }
 
+// MemoryGeneration is bumped for bulk code-memory or mapping changes.
+func (c *Chip) MemoryGeneration() uint32 { return c.memGen }
+
+// invalidateCodeAll drops both cores' predecode caches. Use it for flash/QMI
+// changes and DMA writes where many instruction addresses can change.
+func (c *Chip) invalidateCodeAll() {
+	c.memGen++
+	if c.memGen == 0 {
+		c.memGen = 1
+	}
+	if c.CPU0 != nil {
+		c.CPU0.InvalidatePredecodeAll(c.memGen)
+	}
+	if c.CPU1 != nil {
+		c.CPU1.InvalidatePredecodeAll(c.memGen)
+	}
+}
+
+// codeWrite invalidates the predecode entries affected by a CPU/DMA store.
+// SRAM self-modifying code is handled per range; flash-sized bulk updates use
+// invalidateCodeAll from their write path.
+func (c *Chip) codeWrite(addr, size uint32) {
+	if size == 0 {
+		return
+	}
+	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
+		if c.CPU0 != nil {
+			c.CPU0.InvalidatePredecode(addr, size)
+		}
+		if c.CPU1 != nil {
+			c.CPU1.InvalidatePredecode(addr, size)
+		}
+	}
+}
+
+// codeMapping reports whether addr is an XIP/QMI control register whose write
+// can change what instructions fetch.
+func codeMapping(addr uint32) bool {
+	return addr >= xipBase && addr < xipBase+0x1000 || addr >= qmiBase && addr < qmiBase+0x1000
+}
+
 func (c *Chip) Reset() {
 	c.Cycles = 0
 	c.lastMicros = 0
@@ -1043,6 +1092,7 @@ func (c *Chip) Reset() {
 		c.Debug.Reset()
 	}
 	c.resetPSRAM()
+	c.invalidateCodeAll()
 }
 
 // resetCore performs the core-local reset requested by SYSRESETREQ. It must not
@@ -1296,6 +1346,7 @@ func (c *Chip) LoadSegment(addr uint32, data []byte) error {
 		off, _ := psramAlias(addr)
 		copy(c.PSRAM[off:], data)
 	}
+	c.invalidateCodeAll()
 	return nil
 }
 
@@ -1419,6 +1470,7 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 	c.invalidateMonitors(addr, c.writeCore)
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize {
 		c.SRAM[addr-SRAMBase] = v
+		c.codeWrite(addr, 1)
 		return
 	}
 	if _, ok := c.flashIndex(addr, 1); ok {
@@ -1444,6 +1496,7 @@ func (c *Chip) Write8(addr uint32, v uint8) {
 		c.psramAccess()
 		if c.psramWritable {
 			c.PSRAM[off] = v
+			c.invalidateCodeAll()
 		}
 		return
 	}
@@ -1464,6 +1517,7 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		o := addr - SRAMBase
 		c.SRAM[o] = byte(v)
 		c.SRAM[o+1] = byte(v >> 8)
+		c.codeWrite(addr, 2)
 		return
 	}
 	if _, ok := c.flashIndex(addr, 2); ok {
@@ -1487,10 +1541,14 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 		if c.psramWritable {
 			c.PSRAM[off] = byte(v)
 			c.PSRAM[off+1] = byte(v >> 8)
+			c.invalidateCodeAll()
 		}
 		return
 	}
 	if addr >= PeriphBase {
+		if codeMapping(addr) {
+			c.invalidateCodeAll()
+		}
 		c.writeMMIO16(addr, v)
 		return
 	}
@@ -1509,6 +1567,7 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 		c.SRAM[o+1] = byte(v >> 8)
 		c.SRAM[o+2] = byte(v >> 16)
 		c.SRAM[o+3] = byte(v >> 24)
+		c.codeWrite(addr, 4)
 		return
 	}
 	if _, ok := c.flashIndex(addr, 4); ok {
@@ -1534,10 +1593,14 @@ func (c *Chip) Write32(addr uint32, v uint32) {
 			c.PSRAM[off+1] = byte(v >> 8)
 			c.PSRAM[off+2] = byte(v >> 16)
 			c.PSRAM[off+3] = byte(v >> 24)
+			c.invalidateCodeAll()
 		}
 		return
 	}
 	if addr >= PeriphBase {
+		if codeMapping(addr) {
+			c.invalidateCodeAll()
+		}
 		c.writeMMIO(addr, v)
 		return
 	}

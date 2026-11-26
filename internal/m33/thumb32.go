@@ -1,8 +1,7 @@
 package m33
 
 // exec32 decodes and executes a 32-bit Thumb-2 instruction.
-func (c *CPU) exec32(pc uint32, hw1 uint16) {
-	hw2 := c.Bus.Read16(pc + 2)
+func (c *CPU) exec32(pc uint32, hw1, hw2 uint16) {
 	c.R[15] = pc + 4
 
 	switch {
