@@ -28,7 +28,9 @@ warm-up, which is useful for screenshots.
 
 The summary shows profiled virtual time, PC samples, executed/static
 instructions and instruction coverage, and interrupt entries with the slowest
-latency. The function table is sorted by sampled cycles:
+latency. **Copy** puts the same report — summary, functions, IRQ histogram and
+stack watermarks — on the system clipboard as plain text. The function table is
+sorted by sampled cycles:
 
 - **cycles** — samples multiplied by the sampling period.
 - **share** — bar and percentage of all samples.

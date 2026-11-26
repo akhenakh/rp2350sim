@@ -34,6 +34,11 @@ func profilePanel(snap MachineState) {
 			Label("PC every 2048 cycles · instruction coverage exact while running",
 				FontSize(11), TextColor(220, 6, 68, 1))
 			Filler(1)
+			if rep != nil {
+				if Button(NoIcon, "Copy") {
+					RequestTextCopy(profileText(rep, snap.Firmware))
+				}
+			}
 			if snap.Firmware != "" {
 				Label(snap.Firmware, FontSize(11), TextColor(220, 6, 68, 1))
 			}
@@ -58,6 +63,81 @@ func profilePanel(snap MachineState) {
 			})
 		})
 	})
+}
+
+// profileText renders the visible profile as a self-contained text report
+// for the Copy button and external analysis.
+func profileText(rep *coverage.Report, firmware string) string {
+	var b strings.Builder
+	cover := 0.0
+	if rep.TotalInstructions > 0 {
+		cover = 100 * float64(rep.ExecutedInstructions) / float64(rep.TotalInstructions)
+	}
+	b.WriteString("rp2350sim profile\n")
+	if firmware != "" {
+		fmt.Fprintf(&b, "Firmware: %s\n", firmware)
+	}
+	fmt.Fprintf(&b, "Virtual time: %.3f ms\n", float64(rep.ElapsedCycles)/150_000)
+	fmt.Fprintf(&b, "PC samples: %d (every %d cycles)\n", rep.TotalSamples, rep.SampleCycles)
+	fmt.Fprintf(&b, "Instructions: %d / %d (%.1f%%)\n",
+		rep.ExecutedInstructions, rep.TotalInstructions, cover)
+	fmt.Fprintf(&b, "IRQ entries: %d, slowest %.2f us\n", rep.IRQCount,
+		float64(rep.IRQSlowest)/150)
+	b.WriteString("Stack low-water (sampled):\n")
+	for core, w := range rep.Stack {
+		msp, psp := "—", "—"
+		if w.MSPValid {
+			msp = fmt.Sprintf("%#08x", w.MSPMin)
+		}
+		if w.PSPValid {
+			psp = fmt.Sprintf("%#08x", w.PSPMin)
+		}
+		fmt.Fprintf(&b, "  core%d  MSP %s  PSP %s\n", core, msp, psp)
+	}
+	b.WriteString("\n")
+	title, first := "Functions by sampled cycles", "function"
+	if !rep.Symbolized {
+		title, first = "PC buckets by sampled cycles", "region"
+	}
+	fmt.Fprintf(&b, "%s:\n", title)
+	fmt.Fprintf(&b, "%10s %7s %8s %7s %8s  %s\n",
+		"cycles", "share", "samples", "instr%", "hits", first)
+	shown, truncated := 0, false
+	for _, f := range rep.Functions {
+		if f.Samples == 0 && f.Hits == 0 {
+			continue
+		}
+		if shown == 300 {
+			truncated = true
+			break
+		}
+		var share float64
+		if rep.TotalSamples > 0 {
+			share = 100 * float64(f.Samples) / float64(rep.TotalSamples)
+		} else if rep.TotalHits > 0 {
+			share = 100 * float64(f.Hits) / float64(rep.TotalHits)
+		}
+		instr := 0.0
+		if f.Instructions > 0 {
+			instr = 100 * float64(f.Executed) / float64(f.Instructions)
+		}
+		fmt.Fprintf(&b, "%7.1f ms %6.1f%% %8d %6.1f%% %8d  %s\n",
+			float64(f.Cycles)/150_000, share, f.Samples, instr, f.Hits, f.Name)
+		shown++
+	}
+	if truncated {
+		b.WriteString("… more functions not shown\n")
+	}
+	if rep.IRQCount > 0 && len(rep.IRQHist) > 0 {
+		b.WriteString("\nIRQ entry latency:\n")
+		labels := coverage.IRQBucketLabels(len(rep.IRQHist))
+		for i, n := range rep.IRQHist {
+			if n > 0 {
+				fmt.Fprintf(&b, "  %10s cyc %5d\n", labels[i], n)
+			}
+		}
+	}
+	return b.String()
 }
 
 func profileSummary(rep *coverage.Report) {
