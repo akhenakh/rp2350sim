@@ -468,6 +468,11 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-sample N` | print the PC in 10M-cycle chunks (obeys input, expectations and the wall timeout) |
 | `-continue-after-halt` | keep peripherals (PIO/PWM/DMA) running after a core halts |
 | `-hang-cycles N` | report a tight poll loop after N cycles (default 30M, 0 disables) |
+| `-profile` | collect PC samples and exact instruction coverage |
+| `-profile-interval N` | PC sampling period in cycles (default 4096) |
+| `-coverage PATH` | write an LCOV tracefile at exit |
+| `-profile-out PATH` | write the profile report as JSON at exit |
+| `-profile-top N` | log the N hottest functions at exit |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | report unmapped accesses at exit |
 | `-msg` | at `-bp`, decode `r1` as a runtime message string |
@@ -497,6 +502,35 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 keeps the instruction ring even without `-trace-last`, so the first unmapped
 access gets a backtrace. Malformed `-trace-from`, `-poke`, `-watch-val` and
 `-peek` values are rejected before the machine starts (exit 2).
+
+### Profiling and coverage
+
+`-profile` enables two views at once: a PC sample every `-profile-interval`
+cycles (default 4096, about 27 us) and an exact count of every executed
+instruction. Sampling attributes virtual cycles to functions; exact counts
+produce instruction and line coverage plus LCOV.
+
+```sh
+rp2350sim -fw build/blinky.elf -seconds 1 \
+  -profile -coverage build/blinky.info \
+  -profile-out build/blinky-profile.json -profile-top 10
+```
+
+- `-coverage PATH` writes LCOV (`SF`/`FN`/`FNDA`/`DA`/`LF`/`LH`), using DWARF
+  statement rows as the line set and instruction hits as the counts. It needs
+  an ELF with debug info; UF2/raw firmware still samples.
+- `-profile-out PATH` writes the same report as JSON: per-function samples,
+  cycles, instruction totals and hits, line counts, the IRQ latency histogram
+  and stack low-water marks.
+- The exit log line `profile` reports virtual time, samples, instruction
+  coverage, IRQ entries and the slowest latency; `-profile-top` adds one line
+  per hot function.
+- IRQ latency is measured from a peripheral/software IRQ becoming pending to
+  its handler entry (nested waits included), in 32-cycle to 131072-cycle
+  buckets. Stack low-water marks and latency are sampled with the PC, so they
+  are approximations; instruction coverage is exact.
+- Profiling uses virtual time only: the same firmware and run length produce
+  the same report.
 
 ### Logic analyzer capture
 

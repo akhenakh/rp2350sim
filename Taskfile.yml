@@ -944,6 +944,26 @@ tasks:
     cmds:
       - go run . --board pico2 --run 0.4 --png '../../{{.BUILD}}/ui-hang.png' '../../firmware/c/build/hang.elf'
 
+  ui:profile:
+    desc: Profile blinky in the new Profile tab (samples, exact coverage, IRQ latency, stack watermarks)
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab profile '../../{{.BUILD}}/blinky.elf'
+
+  ui:profile:png:
+    desc: Render the Profile tab for blinky to build/ui-profile.png
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab profile --run 0.5 --png '../../{{.BUILD}}/ui-profile.png' '../../{{.BUILD}}/blinky.elf'
+
+  run:profile:
+    desc: Run blinky headlessly and emit an LCOV report plus the hottest functions
+    deps: [build, firmware:blinky]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/blinky.elf -seconds 1 -profile -coverage {{.BUILD}}/blinky.info -profile-out {{.BUILD}}/blinky-profile.json -profile-top 10'
+
   c:inputs:
     desc: Run the board-controls firmware with the default (released) inputs
     deps: [build, c:build]

@@ -177,10 +177,12 @@ func (n *NVIC) Pend(irq int) {
 	if irq < 0 || irq >= nvicIRQs {
 		return
 	}
-	if n.pending[irq/32]&(1<<uint(irq%32)) != 0 {
+	bit := uint32(1) << uint(irq%32)
+	if n.pending[irq/32]&bit != 0 {
 		return
 	}
-	n.pending[irq/32] |= 1 << uint(irq%32)
+	n.pending[irq/32] |= bit
+	n.chip.noteIRQPend(n.core, irq)
 	n.noteEvent()
 	n.syncActive()
 	n.wake()
@@ -193,7 +195,11 @@ func (n *NVIC) ClearPending(irq int) {
 	if irq < 0 || irq >= nvicIRQs {
 		return
 	}
-	n.pending[irq/32] &^= 1 << uint(irq%32)
+	bit := uint32(1) << uint(irq%32)
+	n.pending[irq/32] &^= bit
+	if n.swPending[irq/32]&bit == 0 {
+		n.chip.noteIRQUnpend(n.core, irq)
+	}
 	n.syncActive()
 }
 
@@ -208,6 +214,7 @@ func (n *NVIC) pendSoftware(irq int) {
 		return
 	}
 	n.swPending[irq/32] |= bit
+	n.chip.noteIRQPend(n.core, irq)
 	n.noteEvent()
 	n.syncActive()
 	n.wake()
@@ -374,6 +381,7 @@ func (n *NVIC) NextPending(cpu *m33.CPU) int {
 
 // ExceptionEntered records an exception as active.
 func (n *NVIC) ExceptionEntered(exc uint32) {
+	n.chip.noteIRQEntry(n.core, exc)
 	n.activeCount++
 	if exc < 16 {
 		n.activeSys |= 1 << exc

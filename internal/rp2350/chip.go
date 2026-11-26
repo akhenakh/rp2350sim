@@ -229,6 +229,11 @@ type Chip struct {
 	OnHang     func(HangInfo)
 	hang       [2]hangTrack
 
+	// profile collects PC samples, opt-in exact coverage, IRQ latency and
+	// stack watermarks; profActive gates the per-instruction hook.
+	profile    *profileState
+	profActive bool
+
 	// memGen invalidates the instruction predecode cache after flash/QMI
 	// changes or DMA code writes. CPU SRAM stores clear individual entries.
 	memGen uint32
@@ -808,6 +813,10 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 		c.writeCore = -1
 		return
 	}
+	if c.profActive && c.profile != nil {
+		psp := cpu.IPSR == 0 && cpu.CONTROL&2 != 0
+		c.profile.observe(c, c.core, pc, cpu.R[13], psp)
+	}
 	cpu.Step()
 	c.hangSample(c.core, cpu.R[15])
 	c.writeCore = -1
@@ -1093,6 +1102,7 @@ func (c *Chip) Reset() {
 	}
 	c.resetPSRAM()
 	c.invalidateCodeAll()
+	c.clearProfilePend()
 }
 
 // resetCore performs the core-local reset requested by SYSRESETREQ. It must not

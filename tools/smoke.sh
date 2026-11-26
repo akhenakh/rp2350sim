@@ -588,6 +588,29 @@ else
 	bad "UI I2C/SPI bus tab" "$(cat "$BUILD/smoke.log")"
 fi
 
+# --- profiling: exact LCOV, JSON report and the sampled top list ------------
+out=$("$EMU" -fw "$BUILD/blinky.elf" -seconds 1 -quiet -profile \
+	-coverage "$BUILD/blinky.info" -profile-out "$BUILD/blinky-profile.json" \
+	-profile-top 3 2>&1)
+if grep -q "^LF:" "$BUILD/blinky.info" && grep -q "^FNDA:" "$BUILD/blinky.info"; then
+	ok "profile LCOV coverage"
+else
+	bad "profile LCOV coverage" "$(head -20 "$BUILD/blinky.info")"
+fi
+if grep -q '"msg":"profile top"' <<<"$out" && grep -q '"total_instructions"' "$BUILD/blinky-profile.json"; then
+	ok "profile top functions and JSON report"
+else
+	bad "profile top functions and JSON report" "$out"
+fi
+
+if (cd cmd/simui && go run . --board pico2 --tab profile --run 0.5 \
+	--png "../../$BUILD/profile-ui-smoke.png" "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/profile-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI Profile tab"
+else
+	bad "UI Profile tab" "$(cat "$BUILD/smoke.log")"
+fi
+
 if [ "$fail" -ne 0 ]; then
 	echo "smoke: FAILURES" >&2
 	exit 1

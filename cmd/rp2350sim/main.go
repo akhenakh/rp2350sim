@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/akhenakh/rp2350sim/internal/coverage"
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
@@ -143,88 +144,93 @@ func (e *expectSet) missing() []string {
 
 func main() {
 	var (
-		path        = flag.String("fw", "", "firmware file (.uf2, .elf or .bin)")
-		steps       = flag.Uint64("steps", 50_000_000, "maximum cycles to execute")
-		secs        = flag.Float64("seconds", 0, "virtual seconds to run (overrides -steps)")
-		unhandled   = flag.Bool("unhandled", false, "report unmapped peripheral accesses at exit")
-		tracePins   = flag.String("trace-pins", "", "comma separated GPIO numbers to log")
-		logicPins   = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
-		logicOut    = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
-		vcdOut      = flag.String("vcd", "", "write the logic capture as an IEEE 1364 VCD")
-		dviPNG      = flag.String("dvi-png", "", "write the last HSTX/DVI frame to this PNG")
-		logicUART   = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
-		logicI2C    = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
-		logicSPI    = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
-		logicRate   = flag.Float64("logic-rate", 2e6, "logic analyzer sample rate in Hz")
-		logicDepth  = flag.Int("logic-depth", devices.LogicDepth, "logic analyzer ring depth in samples")
-		logicBoard  = flag.String("logic-board", "", "board label for the logic trace and filename")
-		busTimeout  = flag.Duration("bus-timeout", time.Second, "I2C/SPI TCP bridge request timeout")
-		busWait     = flag.Duration("bus-wait", 2*time.Second, "I2C/SPI TCP bridge first-client wait")
-		stopOnMMIO  = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
-		core1       = flag.Bool("core1", true, "start core 1")
-		bootsel     = flag.Bool("bootsel", false, "hold BOOTSEL/QSPI CS low (the bootrom samples it at reset)")
-		quiet       = flag.Bool("quiet", false, "suppress the firmware header and final summary")
-		traceN      = flag.Int("trace", 0, "trace the first N instructions")
-		traceLast   = flag.Bool("trace-last", false, "dump the last 64 instructions on a fault")
-		bpStr       = flag.String("bp", "", "log a breakpoint at this address or symbol")
-		watchStr    = flag.String("watch", "", "log writes to this address or symbol")
-		bp2Str      = flag.String("bp2", "", "secondary breakpoint address or symbol")
-		pokeStr     = flag.String("poke", "", "comma separated addr=val pokes (hex) after boot")
-		sampleN     = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
-		msgFlag     = flag.Bool("msg", false, "at a breakpoint, decode r1 as a runtime message string")
-		valStr      = flag.String("watch-val", "", "log writes of this value (hex)")
-		lcdFlag     = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
-		lcdPNG      = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
-		touchLCD2   = flag.Bool("touch-lcd2", false, "attach the RP2350-Touch-LCD-2 hardware (touch LCD, IMU, battery, microSD)")
-		touchStr    = flag.String("touch", "", "inject a touch at x,y in native panel coordinates")
-		touchAt     = flag.Duration("touch-at", 150*time.Millisecond, "delay before -touch is applied")
-		touchHold   = flag.Duration("touch-hold", 100*time.Millisecond, "how long -touch stays down")
-		sensorsOut  = flag.Bool("sensors", false, "print touch, IMU and battery state at exit")
-		sdFlag      = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
-		sdImage     = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
-		sdDir       = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
-		otpIn       = flag.String("otp", "", "load OTP rows from this JSON file before boot")
-		otpOut      = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
-		flashIn     = flag.String("flash", "", "load a raw flash image and write it back (enables self-update)")
-		flashOut    = flag.String("flash-out", "", "write the final raw flash image to this path")
-		psramMB     = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
-		psramLat    = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
-		psramCS     = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
-		rp2350b     = flag.Bool("rp2350b", false, "model the RP2350B QFN-80 package (48 GPIOs)")
-		ethFlag     = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
-		w6300Flag   = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
-		ch9120Flag  = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
-		wsPin       = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
-		inputStr    = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
-		inputFile   = flag.String("input-file", "", "send the contents of this file at -input-at")
-		inputAt     = flag.Duration("input-at", 200*time.Millisecond, "delay before -input/-input-file are sent")
-		stdinFlag   = flag.Bool("stdin", false, "forward host stdin to USB CDC and UART0")
-		stopExpect  = flag.Bool("stop-on-expect", false, "stop as soon as all -expect strings are seen")
-		wallLimit   = flag.Duration("wall-timeout", 0, "fail after this much wall time (0 = unlimited)")
-		summaryOut  = flag.String("summary-file", "", "write a JSON run summary to this path")
-		allowHalt   = flag.Bool("allow-halt", false, "exit 0 even when a core halts")
-		hangCycles  = flag.Uint64("hang-cycles", 30_000_000, "tight-loop detection threshold in cycles (0 disables)")
-		keepAfter   = flag.Bool("continue-after-halt", false, "keep peripherals running after a core halts (PIO/PWM keep driving)")
-		serialTCP   = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
-		cpuProfile  = flag.String("cpuprofile", "", "write a CPU profile to this path")
-		peekStr     = flag.String("peek", "", "print memory at this address (hex) at exit")
-		fromStr     = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
-		regStr      = flag.String("watch-reg", "", "log every change of this register")
-		gdbAddr     = flag.String("gdb", "", "serve the GDB remote protocol on this address (e.g. 127.0.0.1:3333)")
-		audioOut    = flag.String("audio-out", "", "write decoded audio to this WAV file")
-		audioI2S    = flag.String("audio-i2s", "", "decode I2S audio on bclk,lrclk,data[,bits]")
-		audioPDM    = flag.String("audio-pdm", "", "decode PDM audio on data,clock[,decimation]")
-		audioPWM    = flag.Int("audio-pwm", -1, "decode PWM/GPIO audio on this GPIO")
-		audioRate   = flag.Int("audio-rate", 48000, "audio sample rate in Hz")
-		usbMIDI     = flag.Bool("usb-midi", false, "enable the USB-MIDI class endpoint")
-		usbHID      = flag.Bool("usb-hid", false, "log decoded USB HID reports (keyboard, mouse, gamepad)")
-		hidOut      = flag.String("hid-out", "", "send one host-to-device HID report after enumeration (hex)")
-		midiUART    = flag.Int("midi-uart", -1, "tap this UART (0/1) as 31250-baud MIDI")
-		midiMonitor = flag.Bool("midi-monitor", false, "log parsed MIDI messages")
-		midiUDP     = flag.String("midi-udp", "", "bidirectional UDP-MIDI endpoint (e.g. 127.0.0.1:5004)")
-		logFormat   = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
-		logLevel    = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
-		showVer     = flag.Bool("version", false, "print the version and exit")
+		path         = flag.String("fw", "", "firmware file (.uf2, .elf or .bin)")
+		steps        = flag.Uint64("steps", 50_000_000, "maximum cycles to execute")
+		secs         = flag.Float64("seconds", 0, "virtual seconds to run (overrides -steps)")
+		unhandled    = flag.Bool("unhandled", false, "report unmapped peripheral accesses at exit")
+		tracePins    = flag.String("trace-pins", "", "comma separated GPIO numbers to log")
+		logicPins    = flag.String("logic-pins", "", "comma separated GPIOs to capture for the logic analyzer")
+		logicOut     = flag.String("logic-out", "", "write the logic analyzer trace here (default: auto name)")
+		vcdOut       = flag.String("vcd", "", "write the logic capture as an IEEE 1364 VCD")
+		dviPNG       = flag.String("dvi-png", "", "write the last HSTX/DVI frame to this PNG")
+		logicUART    = flag.String("logic-uart", "", "decode a UART pin trace: tx[,rx],baud")
+		logicI2C     = flag.String("logic-i2c", "", "decode an I2C pin trace: sda,scl")
+		logicSPI     = flag.String("logic-spi", "", "decode an SPI pin trace: sck,mosi[,miso[,cs]]")
+		logicRate    = flag.Float64("logic-rate", 2e6, "logic analyzer sample rate in Hz")
+		logicDepth   = flag.Int("logic-depth", devices.LogicDepth, "logic analyzer ring depth in samples")
+		logicBoard   = flag.String("logic-board", "", "board label for the logic trace and filename")
+		busTimeout   = flag.Duration("bus-timeout", time.Second, "I2C/SPI TCP bridge request timeout")
+		busWait      = flag.Duration("bus-wait", 2*time.Second, "I2C/SPI TCP bridge first-client wait")
+		stopOnMMIO   = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
+		core1        = flag.Bool("core1", true, "start core 1")
+		bootsel      = flag.Bool("bootsel", false, "hold BOOTSEL/QSPI CS low (the bootrom samples it at reset)")
+		quiet        = flag.Bool("quiet", false, "suppress the firmware header and final summary")
+		traceN       = flag.Int("trace", 0, "trace the first N instructions")
+		traceLast    = flag.Bool("trace-last", false, "dump the last 64 instructions on a fault")
+		bpStr        = flag.String("bp", "", "log a breakpoint at this address or symbol")
+		watchStr     = flag.String("watch", "", "log writes to this address or symbol")
+		bp2Str       = flag.String("bp2", "", "secondary breakpoint address or symbol")
+		pokeStr      = flag.String("poke", "", "comma separated addr=val pokes (hex) after boot")
+		sampleN      = flag.Int("sample", 0, "run in 10M cycle chunks and print the PC each time")
+		msgFlag      = flag.Bool("msg", false, "at a breakpoint, decode r1 as a runtime message string")
+		valStr       = flag.String("watch-val", "", "log writes of this value (hex)")
+		lcdFlag      = flag.Bool("lcd", false, "attach an ST7789 display on SPI1 (RP2350-GEEK wiring)")
+		lcdPNG       = flag.String("lcd-png", "", "write the LCD framebuffer to this PNG at exit")
+		touchLCD2    = flag.Bool("touch-lcd2", false, "attach the RP2350-Touch-LCD-2 hardware (touch LCD, IMU, battery, microSD)")
+		touchStr     = flag.String("touch", "", "inject a touch at x,y in native panel coordinates")
+		touchAt      = flag.Duration("touch-at", 150*time.Millisecond, "delay before -touch is applied")
+		touchHold    = flag.Duration("touch-hold", 100*time.Millisecond, "how long -touch stays down")
+		sensorsOut   = flag.Bool("sensors", false, "print touch, IMU and battery state at exit")
+		sdFlag       = flag.Bool("sd", false, "attach a microSD card on SPI0 CS GP23 (RP2350-GEEK wiring)")
+		sdImage      = flag.String("sd-image", "", "backing image for -sd or -touch-lcd2 (default: built-in FAT16)")
+		sdDir        = flag.String("sd-dir", "", "back the card with a host directory (read/write files from the host)")
+		otpIn        = flag.String("otp", "", "load OTP rows from this JSON file before boot")
+		otpOut       = flag.String("otp-dump", "", "write programmed OTP rows to this JSON file at exit")
+		flashIn      = flag.String("flash", "", "load a raw flash image and write it back (enables self-update)")
+		flashOut     = flag.String("flash-out", "", "write the final raw flash image to this path")
+		psramMB      = flag.Int("psram", 0, "attach PSRAM on QMI CS1 with this size in MiB (0 disables)")
+		psramLat     = flag.Int("psram-latency", 4, "extra cycles charged for each PSRAM access")
+		psramCS      = flag.Int("psram-cs", 8, "QMI CS1 GPIO used by the PSRAM device")
+		rp2350b      = flag.Bool("rp2350b", false, "model the RP2350B QFN-80 package (48 GPIOs)")
+		ethFlag      = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
+		w6300Flag    = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
+		ch9120Flag   = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
+		wsPin        = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
+		inputStr     = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
+		inputFile    = flag.String("input-file", "", "send the contents of this file at -input-at")
+		inputAt      = flag.Duration("input-at", 200*time.Millisecond, "delay before -input/-input-file are sent")
+		stdinFlag    = flag.Bool("stdin", false, "forward host stdin to USB CDC and UART0")
+		stopExpect   = flag.Bool("stop-on-expect", false, "stop as soon as all -expect strings are seen")
+		wallLimit    = flag.Duration("wall-timeout", 0, "fail after this much wall time (0 = unlimited)")
+		summaryOut   = flag.String("summary-file", "", "write a JSON run summary to this path")
+		profileOn    = flag.Bool("profile", false, "collect a sampled profile plus exact instruction coverage")
+		profileEvery = flag.Uint64("profile-interval", 4096, "PC sampling period in cycles")
+		coverageOut  = flag.String("coverage", "", "write an LCOV coverage report to this path")
+		profileOut   = flag.String("profile-out", "", "write the profile report as JSON to this path")
+		profileTop   = flag.Int("profile-top", 0, "log the N hottest functions at exit")
+		allowHalt    = flag.Bool("allow-halt", false, "exit 0 even when a core halts")
+		hangCycles   = flag.Uint64("hang-cycles", 30_000_000, "tight-loop detection threshold in cycles (0 disables)")
+		keepAfter    = flag.Bool("continue-after-halt", false, "keep peripherals running after a core halts (PIO/PWM keep driving)")
+		serialTCP    = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
+		cpuProfile   = flag.String("cpuprofile", "", "write a CPU profile to this path")
+		peekStr      = flag.String("peek", "", "print memory at this address (hex) at exit")
+		fromStr      = flag.String("trace-from", "", "start tracing when this address (hex) is reached")
+		regStr       = flag.String("watch-reg", "", "log every change of this register")
+		gdbAddr      = flag.String("gdb", "", "serve the GDB remote protocol on this address (e.g. 127.0.0.1:3333)")
+		audioOut     = flag.String("audio-out", "", "write decoded audio to this WAV file")
+		audioI2S     = flag.String("audio-i2s", "", "decode I2S audio on bclk,lrclk,data[,bits]")
+		audioPDM     = flag.String("audio-pdm", "", "decode PDM audio on data,clock[,decimation]")
+		audioPWM     = flag.Int("audio-pwm", -1, "decode PWM/GPIO audio on this GPIO")
+		audioRate    = flag.Int("audio-rate", 48000, "audio sample rate in Hz")
+		usbMIDI      = flag.Bool("usb-midi", false, "enable the USB-MIDI class endpoint")
+		usbHID       = flag.Bool("usb-hid", false, "log decoded USB HID reports (keyboard, mouse, gamepad)")
+		hidOut       = flag.String("hid-out", "", "send one host-to-device HID report after enumeration (hex)")
+		midiUART     = flag.Int("midi-uart", -1, "tap this UART (0/1) as 31250-baud MIDI")
+		midiMonitor  = flag.Bool("midi-monitor", false, "log parsed MIDI messages")
+		midiUDP      = flag.String("midi-udp", "", "bidirectional UDP-MIDI endpoint (e.g. 127.0.0.1:5004)")
+		logFormat    = flag.String("log-format", "auto", "diagnostic log format: auto, text or json")
+		logLevel     = flag.String("log-level", "info", "diagnostic log level: debug, info, warn or error")
+		showVer      = flag.Bool("version", false, "print the version and exit")
 	)
 	var expectFlag stringList
 	var i2cTCPFlag, spiTCPFlag stringList
@@ -477,6 +483,9 @@ func main() {
 			slog.String("why", hang.Describe(info, dbgInfo, c.PeekRegister)),
 			slog.Int("core", info.Core), slog.String("pc", hex(info.PC)),
 			slog.Uint64("cycles", info.Cycles))
+	}
+	if *profileOn || *coverageOut != "" || *profileOut != "" || *profileTop > 0 {
+		c.StartProfile(rp2350.ProfileConfig{SampleCycles: *profileEvery, Coverage: true})
 	}
 	var debugMu sync.Mutex
 	var gdbSrv *gdb.Server
@@ -1503,6 +1512,10 @@ func main() {
 		log.Info("unmapped accesses", slog.String("report", c.DescribeUnhandled()))
 	}
 
+	if *profileOn || *coverageOut != "" || *profileOut != "" || *profileTop > 0 {
+		writeProfileOutput(c, dbgInfo, log, *coverageOut, *profileOut, *profileTop, *quiet)
+	}
+
 	if *summaryOut != "" {
 		sum := struct {
 			Firmware       string                `json:"firmware"`
@@ -1578,4 +1591,101 @@ func main() {
 	if exitCode != 0 {
 		exit(exitCode)
 	}
+}
+
+// writeProfileOutput writes the requested coverage/profile artefacts and logs
+// a short summary. Instruction coverage needs an ELF debug view; samples alone
+// still produce a valid report.
+func writeProfileOutput(c *rp2350.Chip, info *debug.Info, log *slog.Logger, lcovPath, jsonPath string, top int, quiet bool) {
+	data, ok := c.ProfileData()
+	if !ok {
+		log.Error("profile: no data collected")
+		return
+	}
+	in := coverage.Input{
+		Counts:        data.Coverage,
+		Samples:       data.Samples,
+		SampleCycles:  data.SampleCycles,
+		ElapsedCycles: data.ElapsedCycles,
+		IRQHist:       data.IRQHist[:],
+		IRQSlowest:    data.IRQSlowest,
+		IRQCount:      data.IRQCount,
+	}
+	for i := range data.Stack {
+		in.Stack[i] = coverage.StackWater{
+			MSPMin: data.Stack[i].MSPMin, PSPMin: data.Stack[i].PSPMin,
+			MSPValid: data.Stack[i].MSPValid, PSPValid: data.Stack[i].PSPValid,
+		}
+	}
+	var src coverage.Symbolizer
+	if info != nil {
+		src = info
+	}
+	rep := coverage.Build(src, in, func(addr uint32, size int) ([]byte, bool) {
+		return c.PeekBytes(addr, size)
+	})
+
+	if lcovPath != "" {
+		if info == nil {
+			log.Error("coverage: no ELF debug info, writing an empty tracefile")
+		}
+		f, err := os.Create(lcovPath)
+		if err != nil {
+			log.Error("coverage", slog.String("path", lcovPath), slog.Any("err", err))
+		} else {
+			err = coverage.WriteLCOV(f, rep)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				log.Error("coverage", slog.String("path", lcovPath), slog.Any("err", err))
+			} else if !quiet {
+				log.Info("coverage saved", slog.String("path", lcovPath),
+					slog.Int("lines", len(rep.Lines)),
+					slog.Int("functions", len(rep.Functions)))
+			}
+		}
+	}
+	if jsonPath != "" {
+		b, err := json.MarshalIndent(rep, "", "  ")
+		if err == nil {
+			err = os.WriteFile(jsonPath, append(b, '\n'), 0o644)
+		}
+		if err != nil {
+			log.Error("profile", slog.String("path", jsonPath), slog.Any("err", err))
+		} else if !quiet {
+			log.Info("profile saved", slog.String("path", jsonPath))
+		}
+	}
+
+	var coveredPct float64
+	if rep.TotalInstructions > 0 {
+		coveredPct = 100 * float64(rep.ExecutedInstructions) / float64(rep.TotalInstructions)
+	}
+	log.Info("profile",
+		slog.Float64("virtual_ms", float64(rep.ElapsedCycles)/150_000),
+		slog.Uint64("samples", rep.TotalSamples),
+		slog.Uint64("instructions_executed", rep.ExecutedInstructions),
+		slog.Uint64("instructions_total", rep.TotalInstructions),
+		slog.Float64("instruction_cover_pct", coveredPct),
+		slog.Uint64("irqs", rep.IRQCount),
+		slog.Uint64("irq_slowest_cycles", rep.IRQSlowest))
+
+	if top <= 0 {
+		return
+	}
+	if top > len(rep.Functions) {
+		top = len(rep.Functions)
+	}
+	lines := make([]string, 0, top)
+	for _, f := range rep.Functions[:top] {
+		var pct float64
+		if rep.TotalSamples > 0 {
+			pct = 100 * float64(f.Samples) / float64(rep.TotalSamples)
+		} else if rep.TotalHits > 0 {
+			pct = 100 * float64(f.Hits) / float64(rep.TotalHits)
+		}
+		lines = append(lines, fmt.Sprintf("%5.1f%% %6d samples %6d hits %s", pct, f.Samples, f.Hits, f.Name))
+	}
+	log.Info("profile top", slog.Any("functions", lines))
 }

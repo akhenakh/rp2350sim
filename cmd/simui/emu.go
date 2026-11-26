@@ -15,6 +15,7 @@ import (
 
 	"image/color"
 
+	"github.com/akhenakh/rp2350sim/internal/coverage"
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
@@ -227,6 +228,13 @@ type Emu struct {
 
 	hang     *rp2350.HangInfo
 	hangText string
+
+	// Profile tab state: the chip owns raw collection; the report is rebuilt
+	// at most every few virtual milliseconds and frozen once stopped.
+	profWanted      bool
+	profileCache    *coverage.Report
+	profileCacheAt  uint64
+	profileCacheEnd bool
 
 	trigger LogicTrigger
 	frozen  frozenLogic
@@ -1393,6 +1401,12 @@ func (e *Emu) resetChip() {
 	e.attachMIDI(c, e.board)
 
 	e.chip = c
+	e.profileCache = nil
+	e.profileCacheAt = 0
+	e.profileCacheEnd = false
+	if e.profWanted {
+		c.StartProfile(rp2350.ProfileConfig{SampleCycles: profileSampleCycles, Coverage: true})
+	}
 	e.lcdGen = 0
 	e.lcdFrame = nil
 	e.otpGen, e.otpRows = 0, nil
@@ -1764,6 +1778,82 @@ func (e *Emu) SetSignalWave(pin int, name string) {
 			s.Wave = wave
 		}
 	}
+}
+
+// profileSampleCycles is the UI PC sampling period: about 14 us at 150 MHz,
+// dense enough for a readable profile with modest overhead.
+const profileSampleCycles = 2048
+
+// Profiling reports whether the Profile tab is collecting.
+func (e *Emu) Profiling() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.profWanted
+}
+
+// SetProfiling starts or stops profile collection. Starting discards the
+// previous run; stopping keeps its report frozen until the next start.
+func (e *Emu) SetProfiling(on bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.profWanted = on
+	e.profileCache = nil
+	e.profileCacheAt = 0
+	e.profileCacheEnd = false
+	if e.chip == nil {
+		return
+	}
+	if on {
+		e.chip.StartProfile(rp2350.ProfileConfig{SampleCycles: profileSampleCycles, Coverage: true})
+	} else {
+		e.chip.StopProfile()
+	}
+}
+
+// ProfileReport returns the built profile view, rebuilding it when enough new
+// virtual time has passed. It returns nil when nothing has been collected yet
+// or the firmware has no ELF debug info.
+func (e *Emu) ProfileReport() *coverage.Report {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.chip == nil || e.debugInfo == nil {
+		return nil
+	}
+	data, ok := e.chip.ProfileData()
+	if !ok {
+		return nil
+	}
+	active := e.chip.Profiling()
+	if e.profileCache != nil {
+		if !active && e.profileCacheEnd {
+			return e.profileCache
+		}
+		if active && data.ElapsedCycles >= e.profileCacheAt && data.ElapsedCycles-e.profileCacheAt < 5_000_000 {
+			return e.profileCache
+		}
+	}
+	in := coverage.Input{
+		Counts:        data.Coverage,
+		Samples:       data.Samples,
+		SampleCycles:  data.SampleCycles,
+		ElapsedCycles: data.ElapsedCycles,
+		IRQHist:       data.IRQHist[:],
+		IRQSlowest:    data.IRQSlowest,
+		IRQCount:      data.IRQCount,
+	}
+	for i := range data.Stack {
+		in.Stack[i] = coverage.StackWater{
+			MSPMin: data.Stack[i].MSPMin, PSPMin: data.Stack[i].PSPMin,
+			MSPValid: data.Stack[i].MSPValid, PSPValid: data.Stack[i].PSPValid,
+		}
+	}
+	rep := coverage.Build(e.debugInfo, in, func(addr uint32, size int) ([]byte, bool) {
+		return e.chip.PeekBytes(addr, size)
+	})
+	e.profileCache = rep
+	e.profileCacheAt = data.ElapsedCycles
+	e.profileCacheEnd = !active
+	return rep
 }
 
 // HIDEvents returns the recent decoded USB HID reports.

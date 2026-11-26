@@ -447,6 +447,24 @@ fixture tests.
 
 ![Debug tab](images/debug.png)
 
+### Profile
+
+**Profile** records a PC sample every 2048 cycles (about 14 us) and, while it
+runs, exact instruction coverage. **Start** discards the previous run;
+**Stop** freezes the report until the next start. `--tab profile` and
+`--profile` start it before the warm-up, and `task ui:profile` /
+`ui:profile:png` open it on blinky.
+
+The summary shows profiled virtual time, samples, executed/total instructions
+and IRQ entries. The function table is sorted by sampled cycles and gives each
+function's share, samples, instruction coverage and hit count. The right column
+shows the IRQ entry-latency histogram and the sampled MSP/PSP low-water marks
+per core.
+
+The tab needs an ELF with symbols/DWARF. The same data is available headlessly
+through `-coverage`, `-profile-out` and `-profile-top` (see
+[cli.md](cli.md#profiling-and-coverage)).
+
 ### Bus
 
 The I2C/SPI tab lists the board's built-in presets (`i2c_presets` /

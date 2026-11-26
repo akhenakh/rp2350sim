@@ -67,6 +67,14 @@ type Info struct {
 	frameBase map[uint32][]byte     // function low PC -> DW_AT_frame_base
 	cfa       *cfaTable
 	locV4     []byte
+	lineRows  []LineRow
+}
+
+// LineRow is one DWARF line-table row, already usable as an address key.
+type LineRow struct {
+	Addr uint32
+	File string
+	Line int
 }
 
 type lineUnit struct {
@@ -503,6 +511,48 @@ func (i *Info) LineAt(pc uint32) (string, int, bool) {
 		return fn.File, fn.Line, true
 	}
 	return "", 0, false
+}
+
+// CoverageFunctions returns the image's function symbols sorted by address.
+func (i *Info) CoverageFunctions() []Function { return i.Functions }
+
+// CoverageLines returns every DWARF statement row sorted by address. End-of-
+// sequence rows are omitted; rows from different units can share an address,
+// and the last one wins, matching LineAt.
+func (i *Info) CoverageLines() []LineRow {
+	if i.lineRows != nil {
+		return i.lineRows
+	}
+	rows := make([]LineRow, 0, 1024)
+	for _, l := range i.lines {
+		if l.reader == nil {
+			continue
+		}
+		l.reader.Reset()
+		var e dwarf.LineEntry
+		for l.reader.Next(&e) == nil {
+			if e.EndSequence || e.File == nil {
+				continue
+			}
+			name := e.File.Name
+			if l.compDir != "" && !filepath.IsAbs(name) {
+				name = filepath.Join(l.compDir, name)
+			}
+			rows = append(rows, LineRow{Addr: uint32(e.Address), File: name, Line: e.Line})
+		}
+	}
+	slices.SortFunc(rows, func(a, b LineRow) int {
+		switch {
+		case a.Addr < b.Addr:
+			return -1
+		case a.Addr > b.Addr:
+			return 1
+		default:
+			return 0
+		}
+	})
+	i.lineRows = rows
+	return rows
 }
 
 // Source returns the source lines around line in file. It is a convenience for

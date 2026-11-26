@@ -84,6 +84,7 @@ const (
 	tabOTP
 	tabBus
 	tabDebug
+	tabProfile
 	tabHID
 	tabBootsel
 	tabConsole
@@ -193,6 +194,8 @@ func RootView() {
 				busPanel(snap)
 			case tabDebug:
 				debugPanel(snap)
+			case tabProfile:
+				profilePanel(snap)
 			case tabHID:
 				hidPanel(snap)
 			case tabBootsel:
@@ -549,6 +552,8 @@ func setTab(name string) {
 		}
 	case "debug", "dbg":
 		activeTab = tabDebug
+	case "profile", "prof", "coverage":
+		activeTab = tabProfile
 	case "hid", "usb", "keyboard", "mouse", "gamepad":
 		activeTab = tabHID
 	case "bootsel", "rpi-rp2", "uf2":
@@ -593,6 +598,7 @@ func tabsBar(snap MachineState) {
 		}
 		tabButton("OTP", tabOTP)
 		tabButton("Debug", tabDebug)
+		tabButton("Profile", tabProfile)
 		if boardHasBuses(selectedBoard) {
 			tabButton("Bus", tabBus)
 		}
@@ -3210,6 +3216,7 @@ func main() {
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
 	fftFlag := flag.Bool("fft", false, "show the scope spectrum (FFT) view")
+	profileFlag := flag.Bool("profile", false, "start the Profile tab and collect samples + coverage")
 	measureFlag := flag.Bool("measure", false, "show 10–90% rise/fall measurements for scope channels")
 	rFlag := flag.Float64("scope-range", 3.3, "initial scope voltage range in volts")
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
@@ -3220,7 +3227,7 @@ func main() {
 		return nil
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, hid, bootsel, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, profile, hid, bootsel, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")
@@ -3373,6 +3380,9 @@ func main() {
 	}
 	touchDemo = *touchDemoFlag
 	setTab(*tabName)
+	if *profileFlag || activeTab == tabProfile {
+		emu.SetProfiling(true)
+	}
 	if *zFlag >= 1 {
 		scopeZoom = *zFlag
 	}
