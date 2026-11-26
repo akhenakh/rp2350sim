@@ -122,10 +122,14 @@ func (c *Chip) ProfileData() (ProfileData, bool) {
 	if p == nil {
 		return ProfileData{}, false
 	}
+	elapsed := uint64(0)
+	if c.Cycles >= p.startCycles {
+		elapsed = c.Cycles - p.startCycles
+	}
 	d := ProfileData{
 		SampleCycles:  p.sampleCycles,
 		StartCycles:   p.startCycles,
-		ElapsedCycles: c.Cycles - p.startCycles,
+		ElapsedCycles: elapsed,
 		CoreSamples:   p.coreSamples,
 		IRQHist:       p.irqHist,
 		IRQSlowest:    p.irqSlowest,
@@ -212,10 +216,15 @@ func (c *Chip) noteIRQEntry(core int, exc uint32) {
 	p.irqHist[irqHistogramBuckets-1]++
 }
 
-// clearProfilePend drops all pending timestamps, used on reset.
-func (c *Chip) clearProfilePend() {
-	if c.profile == nil {
+// profileOnReset drops pending timestamps and rebases the profile clock. A
+// chip reset returns Cycles to zero; without the rebase ElapsedCycles would
+// underflow by the pre-reset virtual time.
+func (c *Chip) profileOnReset() {
+	p := c.profile
+	if p == nil {
 		return
 	}
-	c.profile.pendSet = [2][irqIrqCount]bool{}
+	p.pendSet = [2][irqIrqCount]bool{}
+	p.startCycles = c.Cycles
+	p.nextSample = c.Cycles + p.sampleCycles
 }

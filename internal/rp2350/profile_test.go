@@ -44,6 +44,23 @@ func TestProfileCoverageSamplesAndStack(t *testing.T) {
 	}
 }
 
+func TestProfileResetRebasesClock(t *testing.T) {
+	c := New()
+	c.CPU1.Parked = true
+	c.CPU0.R[15] = SRAMBase
+	c.Write16(SRAMBase, 0xE7FE) // b .
+	c.StartProfile(ProfileConfig{SampleCycles: 100})
+	c.Run(10_000)
+	c.Reset()
+	data, ok := c.ProfileData()
+	if !ok {
+		t.Fatal("profile lost on reset")
+	}
+	if data.ElapsedCycles != 0 {
+		t.Fatalf("elapsed after reset = %d, want 0", data.ElapsedCycles)
+	}
+}
+
 func TestProfileIRQLatency(t *testing.T) {
 	c := New()
 	c.CPU1.Parked = true

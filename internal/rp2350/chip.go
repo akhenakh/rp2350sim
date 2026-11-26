@@ -1102,7 +1102,7 @@ func (c *Chip) Reset() {
 	}
 	c.resetPSRAM()
 	c.invalidateCodeAll()
-	c.clearProfilePend()
+	c.profileOnReset()
 }
 
 // resetCore performs the core-local reset requested by SYSRESETREQ. It must not
