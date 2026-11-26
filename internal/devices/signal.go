@@ -13,6 +13,8 @@ const (
 	WaveSine SignalWave = iota
 	WaveSquare
 	WaveTriangle
+	WaveRamp
+	WaveNoise
 )
 
 // SignalSource drives a pin with an analog waveform so the scope and ADC have
@@ -26,10 +28,12 @@ type SignalSource struct {
 	Amplitude float32
 	Offset    float32
 	Interval  uint64
+	Enabled   bool
 
 	next        uint64
 	lastTick    uint64
 	initialized bool
+	rng         uint64
 }
 
 // NewSignalSource creates a generator with a 1 MHz update rate.
@@ -42,7 +46,9 @@ func NewSignalSource(chip *rp2350.Chip, pin int, wave SignalWave, hz, amplitude,
 		Amplitude: float32(amplitude),
 		Offset:    float32(offset),
 		Interval:  150,
+		Enabled:   true,
 		next:      chip.Cycles,
+		rng:       uint64(pin)*0x9e3779b97f4a7c15 + 1,
 	}
 }
 
@@ -53,6 +59,10 @@ func (w SignalWave) String() string {
 		return "square"
 	case WaveTriangle:
 		return "triangle"
+	case WaveRamp:
+		return "ramp"
+	case WaveNoise:
+		return "noise"
 	default:
 		return "sine"
 	}
@@ -75,7 +85,11 @@ func (s *SignalSource) Tick() {
 	}
 	steps := (now-s.next)/s.Interval + 1
 	s.next += steps * s.Interval
-	s.apply(now)
+	if s.Enabled {
+		s.apply(now)
+	} else {
+		s.Chip.Pins.SetAnalog(s.Pin, s.Offset)
+	}
 }
 
 func (s *SignalSource) apply(now uint64) {
@@ -91,6 +105,13 @@ func (s *SignalSource) apply(now uint64) {
 		}
 	case WaveTriangle:
 		wave = float32(1 - 4*math.Abs(phase-0.5))
+	case WaveRamp:
+		wave = float32(2*phase - 1)
+	case WaveNoise:
+		s.rng ^= s.rng << 13
+		s.rng ^= s.rng >> 7
+		s.rng ^= s.rng << 17
+		wave = float32(float64(s.rng>>40)/float64(1<<24)*2 - 1)
 	default:
 		wave = float32(math.Sin(2 * math.Pi * phase))
 	}

@@ -1262,6 +1262,10 @@ func (e *Emu) resetChip() {
 				wave = devices.WaveSquare
 			case "triangle":
 				wave = devices.WaveTriangle
+			case "ramp", "saw":
+				wave = devices.WaveRamp
+			case "noise":
+				wave = devices.WaveNoise
 			}
 			hz := sd.Hz
 			if hz <= 0 {
@@ -1700,6 +1704,66 @@ func (e *Emu) MIDIEvents() []MIDIEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]MIDIEvent(nil), e.midiEvents...)
+}
+
+// SignalInfo is the UI view of one generated analog source.
+type SignalInfo struct {
+	Pin       int
+	Wave      string
+	Hz        float64
+	Amplitude float32
+	Offset    float32
+	Enabled   bool
+}
+
+// Signals returns the board's analog generators.
+func (e *Emu) Signals() []SignalInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]SignalInfo, 0, len(e.signals))
+	for _, s := range e.signals {
+		out = append(out, SignalInfo{
+			Pin: s.Pin, Wave: s.Wave.String(), Hz: s.Hz,
+			Amplitude: s.Amplitude, Offset: s.Offset, Enabled: s.Enabled,
+		})
+	}
+	return out
+}
+
+// SetSignalEnabled mutes or enables one generator.
+func (e *Emu) SetSignalEnabled(pin int, on bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, s := range e.signals {
+		if s.Pin == pin {
+			s.Enabled = on
+		}
+	}
+}
+
+// SetSignalWave cycles one generator's waveform. name is sine, square,
+// triangle, ramp or noise.
+func (e *Emu) SetSignalWave(pin int, name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var wave devices.SignalWave
+	switch name {
+	case "square":
+		wave = devices.WaveSquare
+	case "triangle":
+		wave = devices.WaveTriangle
+	case "ramp":
+		wave = devices.WaveRamp
+	case "noise":
+		wave = devices.WaveNoise
+	default:
+		wave = devices.WaveSine
+	}
+	for _, s := range e.signals {
+		if s.Pin == pin {
+			s.Wave = wave
+		}
+	}
 }
 
 // HIDEvents returns the recent decoded USB HID reports.

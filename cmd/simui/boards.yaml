@@ -249,6 +249,16 @@ boards:
       i2c: { sda: 4, scl: 5 }
       spi: { sck: 18, mosi: 19, miso: 16, cs: 17 }
 
+  - id: pico2-adc
+    name: RP2350 + ADC DSP sources
+    description: Four generated ADC inputs on GP26-29 (sine, ramp, noise, square)
+    scope: [26, 27, 28, 29]
+    analog:
+      - { pin: 26, wave: sine, hz: 1000, amplitude: 1.65, offset: 1.65 }
+      - { pin: 27, wave: ramp, hz: 200, amplitude: 1.65, offset: 1.65 }
+      - { pin: 28, wave: noise, amplitude: 1.0, offset: 1.65 }
+      - { pin: 29, wave: square, hz: 500, amplitude: 1.65, offset: 1.65 }
+
   - id: pico2-audio
     name: RP2350 + PWM audio
     description: PWM/GPIO audio on GP0 · Audio tab and WAV export

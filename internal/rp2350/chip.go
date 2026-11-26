@@ -842,6 +842,9 @@ func (c *Chip) tickPeripherals() {
 	if c.pwm != nil && c.pwm.busy() {
 		c.pwm.tick()
 	}
+	if c.adc != nil {
+		c.adc.tick()
+	}
 	// Slow peripherals run once per microsecond. Tick every boundary crossed
 	// since the last call: a PSRAM latency charge can advance Cycles
 	// mid-instruction, and skipping a boundary would delay an alarm by a whole

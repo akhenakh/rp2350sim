@@ -391,6 +391,12 @@ func (d *dmaBlock) tick() {
 			continue
 		}
 		d.next = uint8((ch + 1) & 15)
+		if treq := (d.ch[ch].ctrl >> 17) & 0x3F; treq == 48 {
+			// DREQ_ADC: do not consume the FIFO until a conversion is ready.
+			if d.chip.adc == nil || !d.chip.adc.dreq() {
+				continue
+			}
+		}
 		d.step(ch, &d.ch[ch])
 		return
 	}

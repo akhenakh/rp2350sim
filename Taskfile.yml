@@ -680,6 +680,20 @@ tasks:
     cmds:
       - go run . --board pico2-analog --tab scope --measure --run 0.5 --png '../../{{.BUILD}}/ui-scope-measure.png' '../../{{.BUILD}}/blinky.elf'
 
+  ui:adc:
+    desc: Run the UI with four generated ADC sources (sine/ramp/noise/square)
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-adc --tab scope '../../{{.BUILD}}/blinky.elf'
+
+  ui:adc:png:
+    desc: Render the four-source ADC board and its scope/signal controls
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-adc --tab scope --run 0.5 --png '../../{{.BUILD}}/ui-adc.png' '../../{{.BUILD}}/blinky.elf'
+
   ui:psram:
     desc: Run the UI on the PSRAM board with the Pico SDK PSRAM demo
     deps: [c:build]

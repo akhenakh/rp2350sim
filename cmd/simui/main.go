@@ -2100,6 +2100,34 @@ func scopePanel() {
 				})
 			}
 		})
+		if sigs := emu.Signals(); len(sigs) > 0 {
+			Container(Attrs(Row, Wrap, Gap(12), Pad2(2, 0)), func() {
+				Label("Signals", FontSize(11), FontWeight(600))
+				waves := []string{"sine", "square", "triangle", "ramp", "noise"}
+				for _, s := range sigs {
+					Label(fmt.Sprintf("GP%d %s", s.Pin, s.Wave), FontSize(11))
+					label := "mute"
+					if !s.Enabled {
+						label = "enable"
+					}
+					if Button(NoIcon, label) {
+						emu.SetSignalEnabled(s.Pin, !s.Enabled)
+						RequestNextFrame()
+					}
+					if Button(NoIcon, "wave") {
+						next := "sine"
+						for i, w := range waves {
+							if w == s.Wave {
+								next = waves[(i+1)%len(waves)]
+								break
+							}
+						}
+						emu.SetSignalWave(s.Pin, next)
+						RequestNextFrame()
+					}
+				}
+			})
+		}
 	})
 }
 
