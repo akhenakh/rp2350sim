@@ -22,7 +22,7 @@ backend, so a single Linux runner cross-compiles every target.
 
 ## GitHub paths
 
-Replace `<tag>` with the release tag (for example `v0.3.0`) and `<previous-tag>`
+Replace `<tag>` with the release tag (for example `v0.4.0`) and `<previous-tag>`
 with the prior tag. Keep the paths themselves abstract:
 
 - repository: `https://github.com/akhenakh/rp2350sim`
@@ -46,7 +46,13 @@ release page consistent without retroactively editing the tagged commit.
 
 ## Next release (unreleased)
 
-Working notes for changes after v0.3 go here.
+Working notes for changes after v0.4 go here.
+
+## v0.4 highlights
+
+v0.4 adds observability (profiling, coverage and hang explanations), deeper
+peripheral fidelity (a paced ADC and a virtual BOOTSEL drive), and a faster
+instruction core.
 
 - Peripheral scheduling no longer polls every cycle. WS2812B, audio
   (I2S/PDM/PWM) and the W5500/W6300 Ethernet models observe pin edges through
@@ -65,10 +71,50 @@ Working notes for changes after v0.3 go here.
   the visible window, dBFS-normalised, with a log/linear frequency axis, channel
   selector, interpolated peak readout and `--fft` for headless renders. The FFT
   is UI-only (`github.com/go-fft/fft` in `cmd/simui`); the root module remains
-  dependency-free.
+  dependency-free. Spectrum and time plots resize with the window.
+- Scope measurements now include 10–90% rise and fall times per channel,
+  alongside minimum/maximum levels and the existing frequency/duty/period
+  readouts. A per-channel toggle switches between logic edges and analog
+  10–90% thresholds, and `--measure` renders the analog view headlessly.
+- A virtual RPI-RP2 BOOTSEL drive: the **BOOTSEL** tab takes a `.uf2` through a
+  file picker or path, accepts any RP2350 UF2 family, installs only flash
+  segments after validating the boot vector, then boots the new image. The
+  browser page also accepts a dropped file; the desktop build uses the
+  click/path flow because Shirei exposes no native OS drop event.
+- Hang detection: the chip samples the PC every 64 cycles and reports a core
+  that stays in a tight loop, with the function/line and the polled register
+  resolved through DWARF and the official `RP2350.svd` (for example
+  `PLL_SYS_PWR.PD is set, so LOCK cannot set`). The UI shows a HANG banner,
+  `-hang-cycles` controls or disables the detector, and `OnHang`/`HangInfo`
+  expose it to tools. Only peripheral polls and pure spins count, so legitimate
+  SRAM busy-waits such as `hello_timer` are not false positives. The PLL model
+  now gates `LOCK` on `PWR.PD`/`VCOPD`.
+- The ADC is paced instead of instantaneous: conversions take 96 ADC clocks
+  scaled by `DIV` (500 kS/s at `DIV=0`), with an 8-entry FIFO, START_ONCE /
+  START_MANY, round-robin `AINSEL` updates, FCS threshold IRQ 35 and
+  `DREQ_ADC` pacing for DMA channels. Board analog sources gain ramp and noise
+  waveforms, live mute/waveform switching in the Scope tab, and the
+  `pico2-adc` board exposes sine/ramp/noise/square on GP26–29.
+- Instruction predecode: both cores share a bounded 16K-entry direct-mapped
+  cache of fetched Thumb halfwords, keyed by PC and a memory generation. Flash
+  erase/program/load, QMI/XIP writes, writable PSRAM stores and reset bump the
+  generation; CPU/DMA SRAM stores clear only the overlapping entries, so
+  self-modifying code stays correct. `blink.elf` runs about 8% faster.
+- Profiling and coverage: `-profile` samples the PC every `-profile-interval`
+  cycles and counts every executed instruction exactly. `-coverage PATH` writes
+  LCOV, `-profile-out PATH` writes the report as JSON, and `-profile-top N`
+  logs the hottest functions. The new **Profile** tab shows the summary, a
+  function table sorted by sampled cycles with instruction coverage, the IRQ
+  pend-to-entry latency histogram, and sampled MSP/PSP low-water marks. All of
+  it runs on virtual time, so repeated runs produce the same report.
 - Selecting a board before loading a firmware keeps the machine parked. It used
   to execute the empty boot ROM and slide through unmapped memory, which showed
   up as about 0.03× in the UI and grew the unmapped-access map.
+- Verification covers unit, race, lint, QEMU differential, WASM build and the
+  full firmware smoke suite. New regressions cover ADC pacing/FIFO/DMA,
+  predecode invalidation, hang false positives, profile LCOV/JSON and the
+  Profile tab snapshot, and the pico-examples timer checks exercise the
+  busy-wait path.
 
 ## v0.3 highlights
 
