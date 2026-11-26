@@ -49,6 +49,7 @@ commands and UI steps; the register-level wiring lives in
 | DHT11/DHT22 | `-dht PIN[:KIND[:HUM[:TEMP]]]` | `dht`, Board | `dht` |
 | HC-SR04 ultrasonic | `-ultrasonic TRIG:ECHO[:CM]` | `ultrasonic`, Board | `ultrasonic` |
 | GPS / NMEA 0183 | `-gps UART[:LAT:LON]` | `gps`, Board and Console | `gps` |
+| CAN 2.0B / MCP2515 | `-can CS[:INT[:PEER_ID]]` | `can`, Board and Console | `can` |
 
 Build the demo firmware once with:
 
@@ -798,6 +799,29 @@ Reference firmware: `firmware/gps`; board `pico2-gps`; task `run:gps`. The
 logic analyzer decodes the UART stream, and the Bus/Console show the firmware's
 parsed fix. `ParseNMEA` in `internal/devices` validates checksums and is shared
 with map/UI work.
+
+## CAN / MCP2515
+
+An MCP2515 SPI controller is attached to a small in-process CAN bus with one
+responding peer. The controller model implements reset, register read/write,
+TX/RX buffers, RTS, status and bit-modify, and an optional active-low INT pin.
+
+```sh
+rp2350sim -fw build/can.elf -seconds 2 -can 17:20:0x123
+```
+
+```yaml
+can:
+  bus: 0
+  cs: 17
+  int: 20
+  peer_id: 0x123
+  reply_id: 0x124
+```
+
+The peer answers a request frame by incrementing each data byte. This is
+classic CAN 2.0B; CAN FD needs an MCP2518FD-class controller and is a separate
+model. Reference firmware: `firmware/can`; board `pico2-can`; task `run:can`.
 
 ## Board-to-flag map
 

@@ -23,6 +23,7 @@
 #   dht: [{ pin, kind: dht11|dht22, humidity, temperature }]
 #   ultrasonic: [{ trig, echo, distance_cm }]
 #   gps: { uart, lat, lon, altitude, speed_knots, course, satellites, fix, rate_ms }
+#   can: { bus, cs, int, peer_id, reply_id }
 #   i2c_presets: [{ bus, preset, addr }]   addr 0 = preset default
 #   spi_presets: [{ bus, cs, preset }]
 #
@@ -51,6 +52,20 @@ boards:
       - { kind: switch, id: sw1, label: SW 1, pin: 14, initial: false }
       - { kind: encoder, id: enc1, label: ENC 1, pin_a: 12, pin_b: 13 }
       - { kind: adc, id: pot1, label: POT 1, pin: 26, volts: 1.65, step: 0.05 }
+
+  - id: pico2-can
+    name: RP2350 + MCP2515 CAN
+    description: MCP2515 on SPI0 CS GP17 · INT GP20 · simulated peer 0x123 → 0x124
+    scope: [17, 18, 19, 20]
+    can:
+      bus: 0
+      cs: 17
+      int: 20
+      peer_id: 0x123
+      reply_id: 0x124
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+      spi: { bus: 0, sck: 18, mosi: 19, miso: 16, cs: 17 }
 
   - id: pico2-gps
     name: RP2350 + GPS

@@ -1308,6 +1308,17 @@ func (e *Emu) resetChip() {
 		for _, d := range b.Ultrasonic {
 			devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
 		}
+		if can := b.CAN; can != nil {
+			bus := devices.NewCANBus(c)
+			devices.NewCANPeer(bus, can.PeerID, can.ReplyID, false)
+			m := devices.NewMCP2515(c, bus, can.CS, can.INT)
+			attachSPI(can.Bus, can.CS, m.Transfer)
+			c.Pins.AddChangeListener(func(pin int, level bool) {
+				if pin == can.CS && !level {
+					m.Select()
+				}
+			})
+		}
 		if g := b.GPS; g != nil {
 			cfg := devices.GPSConfig{
 				Lat: g.Lat, Lon: g.Lon, Altitude: g.Altitude,

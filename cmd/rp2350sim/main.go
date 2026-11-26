@@ -263,6 +263,8 @@ func main() {
 	})
 	var gpsSpec string
 	flag.StringVar(&gpsSpec, "gps", "", "attach an NMEA GPS on UART[:LAT:LON]")
+	var canSpec string
+	flag.StringVar(&canSpec, "can", "", "attach an MCP2515 on CS[:INT[:PEER_ID]]")
 	flag.Parse()
 	if *listPresets {
 		printBusPresets()
@@ -659,6 +661,14 @@ func main() {
 		fn func(byte) byte
 	}
 	var spi0, spi1 []spiDev
+	if canSpec != "" {
+		m, cs, err := attachCAN(c, canSpec)
+		if err != nil {
+			log.Error("can", slog.Any("err", err))
+			exit(2)
+		}
+		spi0 = append(spi0, spiDev{cs, m.Transfer})
+	}
 	if w6300 != nil {
 		spi0 = append(spi0, spiDev{17, w6300.Transfer})
 	}

@@ -75,6 +75,7 @@ has no tab.
 | `dht` | Board | Timed DHT11/DHT22 sensors |
 | `ultrasonic` | Board | Timed HC-SR04 sensors |
 | `gps` | Board / Console | NMEA 0183 source on a UART |
+| `can` | Board / Console | MCP2515 CAN controller and peer |
 
 The Board, Scope, Logic, OTP, Debug, Profile and Console tabs always exist.
 
@@ -525,6 +526,28 @@ gps:
 | `satellites` | int | `9` | GGA satellite count |
 | `fix` | bool | `true` | GGA/RMC fix state |
 | `rate_ms` | int | `1000` | sentence period, minimum 50 |
+
+## `can`
+
+```yaml
+can:
+  bus: 0
+  cs: 17
+  int: 20
+  peer_id: 0x123
+  reply_id: 0x124
+```
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `bus` | 0 \| 1 | required | SPI controller |
+| `cs` | GPIO | required | MCP2515 chip select |
+| `int` | GPIO | `-1` | optional active-low interrupt |
+| `peer_id` | int | `0x123` | peer request ID |
+| `reply_id` | int | `peer_id + 1` | peer response ID |
+
+The peer increments the data bytes of a matching request. Classic CAN only;
+CAN FD is not modelled yet.
 
 ## `i2c_plugins`, `spi_plugins` and `serial_plugins`
 

@@ -97,6 +97,7 @@ tasks:
       - firmware:dht
       - firmware:ultrasonic
       - firmware:gps
+      - firmware:can
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -299,6 +300,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/dht.elf -seconds 2 -dht 6:dht22:45:23'
 
+  run:can:
+    desc: Run the MCP2515 example with a 0x123 peer
+    deps: [build, firmware:can]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/can.elf -seconds 2 -can 17:20:0x123'
+
   run:gps:
     desc: Run the NMEA GPS example on UART1
     deps: [build, firmware:gps]
@@ -481,6 +488,15 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/dht.elf .'
+
+  firmware:can:
+    desc: Build the MCP2515 classic-CAN example
+    dir: firmware/can
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/can.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/can.elf .'
 
   firmware:gps:
     desc: Build the NMEA GPS example

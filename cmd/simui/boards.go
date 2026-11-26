@@ -40,6 +40,7 @@ type BoardDef struct {
 	DHT         []DHTDevice        `yaml:"dht"`
 	Ultrasonic  []UltrasonicDevice `yaml:"ultrasonic"`
 	GPS         *GPSDevice         `yaml:"gps"`
+	CAN         *CANDevice         `yaml:"can"`
 	I2CPlugins  []I2CPluginDef     `yaml:"i2c_plugins"`
 	SPIPlugins  []SPIPluginDef     `yaml:"spi_plugins"`
 	UARTPlugins []UARTPluginDef    `yaml:"serial_plugins"`
@@ -129,6 +130,15 @@ type GPSDevice struct {
 	Satellites int     `yaml:"satellites"`
 	Fix        bool    `yaml:"fix"`
 	RateMS     int     `yaml:"rate_ms"`
+}
+
+// CANDevice attaches an MCP2515 controller and a responding peer.
+type CANDevice struct {
+	Bus     int    `yaml:"bus"`
+	CS      int    `yaml:"cs"`
+	INT     int    `yaml:"int"`
+	PeerID  uint32 `yaml:"peer_id"`
+	ReplyID uint32 `yaml:"reply_id"`
 }
 
 // I2CPresetDef attaches a built-in I2C device preset. Addr 0 selects the
@@ -694,6 +704,20 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 			if err := claimUART(g.UART, "gps"); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
+		}
+		if can := b.CAN; can != nil {
+			if can.Bus != 0 && can.Bus != 1 {
+				return nil, fmt.Errorf("boards: %s: can bus must be 0 or 1", b.ID)
+			}
+			if can.CS < 0 || can.CS > 47 {
+				return nil, fmt.Errorf("boards: %s: can CS must be 0..47", b.ID)
+			}
+			if can.PeerID == 0 {
+				can.PeerID = 0x123
+			}
+			if can.ReplyID == 0 {
+				can.ReplyID = can.PeerID + 1
 			}
 		}
 		for i := range b.DHT {
