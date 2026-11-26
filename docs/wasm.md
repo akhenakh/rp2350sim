@@ -100,6 +100,10 @@ them for other hosts.
   files from `plugins/examples/` are fetched by URL and instantiated by the
   browser's native WebAssembly engine; a custom board entry can point `url:`
   at another same-origin plugin. See [device plugins](plugins.md).
+  `task wasm:plugins` builds and serves the ready-made demo at
+  `http://127.0.0.1:8788/?board=pico2-plugins&fw=firmware/presets.elf&tab=console`;
+  the firmware prints the Lua BME280/MPU6050/SSD1306 IDs and reads both the
+  Lua W25Q16 on GP17 and the compiled WASM flash on GP21.
 - **Host devices are stripped** before boot by `webPrepareBoard`: SD directory
   backing (the built-in FAT16 image is used), UART/I2C/SPI TCP bridges, the
   W5500/W6300/CH9120 controllers, the GDB server and the Build drawer. Boards

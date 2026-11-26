@@ -339,8 +339,8 @@ out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 -quiet \
 contains "Lua BME280 plugin" "bme280: 60" "$out"
 contains "Lua W25Q16 plugin" "w25q16: ef 40 15" "$out"
 out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 -quiet \
-	-spi-plugin 0:17=plugins/examples/spi-flash.wasm 2>/dev/null)
-contains "WASM SPI flash plugin" "w25q16: ef 40 15" "$out"
+	-spi-plugin 0:21=plugins/examples/spi-flash.wasm 2>/dev/null)
+contains "WASM SPI flash plugin" "w25q16 wasm: ef 40 15" "$out"
 
 if (cd cmd/simui && go run . --board pico2-plugins --tab bus --run 0.5 \
 	--png "../../$BUILD/ui-plugins-smoke.png" "../../$BUILD/presets.elf" >/dev/null 2>&1) &&

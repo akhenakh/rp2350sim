@@ -1,5 +1,6 @@
 // presets exercises the built-in I2C/SPI device models: a BME280 and MPU6050
 // on I2C0, an SSD1306 command stream on I2C0 and the W25Q16 JEDEC ID on SPI0.
+// A second W25Q16 on GP21 is the hook for the compiled WASM plugin example.
 package main
 
 import (
@@ -46,6 +47,9 @@ func main() {
 	cs := machine.GPIO17
 	cs.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	cs.High()
+	csWasm := machine.GPIO21
+	csWasm.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	csWasm.High()
 	spi := machine.SPI0
 	if err := spi.Configure(machine.SPIConfig{
 		SCK:       machine.GPIO18,
@@ -60,6 +64,12 @@ func main() {
 		_ = spi.Tx([]byte{0x9F}, id[:])
 		cs.High()
 		fmt.Fprintf(uart, "w25q16: %02x %02x %02x\r\n", id[0], id[1], id[2])
+
+		var wasmID [3]byte
+		csWasm.Low()
+		_ = spi.Tx([]byte{0x9F}, wasmID[:])
+		csWasm.High()
+		fmt.Fprintf(uart, "w25q16 wasm: %02x %02x %02x\r\n", wasmID[0], wasmID[1], wasmID[2])
 	}
 
 	for {

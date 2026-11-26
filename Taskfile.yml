@@ -636,6 +636,14 @@ tasks:
     cmds:
       - cd {{.BUILD}}/web && python3 -m http.server 8787 --bind 127.0.0.1
 
+  wasm:plugins:
+    desc: Serve the browser demo using the scripted-plugin board and presets firmware
+    deps: [wasm:build, firmware:presets]
+    cmds:
+      - cp {{.BUILD}}/presets.elf {{.BUILD}}/web/firmware/presets.elf
+      - echo "open http://127.0.0.1:8788/?board=pico2-plugins&fw=firmware/presets.elf&tab=console"
+      - cd {{.BUILD}}/web && python3 -m http.server 8788 --bind 127.0.0.1
+
   ui:dvi:
     desc: Run the UI on the HSTX DVI board with the pico-examples DVI demo
     deps: [picoexamples:build]

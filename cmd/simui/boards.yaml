@@ -269,7 +269,7 @@ boards:
       - { bus: 0, addr: 0x3c, file: ../../plugins/examples/ssd1306.lua, url: plugins/examples/ssd1306.lua }
     spi_plugins:
       - { bus: 0, cs: 17, file: ../../plugins/examples/w25q16.lua, url: plugins/examples/w25q16.lua }
-      - { bus: 0, cs: 18, file: ../../plugins/examples/spi-flash.wasm, url: plugins/examples/spi-flash.wasm }
+      - { bus: 0, cs: 21, file: ../../plugins/examples/spi-flash.wasm, url: plugins/examples/spi-flash.wasm }
     serial_plugins:
       - { uart: 1, file: ../../plugins/examples/uart-modem.lua, url: plugins/examples/uart-modem.lua }
     logic:

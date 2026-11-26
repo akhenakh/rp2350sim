@@ -18,12 +18,15 @@ a modem or a companion radio as a file.
 ## Quick start
 
 The built-in `pico2-plugins` board loads the Lua examples and a compiled WASM
-flash:
+flash. Its `presets.elf` firmware probes the Lua BME280, MPU6050 and SSD1306 on
+I2C0, the Lua W25Q16 on SPI CS GP17 and the compiled WASM flash on CS GP21:
 
 ```sh
 task ui:plugins
 # or
 rp2350sim-ui --board pico2-plugins --tab bus build/presets.elf
+# browser demo, with the firmware and plugins served by URL
+task wasm:plugins
 ```
 
 The embedded `pico2-plugins` demo resolves its `file:` paths relative to
@@ -236,6 +239,7 @@ task plugins:build    # rebuild device_lua.wasm (needs wasi-sdk + Lua source)
 task test:js          # plugin tests on the native engine (Node, js/wasm)
 task ui:plugins       # the pico2-plugins board in the Bus tab
 task ui:plugins:png   # render it to build/ui-plugins.png
+task wasm:plugins     # serve the same board and firmware in the browser
 ```
 
 The browser build copies `plugins/examples/` into `build/web/plugins/` so the

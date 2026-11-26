@@ -747,7 +747,7 @@ ready-made board; `task ui:plugins` opens it.
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` | `task ui:serial` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` | `task ui:bus` |
 | `pico2-presets` | `-i2c-preset`, `-spi-preset` | — (built-in models) |
-| `pico2-plugins` | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `task ui:plugins` |
+| `pico2-plugins` | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `task ui:plugins`, `task wasm:plugins` |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
 | `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task run:audio`, `task ui:audio` |
 | `pico2-midi` | `-usb-midi -midi-monitor` | `task run:midi`, `task ui:midi` |

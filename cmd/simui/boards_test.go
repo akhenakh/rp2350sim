@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -447,8 +448,11 @@ func TestEmbeddedPluginBoard(t *testing.T) {
 	if len(b.I2CPlugins) != 3 || len(b.SPIPlugins) != 2 || len(b.UARTPlugins) != 1 {
 		t.Fatalf("plugins = %d/%d/%d", len(b.I2CPlugins), len(b.SPIPlugins), len(b.UARTPlugins))
 	}
-	if b.I2CPlugins[0].Addr != 0x76 || b.SPIPlugins[0].CS != 17 {
-		t.Fatalf("plugin slots = %+v / %+v", b.I2CPlugins[0], b.SPIPlugins[0])
+	if b.I2CPlugins[0].Addr != 0x76 || b.SPIPlugins[0].CS != 17 || b.SPIPlugins[1].CS != 21 {
+		t.Fatalf("plugin slots = %+v / %+v", b.I2CPlugins[0], b.SPIPlugins)
+	}
+	if !strings.HasSuffix(b.SPIPlugins[1].File, ".wasm") {
+		t.Fatalf("second SPI plugin = %q, want the compiled WASM flash", b.SPIPlugins[1].File)
 	}
 }
 
