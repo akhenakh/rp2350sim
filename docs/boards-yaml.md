@@ -72,6 +72,8 @@ has no tab.
 | `i2c_plugins` / `spi_plugins` | Bus | Lua or WASM device files |
 | `serial_plugins` | Console | Lua or WASM UART device files |
 | `onewire` | Board | Timed 1-Wire devices (DS18B20) |
+| `dht` | Board | Timed DHT11/DHT22 sensors |
+| `ultrasonic` | Board | Timed HC-SR04 sensors |
 
 The Board, Scope, Logic, OTP, Debug, Profile and Console tabs always exist.
 
@@ -477,6 +479,25 @@ onewire:
 
 Only one device per pin is supported today; duplicate pins are a validation
 error.
+
+## `dht` and `ultrasonic`
+
+```yaml
+dht:
+  - { pin: 6, kind: dht22, humidity: 45, temperature: 23 }
+ultrasonic:
+  - { trig: 6, echo: 7, distance_cm: 100 }
+```
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `dht[].pin` | GPIO | required | data line |
+| `dht[].kind` | `dht11` \| `dht22` | `dht22` | protocol |
+| `dht[].humidity` | float | `45` | percent |
+| `dht[].temperature` | float | `23` | Celsius |
+| `ultrasonic[].trig` | GPIO | required | trigger output |
+| `ultrasonic[].echo` | GPIO | required | echo input |
+| `ultrasonic[].distance_cm` | float | `100` | measured distance |
 
 ## `i2c_plugins`, `spi_plugins` and `serial_plugins`
 

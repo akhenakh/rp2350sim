@@ -20,6 +20,8 @@
 #   i2c_tcp: [{ bus, addrs: [0x50], listen | connect }]
 #   spi_tcp: [{ bus, cs, listen | connect }]
 #   onewire: [{ pin, type: ds18b20, temperature }]
+#   dht: [{ pin, kind: dht11|dht22, humidity, temperature }]
+#   ultrasonic: [{ trig, echo, distance_cm }]
 #   i2c_presets: [{ bus, preset, addr }]   addr 0 = preset default
 #   spi_presets: [{ bus, cs, preset }]
 #
@@ -48,6 +50,24 @@ boards:
       - { kind: switch, id: sw1, label: SW 1, pin: 14, initial: false }
       - { kind: encoder, id: enc1, label: ENC 1, pin_a: 12, pin_b: 13 }
       - { kind: adc, id: pot1, label: POT 1, pin: 26, volts: 1.65, step: 0.05 }
+
+  - id: pico2-dht
+    name: RP2350 + DHT22
+    description: DHT22 temperature and humidity sensor on GP6 · single-wire timing
+    scope: [6]
+    dht:
+      - { pin: 6, kind: dht22, humidity: 45, temperature: 23 }
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+
+  - id: pico2-ultrasonic
+    name: RP2350 + HC-SR04
+    description: HC-SR04 ultrasonic sensor · trigger GP6, echo GP7
+    scope: [6, 7]
+    ultrasonic:
+      - { trig: 6, echo: 7, distance_cm: 100 }
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
 
   - id: pico2-onewire
     name: RP2350 + DS18B20

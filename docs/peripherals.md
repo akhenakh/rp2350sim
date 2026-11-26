@@ -46,6 +46,8 @@ commands and UI steps; the register-level wiring lives in
 | Built-in bus presets | `-i2c-preset`, `-spi-preset`, `-list-presets` | `i2c_presets` / `spi_presets`, Bus | `presets` |
 | Scripted I2C/SPI/UART devices | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `i2c_plugins` / `spi_plugins` / `serial_plugins`, Bus and Console | `plugins/examples` |
 | 1-Wire DS18B20 | `-onewire PIN[:C]` | `onewire`, Board | `onewire` |
+| DHT11/DHT22 | `-dht PIN[:KIND[:HUM[:TEMP]]]` | `dht`, Board | `dht` |
+| HC-SR04 ultrasonic | `-ultrasonic TRIG:ECHO[:CM]` | `ultrasonic`, Board | `ultrasonic` |
 
 Build the demo firmware once with:
 
@@ -747,6 +749,27 @@ onewire:
 `type` defaults to `ds18b20`; `temperature` is in Celsius. The reference
 firmware is `firmware/onewire`, and `task run:onewire` runs it with a 22.5 °C
 sensor on GP6. The board `pico2-onewire` is the UI equivalent.
+
+## DHT11/DHT22 and HC-SR04
+
+Both use the same timed-wire layer as 1-Wire. The DHT model answers the 1 ms
+start pulse with the 40-bit frame; the HC-SR04 drives echo high for
+`distance_cm * 58 us`.
+
+```sh
+rp2350sim -fw build/dht.elf -seconds 2 -dht 6:dht22:45:23
+rp2350sim -fw build/ultrasonic.elf -seconds 2 -ultrasonic 6:7:100
+```
+
+```yaml
+dht:
+  - { pin: 6, kind: dht22, humidity: 45, temperature: 23 }
+ultrasonic:
+  - { trig: 6, echo: 7, distance_cm: 100 }
+```
+
+Reference firmware: `firmware/dht`, `firmware/ultrasonic`; boards
+`pico2-dht` and `pico2-ultrasonic`; tasks `run:dht` and `run:ultrasonic`.
 
 ## Board-to-flag map
 

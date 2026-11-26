@@ -251,6 +251,16 @@ func main() {
 		oneWireSpecs = append(oneWireSpecs, v)
 		return nil
 	})
+	var dhtSpecs []string
+	flag.Func("dht", "attach a DHT11/22 on PIN[:KIND[:HUM[:TEMP]]] (repeatable)", func(v string) error {
+		dhtSpecs = append(dhtSpecs, v)
+		return nil
+	})
+	var ultrasonicSpecs []string
+	flag.Func("ultrasonic", "attach an HC-SR04 on TRIG:ECHO[:CM] (repeatable)", func(v string) error {
+		ultrasonicSpecs = append(ultrasonicSpecs, v)
+		return nil
+	})
 	flag.Parse()
 	if *listPresets {
 		printBusPresets()
@@ -584,6 +594,10 @@ func main() {
 
 	if err := attachOneWire(c, oneWireSpecs); err != nil {
 		log.Error("onewire", slog.Any("err", err))
+		exit(2)
+	}
+	if err := attachWireDevices(c, dhtSpecs, ultrasonicSpecs); err != nil {
+		log.Error("wire device", slog.Any("err", err))
 		exit(2)
 	}
 	for _, raw := range oneWireSpecs {

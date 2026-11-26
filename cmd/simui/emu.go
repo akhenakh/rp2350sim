@@ -1300,6 +1300,14 @@ func (e *Emu) resetChip() {
 			w := devices.NewWire(c, d.Pin)
 			devices.NewDS18B20(w, devices.DS18B20Config{TemperatureC: d.Temperature})
 		}
+		for _, d := range b.DHT {
+			devices.NewDHT(devices.NewWire(c, d.Pin), devices.DHTConfig{
+				Kind: d.Kind, Humidity: d.Humidity, Temperature: d.Temperature,
+			})
+		}
+		for _, d := range b.Ultrasonic {
+			devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
+		}
 		pluginSelects := e.attachPlugins(c, b, attachSPI)
 		if len(pluginSelects) > 0 {
 			prev := c.Pins.OnChange

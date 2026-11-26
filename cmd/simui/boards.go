@@ -16,33 +16,35 @@ var embeddedBoards []byte
 
 // BoardDef describes one selectable board and the devices attached to it.
 type BoardDef struct {
-	ID          string          `yaml:"id"`
-	Name        string          `yaml:"name"`
-	Description string          `yaml:"description"`
-	LCD         *LCDDevice      `yaml:"lcd"`
-	Touch       *TouchDevice    `yaml:"touch"`
-	IMU         *IMUDevice      `yaml:"imu"`
-	Battery     *BatteryDevice  `yaml:"battery"`
-	SD          *SDDevice       `yaml:"sd"`
-	Ethernet    *EthDevice      `yaml:"ethernet"`
-	WS2812      *LEDDevice      `yaml:"ws2812"`
-	PSRAM       *PSRAMDevice    `yaml:"psram"`
-	Analog      []SignalDef     `yaml:"analog"`
-	Inputs      []InputDef      `yaml:"inputs"`
-	Scope       []int           `yaml:"scope"`
-	Logic       *LogicDevice    `yaml:"logic"`
-	Serial      []SerialDevice  `yaml:"serial"`
-	I2CTCP      []I2CTCPBridge  `yaml:"i2c_tcp"`
-	SPITCP      []SPITCPBridge  `yaml:"spi_tcp"`
-	I2CPresets  []I2CPresetDef  `yaml:"i2c_presets"`
-	SPIPresets  []SPIPresetDef  `yaml:"spi_presets"`
-	OneWire     []OneWireDevice `yaml:"onewire"`
-	I2CPlugins  []I2CPluginDef  `yaml:"i2c_plugins"`
-	SPIPlugins  []SPIPluginDef  `yaml:"spi_plugins"`
-	UARTPlugins []UARTPluginDef `yaml:"serial_plugins"`
-	Wifi        *WifiDevice     `yaml:"wifi"`
-	Audio       *AudioDevice    `yaml:"audio"`
-	MIDI        *MIDIDevice     `yaml:"midi"`
+	ID          string             `yaml:"id"`
+	Name        string             `yaml:"name"`
+	Description string             `yaml:"description"`
+	LCD         *LCDDevice         `yaml:"lcd"`
+	Touch       *TouchDevice       `yaml:"touch"`
+	IMU         *IMUDevice         `yaml:"imu"`
+	Battery     *BatteryDevice     `yaml:"battery"`
+	SD          *SDDevice          `yaml:"sd"`
+	Ethernet    *EthDevice         `yaml:"ethernet"`
+	WS2812      *LEDDevice         `yaml:"ws2812"`
+	PSRAM       *PSRAMDevice       `yaml:"psram"`
+	Analog      []SignalDef        `yaml:"analog"`
+	Inputs      []InputDef         `yaml:"inputs"`
+	Scope       []int              `yaml:"scope"`
+	Logic       *LogicDevice       `yaml:"logic"`
+	Serial      []SerialDevice     `yaml:"serial"`
+	I2CTCP      []I2CTCPBridge     `yaml:"i2c_tcp"`
+	SPITCP      []SPITCPBridge     `yaml:"spi_tcp"`
+	I2CPresets  []I2CPresetDef     `yaml:"i2c_presets"`
+	SPIPresets  []SPIPresetDef     `yaml:"spi_presets"`
+	OneWire     []OneWireDevice    `yaml:"onewire"`
+	DHT         []DHTDevice        `yaml:"dht"`
+	Ultrasonic  []UltrasonicDevice `yaml:"ultrasonic"`
+	I2CPlugins  []I2CPluginDef     `yaml:"i2c_plugins"`
+	SPIPlugins  []SPIPluginDef     `yaml:"spi_plugins"`
+	UARTPlugins []UARTPluginDef    `yaml:"serial_plugins"`
+	Wifi        *WifiDevice        `yaml:"wifi"`
+	Audio       *AudioDevice       `yaml:"audio"`
+	MIDI        *MIDIDevice        `yaml:"midi"`
 	// Package selects the RP2350 variant: qfn60 (RP2350A, 30 GPIOs) or
 	// qfn80 (RP2350B, 48 GPIOs).
 	Package string `yaml:"package"`
@@ -98,6 +100,21 @@ type OneWireDevice struct {
 	Pin         int     `yaml:"pin"`
 	Type        string  `yaml:"type"`
 	Temperature float64 `yaml:"temperature"`
+}
+
+// DHTDevice attaches a DHT11/DHT22 single-wire sensor.
+type DHTDevice struct {
+	Pin         int     `yaml:"pin"`
+	Kind        string  `yaml:"kind"`
+	Humidity    float64 `yaml:"humidity"`
+	Temperature float64 `yaml:"temperature"`
+}
+
+// UltrasonicDevice attaches an HC-SR04 on a trigger/echo pair.
+type UltrasonicDevice struct {
+	Trig       int     `yaml:"trig"`
+	Echo       int     `yaml:"echo"`
+	DistanceCM float64 `yaml:"distance_cm"`
 }
 
 // I2CPresetDef attaches a built-in I2C device preset. Addr 0 selects the
@@ -643,6 +660,38 @@ func LoadBoards() ([]BoardDef, error) {
 			d.Type = "ds18b20"
 			if d.Temperature == 0 {
 				d.Temperature = 22.5
+			}
+		}
+		for i := range b.DHT {
+			d := &b.DHT[i]
+			if d.Pin < 0 || d.Pin > 47 {
+				return nil, fmt.Errorf("boards: %s: dht pin must be 0..47", b.ID)
+			}
+			if d.Kind == "" {
+				d.Kind = "dht22"
+			}
+			if d.Kind != "dht11" && d.Kind != "dht22" {
+				return nil, fmt.Errorf("boards: %s: unknown dht kind %q", b.ID, d.Kind)
+			}
+			if d.Humidity == 0 {
+				d.Humidity = 45
+			}
+			if d.Temperature == 0 {
+				d.Temperature = 23
+			}
+		}
+		seenUltrasonic := map[int]bool{}
+		for i := range b.Ultrasonic {
+			d := &b.Ultrasonic[i]
+			if d.Trig < 0 || d.Trig > 47 || d.Echo < 0 || d.Echo > 47 || d.Trig == d.Echo {
+				return nil, fmt.Errorf("boards: %s: invalid ultrasonic pins", b.ID)
+			}
+			if seenUltrasonic[d.Trig] || seenUltrasonic[d.Echo] {
+				return nil, fmt.Errorf("boards: %s: ultrasonic pin reused", b.ID)
+			}
+			seenUltrasonic[d.Trig], seenUltrasonic[d.Echo] = true, true
+			if d.DistanceCM == 0 {
+				d.DistanceCM = 100
 			}
 		}
 		for i := range b.I2CTCP {

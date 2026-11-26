@@ -94,6 +94,8 @@ tasks:
       - firmware:presets
       - firmware:pluginlcd
       - firmware:onewire
+      - firmware:dht
+      - firmware:ultrasonic
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -290,6 +292,18 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/presets.elf -seconds 2 -i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 -i2c-preset 0:ssd1306@0x3c -spi-preset 0:w25q16@17'
 
+  run:dht:
+    desc: Run the DHT22 example with a 45% / 23 C sensor on GP6
+    deps: [build, firmware:dht]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/dht.elf -seconds 2 -dht 6:dht22:45:23'
+
+  run:ultrasonic:
+    desc: Run the HC-SR04 example with a 100 cm target
+    deps: [build, firmware:ultrasonic]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/ultrasonic.elf -seconds 2 -ultrasonic 6:7:100'
+
   run:onewire:
     desc: Run the DS18B20 example with a 22.5 C sensor on GP6
     deps: [build, firmware:onewire]
@@ -451,6 +465,24 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/presets.elf .'
+
+  firmware:dht:
+    desc: Build the DHT22 bit-banged example
+    dir: firmware/dht
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/dht.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/dht.elf .'
+
+  firmware:ultrasonic:
+    desc: Build the HC-SR04 example
+    dir: firmware/ultrasonic
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/ultrasonic.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/ultrasonic.elf .'
 
   firmware:onewire:
     desc: Build the bit-banged DS18B20 example
