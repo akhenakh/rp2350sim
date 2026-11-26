@@ -20,11 +20,36 @@ type GPSConfig struct {
 
 // GPS emits GGA and RMC sentences on a hardware UART receive FIFO.
 type GPS struct {
-	c       *rp2350.Chip
-	uart    int
-	cfg     GPSConfig
-	next    uint64
-	seconds uint64
+	c         *rp2350.Chip
+	uart      int
+	cfg       GPSConfig
+	next      uint64
+	seconds   uint64
+	last      string
+	sentences int
+}
+
+// GPSInfo is a snapshot for the GPS tab.
+type GPSInfo struct {
+	UART       int
+	Lat, Lon   float64
+	Altitude   float64
+	SpeedKnots float64
+	Course     float64
+	Satellites int
+	Fix        bool
+	Sentences  int
+	Last       string
+}
+
+// Info returns the current simulated state.
+func (g *GPS) Info() GPSInfo {
+	return GPSInfo{
+		UART: g.uart, Lat: g.cfg.Lat, Lon: g.cfg.Lon,
+		Altitude: g.cfg.Altitude, SpeedKnots: g.cfg.SpeedKnots,
+		Course: g.cfg.Course, Satellites: g.cfg.Satellites, Fix: g.cfg.Fix,
+		Sentences: g.sentences, Last: g.last,
+	}
 }
 
 // NewGPS attaches a GPS to a UART and starts its periodic emitter.
@@ -78,7 +103,10 @@ func (g *GPS) tick() {
 		t, map[bool]string{true: "A", false: "V"}[g.cfg.Fix], lat, lon,
 		g.cfg.SpeedKnots, g.cfg.Course)
 	for _, body := range []string{gga, rmc} {
-		g.c.SendUART(g.uart, []byte(nmeaLine(body)))
+		line := nmeaLine(body)
+		g.sentences++
+		g.last = line
+		g.c.SendUART(g.uart, []byte(line))
 	}
 }
 

@@ -989,6 +989,48 @@ tasks:
     cmds:
       - go run . --board pico2-plugins --tab bus --run 0.5 --png '../../{{.BUILD}}/ui-plugins.png' '../../{{.BUILD}}/presets.elf'
 
+  ui:gps:
+    desc: Run the UI on the NMEA GPS source
+    deps: [firmware:gps]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-gps --tab gps '../../{{.BUILD}}/gps.elf'
+
+  ui:gps:png:
+    desc: Render the GPS tab to build/ui-gps.png
+    deps: [firmware:gps]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-gps --tab gps --run 1 --png '../../{{.BUILD}}/ui-gps.png' '../../{{.BUILD}}/gps.elf'
+
+  ui:can:
+    desc: Run the UI on the MCP2515 classic-CAN peer
+    deps: [firmware:can]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-can --tab can '../../{{.BUILD}}/can.elf'
+
+  ui:can:png:
+    desc: Render the CAN tab to build/ui-can.png
+    deps: [firmware:can]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-can --tab can --run 1 --png '../../{{.BUILD}}/ui-can.png' '../../{{.BUILD}}/can.elf'
+
+  ui:trace:
+    desc: Run the UI Trace tab on the ITM stimulus demo
+    deps: [c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab trace '../../firmware/c/build/itmdemo.elf'
+
+  ui:trace:png:
+    desc: Render the Trace tab to build/ui-trace.png
+    deps: [c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab trace --run 1 --png '../../{{.BUILD}}/ui-trace.png' '../../firmware/c/build/itmdemo.elf'
+
   ui:pluginlcd:
     desc: Run the Touch-LCD-2 plugin dashboard (Lua I2C + WASM UART)
     deps: [firmware:pluginlcd]

@@ -796,10 +796,10 @@ gps:
   rate_ms: 1000
 ```
 
-Reference firmware: `firmware/gps`; board `pico2-gps`; task `run:gps`. The
-logic analyzer decodes the UART stream, and the Bus/Console show the firmware's
-parsed fix. `ParseNMEA` in `internal/devices` validates checksums and is shared
-with map/UI work.
+Reference firmware: `firmware/gps`; board `pico2-gps`; tasks `run:gps`,
+`ui:gps` and `ui:gps:png`. The GPS tab reads the model directly, the logic
+analyzer decodes the same UART stream, and `ParseNMEA` in `internal/devices`
+validates checksums.
 
 ## CAN / MCP2515
 
@@ -822,7 +822,9 @@ can:
 
 The peer answers a request frame by incrementing each data byte. This is
 classic CAN 2.0B; CAN FD needs an MCP2518FD-class controller and is a separate
-model. Reference firmware: `firmware/can`; board `pico2-can`; task `run:can`.
+model. Reference firmware: `firmware/can`; board `pico2-can`; tasks `run:can`,
+`ui:can` and `ui:can:png`. The CAN tab shows the controller registers and the
+bus frames.
 
 ## ITM and DWT trace
 
@@ -835,8 +837,9 @@ rp2350sim -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm
 ```
 
 The C fixture writes a string to ITM stimulus port 0 without UART or USB
-stdio. The chip exposes the same events through `Chip.OnTrace` for future UI
-work; SWO pin decoding is a separate follow-up.
+stdio. The chip exposes the same events through `Chip.OnTrace`; the UI Trace
+tab groups them into lines (`task ui:trace`, `ui:trace:png`). SWO pin decoding
+is a separate follow-up.
 
 ## Board-to-flag map
 

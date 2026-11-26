@@ -50,3 +50,22 @@ func TestMCP2515BitModify(t *testing.T) {
 		t.Fatalf("CANINTE = %#x, want 1", m.regs[0x2B])
 	}
 }
+
+func TestMCP2515ModeMirror(t *testing.T) {
+	c := rp2350.New()
+	m := NewMCP2515(c, NewCANBus(c), 17, -1)
+	m.Select()
+	m.Transfer(0x02)
+	m.Transfer(0x0F)
+	m.Transfer(0x00) // normal mode
+	if got := m.Info().CANSTAT; got != 0 {
+		t.Fatalf("CANSTAT = %#x after normal mode, want 0", got)
+	}
+	m.Select()
+	m.Transfer(0x02)
+	m.Transfer(0x0F)
+	m.Transfer(0x80) // configuration
+	if got := m.Info().CANSTAT; got != 0x80 {
+		t.Fatalf("CANSTAT = %#x after configuration, want 0x80", got)
+	}
+}

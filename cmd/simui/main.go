@@ -87,6 +87,9 @@ const (
 	tabProfile
 	tabHID
 	tabBootsel
+	tabGPS
+	tabCAN
+	tabTrace
 	tabConsole
 )
 
@@ -196,6 +199,12 @@ func RootView() {
 				debugPanel(snap)
 			case tabProfile:
 				profilePanel(snap)
+			case tabGPS:
+				gpsPanel()
+			case tabCAN:
+				canPanel()
+			case tabTrace:
+				tracePanel()
 			case tabHID:
 				hidPanel(snap)
 			case tabBootsel:
@@ -519,6 +528,10 @@ func setTab(name string) {
 		if boardHasSensors(selectedBoard) {
 			activeTab = tabSensors
 		}
+	case "gps", "nmea":
+		if selectedBoard != nil && selectedBoard.GPS != nil {
+			activeTab = tabGPS
+		}
 	case "scope", "osc":
 		activeTab = tabScope
 	case "logic", "la":
@@ -537,10 +550,16 @@ func setTab(name string) {
 		if boardHasBuses(selectedBoard) {
 			activeTab = tabBus
 		}
+	case "can", "canbus":
+		if selectedBoard != nil && selectedBoard.CAN != nil {
+			activeTab = tabCAN
+		}
 	case "debug", "dbg":
 		activeTab = tabDebug
 	case "profile", "prof", "coverage":
 		activeTab = tabProfile
+	case "trace", "itm", "swo":
+		activeTab = tabTrace
 	case "hid", "usb", "keyboard", "mouse", "gamepad":
 		activeTab = tabHID
 	case "bootsel", "rpi-rp2", "uf2":
@@ -575,6 +594,9 @@ func tabsBar(snap MachineState) {
 		if boardHasSensors(selectedBoard) {
 			tabButton("Sensors", tabSensors)
 		}
+		if selectedBoard.GPS != nil {
+			tabButton("GPS", tabGPS)
+		}
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
 		if selectedBoard.Audio != nil {
@@ -586,8 +608,12 @@ func tabsBar(snap MachineState) {
 		tabButton("OTP", tabOTP)
 		tabButton("Debug", tabDebug)
 		tabButton("Profile", tabProfile)
+		tabButton("Trace", tabTrace)
 		if boardHasBuses(selectedBoard) {
 			tabButton("Bus", tabBus)
+		}
+		if selectedBoard.CAN != nil {
+			tabButton("CAN", tabCAN)
 		}
 		if len(snap.HID) > 0 || activeTab == tabHID {
 			tabButton("HID", tabHID)

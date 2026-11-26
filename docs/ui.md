@@ -3,8 +3,9 @@
 `rp2350sim-ui` is a Shirei desktop application that wraps the same emulator as
 the headless runner. It starts with a board picker, attaches that board's
 devices, and exposes the live machine through tabs: GPIO, LCD, DVI, sensors,
-Ethernet, LEDs, scope, logic analyzer, audio, MIDI, HID, OTP, built-in bus presets,
-Bus Pirate terminals, the debugger and the firmware console. Live reload
+Ethernet, LEDs, sensors, scope, logic analyzer, GPS, CAN, audio, MIDI, HID,
+OTP, built-in bus presets, Bus Pirate terminals, the debugger, the ITM trace
+and the firmware console. Live reload
 (`--watch`) restarts the machine when the firmware file changes on disk.
 
 The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
@@ -41,7 +42,7 @@ Startup flags:
 | `--input ID=VALUE` | set a board input before the first frame (`on`/`off`, volts, `+N`/`-N`); repeatable |
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
-| `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `audio`, `midi`, `otp`, `bus`, `debug`, `console` |
+| `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `gps`, `can`, `audio`, `midi`, `otp`, `bus`, `debug`, `trace`, `console` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--turbo` | run as fast as the host allows instead of pacing virtual time to real time |
@@ -129,6 +130,8 @@ reserved BOOTSEL id.
 | `spi_presets` | list of `{bus, cs, preset}` (built-in target) | Bus |
 | `i2c_plugins` / `spi_plugins` | list of `{bus, addr or cs, file, url, config}` (Lua/WASM target) | Bus |
 | `serial_plugins` | list of `{uart, file, url, config}` (Lua/WASM serial target) | Console |
+| `gps` | `uart`, `lat`, `lon`, `altitude`, `speed_knots`, `course`, `satellites`, `fix`, `rate_ms` | GPS |
+| `can` | `bus`, `cs`, `int`, `peer_id`, `reply_id` | CAN |
 
 `listen` defaults to `127.0.0.1:0` (a free port). `connect: host:port` makes the
 emulator dial an external device server instead of listening.
@@ -485,6 +488,34 @@ The tab uses ELF symbols and DWARF when available. A firmware without them
 the table shows 256-byte PC buckets and the tab says no DWARF was found. The
 same data is available headlessly through `-coverage`, `-profile-out` and
 `-profile-top` (see [cli.md](cli.md#profiling-and-coverage)).
+
+### GPS
+
+The GPS tab shows the attached NMEA 0183 source: fix state, latitude,
+longitude, satellites, altitude, speed, course and the last emitted GGA/RMC
+sentence. The sentences also arrive on the configured UART receive FIFO, so
+the Logic tab or a firmware parser sees exactly the same stream. `task ui:gps`
+opens it on `pico2-gps` with `firmware/gps`; `ui:gps:png` renders it.
+
+![GPS tab](images/gps.png)
+
+### CAN
+
+The CAN tab shows the MCP2515 status registers and the recent bus frames with
+bus time, identifier, standard/extended type and payload. It is a classic CAN
+2.0B controller; the board's simulated peer answers a matching request.
+`task ui:can` opens it with `firmware/can`; `ui:can:png` renders it.
+
+![CAN tab](images/can.png)
+
+### Trace
+
+The Trace tab lists ITM stimulus writes grouped into lines, with virtual time
+and port, plus any other chip trace events. **Clear** drops the ring. The same
+events are printed by the headless runner's `-itm` flag. `task ui:trace` opens
+it on `firmware/c/itmdemo`; `ui:trace:png` renders it.
+
+![Trace tab](images/trace.png)
 
 ### Bus
 

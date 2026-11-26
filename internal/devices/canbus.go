@@ -18,8 +18,14 @@ type CANNode interface {
 
 // CANBus connects controllers and simulated peers.
 type CANBus struct {
-	chip  *rp2350.Chip
-	nodes []CANNode
+	chip   *rp2350.Chip
+	nodes  []CANNode
+	frames []CANFrame
+}
+
+// Frames returns the recent bus frames, oldest first.
+func (b *CANBus) Frames() []CANFrame {
+	return append([]CANFrame(nil), b.frames...)
 }
 
 // NewCANBus creates a bus on the emulator clock.
@@ -31,6 +37,10 @@ func (b *CANBus) Attach(n CANNode) { b.nodes = append(b.nodes, n) }
 // Send delivers a frame to every node except the sender.
 func (b *CANBus) Send(frame CANFrame, from CANNode) {
 	frame.Time = b.chip.Cycles
+	b.frames = append(b.frames, frame)
+	if len(b.frames) > 200 {
+		b.frames = b.frames[len(b.frames)-200:]
+	}
 	for _, n := range b.nodes {
 		if n != from {
 			n.Receive(frame)

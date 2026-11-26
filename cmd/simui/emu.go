@@ -207,6 +207,9 @@ type Emu struct {
 	w5500   *devices.W5500
 	w6300   *devices.W6300
 	ch9120  *devices.CH9120
+	gpsDev  *devices.GPS
+	canBus  *devices.CANBus
+	canDev  *devices.MCP2515
 
 	scopePins  []int
 	scope      *devices.Trace
@@ -235,6 +238,9 @@ type Emu struct {
 	plugins     []*deviceplugin.Plugin
 	pluginSlots []string
 	pluginErrs  []string
+
+	traceMu     sync.Mutex
+	traceEvents []rp2350.TraceEvent
 
 	profWanted      bool
 	profileCache    *coverage.Report
@@ -1294,6 +1300,30 @@ func (e *Emu) resetChip() {
 			c.AddPeriodicHook(src.Interval, src.Tick)
 		}
 
+		if b.GPS != nil {
+			g := b.GPS
+			dev := devices.NewGPS(c, g.UART, devices.GPSConfig{
+				Lat: g.Lat, Lon: g.Lon, Altitude: g.Altitude,
+				SpeedKnots: g.SpeedKnots, Course: g.Course,
+				Satellites: g.Satellites, Fix: g.Fix,
+				Rate: time.Duration(g.RateMS) * time.Millisecond,
+			})
+			c.AttachUART(g.UART, dev)
+			e.gpsDev = dev
+		}
+		if b.CAN != nil {
+			can := b.CAN
+			bus := devices.NewCANBus(c)
+			devices.NewCANPeer(bus, can.PeerID, can.ReplyID, false)
+			m := devices.NewMCP2515(c, bus, can.CS, can.INT)
+			attachSPI(can.Bus, can.CS, m.Transfer)
+			c.Pins.AddChangeListener(func(pin int, level bool) {
+				if pin == can.CS && !level {
+					m.Select()
+				}
+			})
+			e.canBus, e.canDev = bus, m
+		}
 		e.attachBus(c, b, attachSPI)
 		e.attachBusPresets(c, b, attachSPI)
 		for _, d := range b.OneWire {
@@ -1451,6 +1481,7 @@ func (e *Emu) resetChip() {
 	e.attachSerial(c, e.board)
 	e.attachMIDI(c, e.board)
 
+	c.OnTrace = e.recordTrace
 	e.chip = c
 	e.profileCache = nil
 	e.profileCacheAt = 0
@@ -2620,6 +2651,50 @@ func (e *Emu) SetTurbo(on bool) {
 }
 
 // Snapshot returns a consistent view of the machine for one frame.
+// GPSInfo returns the attached GPS state, if any.
+func (e *Emu) GPSInfo() *devices.GPSInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.gpsDev == nil {
+		return nil
+	}
+	info := e.gpsDev.Info()
+	return &info
+}
+
+// CANInfo returns the controller and recent bus frames, if attached.
+func (e *Emu) CANInfo() (devices.MCP2515Info, []devices.CANFrame, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.canDev == nil || e.canBus == nil {
+		return devices.MCP2515Info{}, nil, false
+	}
+	return e.canDev.Info(), e.canBus.Frames(), true
+}
+
+// TraceEvents returns a copy of the ITM/DWT trace ring.
+func (e *Emu) TraceEvents() []rp2350.TraceEvent {
+	e.traceMu.Lock()
+	defer e.traceMu.Unlock()
+	return append([]rp2350.TraceEvent(nil), e.traceEvents...)
+}
+
+// ClearTrace drops the current trace ring.
+func (e *Emu) ClearTrace() {
+	e.traceMu.Lock()
+	e.traceEvents = e.traceEvents[:0]
+	e.traceMu.Unlock()
+}
+
+func (e *Emu) recordTrace(ev rp2350.TraceEvent) {
+	e.traceMu.Lock()
+	e.traceEvents = append(e.traceEvents, ev)
+	if len(e.traceEvents) > 2000 {
+		e.traceEvents = e.traceEvents[len(e.traceEvents)-2000:]
+	}
+	e.traceMu.Unlock()
+}
+
 func (e *Emu) Snapshot() MachineState {
 	e.mu.Lock()
 	defer e.mu.Unlock()

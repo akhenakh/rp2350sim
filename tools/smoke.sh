@@ -370,6 +370,32 @@ else
 	bad "UI scripted plugins tab" "$(cat "$BUILD/smoke.log")"
 fi
 
+if (cd cmd/simui && go run . --board pico2-gps --tab gps --run 1 \
+	--png "../../$BUILD/ui-gps-smoke.png" "../../$BUILD/gps.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-gps-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI GPS tab"
+else
+	bad "UI GPS tab" "$(cat "$BUILD/smoke.log")"
+fi
+
+if (cd cmd/simui && go run . --board pico2-can --tab can --run 1 \
+	--png "../../$BUILD/ui-can-smoke.png" "../../$BUILD/can.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-can-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	ok "UI CAN tab"
+else
+	bad "UI CAN tab" "$(cat "$BUILD/smoke.log")"
+fi
+
+if [ -f firmware/c/build/itmdemo.elf ]; then
+	if (cd cmd/simui && go run . --board pico2 --tab trace --run 1 \
+		--png "../../$BUILD/ui-trace-smoke.png" "../../firmware/c/build/itmdemo.elf" >/dev/null 2>&1) &&
+		"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-trace-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+		ok "UI Trace tab"
+	else
+		bad "UI Trace tab" "$(cat "$BUILD/smoke.log")"
+	fi
+fi
+
 if (cd cmd/simui && go run . --board pico2 --png "../../$BUILD/ui-smoke.png" --run 0.4 "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
 	ok "UI headless snapshot"

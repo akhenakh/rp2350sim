@@ -20,6 +20,19 @@ type MCP2515 struct {
 	data  []byte
 }
 
+// MCP2515Info is a controller snapshot for the CAN tab.
+type MCP2515Info struct {
+	CANSTAT, CANCTRL, CANINTF, CANINTE, EFLG byte
+}
+
+// Info returns the controller status registers.
+func (m *MCP2515) Info() MCP2515Info {
+	return MCP2515Info{
+		CANSTAT: m.regs[0x0E], CANCTRL: m.regs[0x0F],
+		CANINTF: m.regs[0x2C], CANINTE: m.regs[0x2B], EFLG: m.regs[0x2D],
+	}
+}
+
 // NewMCP2515 attaches a controller on cs, optionally driving int low on IRQ.
 func NewMCP2515(c *rp2350.Chip, bus *CANBus, cs, intPin int) *MCP2515 {
 	m := &MCP2515{chip: c, bus: bus, cs: cs, int: intPin}
@@ -104,6 +117,9 @@ func (m *MCP2515) Transfer(tx byte) byte {
 		return v
 	case 5, 6: // LOAD TX / WRITE data
 		m.regs[m.addr] = tx
+		if m.addr == 0x0F { // CANCTRL: the requested mode is mirrored in CANSTAT
+			m.regs[0x0E] = m.regs[0x0E]&0x1F | tx&0xE0
+		}
 		m.addr = (m.addr + 1) & 0x7F
 		return 0xFF
 	case 7: // BIT MODIFY address
