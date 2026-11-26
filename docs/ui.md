@@ -412,6 +412,8 @@ IDs gets the one-byte LED report.
 ```sh
 task ui:hid          # TinyGo keyboard + mouse firmware
 task ui:hidgamepad   # TinyGo joystick firmware
+task ui:hid:composite # pico-sdk keyboard/mouse/media/gamepad, BOOTSEL latched
+task ui:hid:png      # render this tab to build/ui-hid.png
 ```
 
 ### OTP

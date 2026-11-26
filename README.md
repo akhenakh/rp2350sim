@@ -277,6 +277,9 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
+| `task ui:hid` | HID tab with the TinyGo keyboard + mouse firmware |
+| `task ui:hid:composite` | HID tab with pico-sdk keyboard/mouse/media/gamepad (BOOTSEL latched) |
+| `task ui:hid:png` | headless HID-tab render to `build/ui-hid.png` |
 | `task ui:psram` | PSRAM board with the Pico SDK PSRAM demo |
 | `task ui:debug` | Debug tab stopped at the C fixture's `debug_marker` |
 | `task ui:debug:png` | headless render of the Debug tab to `build/ui-debug.png` |

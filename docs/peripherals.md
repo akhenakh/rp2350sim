@@ -608,7 +608,9 @@ the controls send host-to-device output reports.
 
 Reference firmware: `hid` (TinyGo keyboard + mouse), `hidgamepad` (TinyGo
 joystick). Tasks: `task run:hid`, `task run:hidgamepad`,
-`task ui:hid`.
+`task ui:hid`, `task ui:hidgamepad`, and `task ui:hid:composite` for pico-sdk's
+keyboard/mouse/media/gamepad example (BOOTSEL latched). `task ui:hid:png`
+renders the tab headlessly to `build/ui-hid.png`.
 
 ## Oscilloscope
 

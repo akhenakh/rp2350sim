@@ -686,6 +686,20 @@ tasks:
     cmds:
       - go run . --board pico2 --tab hid '../../{{.BUILD}}/hidgamepad.elf'
 
+  ui:hid:composite:
+    desc: Run the UI on pico-sdk's HID composite (keyboard, mouse, media, gamepad); BOOTSEL is latched so reports flow
+    deps: [picoexamples:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-inputs --tab hid --input bootsel=on '../../{{.BUILD}}/pico-examples/build/dev_hid_composite/dev_hid_composite.elf'
+
+  ui:hid:png:
+    desc: Render the HID tab with keyboard/mouse/gamepad reports to build/ui-hid.png
+    deps: [picoexamples:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-inputs --tab hid --input bootsel=on --run 1 --png '../../{{.BUILD}}/ui-hid.png' '../../{{.BUILD}}/pico-examples/build/dev_hid_composite/dev_hid_composite.elf'
+
   ui:debug:
     desc: Open the Debug tab on the C debugger fixture at debug_marker
     deps: [c:build]
