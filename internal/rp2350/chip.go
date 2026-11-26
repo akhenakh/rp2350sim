@@ -65,6 +65,7 @@ type hangTrack struct {
 	loopCycles uint64
 	mmioAddr   uint32
 	mmioVal    uint32
+	mmioAt     uint64
 	reported   bool
 }
 
@@ -632,6 +633,7 @@ func (c *Chip) noteMMIO(addr, val uint32) {
 	}
 	c.hang[core].mmioAddr = addr &^ 3
 	c.hang[core].mmioVal = val
+	c.hang[core].mmioAt = c.Cycles
 }
 
 const hangSampleCycles = 64
@@ -660,6 +662,14 @@ func (c *Chip) hangSample(core int, pc uint32) {
 	}
 	repeat := seen[pc]
 	if len(seen) > 8 || repeat < 4 {
+		hs.loopCycles = 0
+		return
+	}
+	// A loop that only reads SRAM and never a peripheral register is a
+	// legitimate busy-wait (for example while (!timer_fired)), not a hang.
+	// Only a peripheral poll or a pure one/two-instruction spin counts.
+	polled := hs.mmioAt != 0 && c.Cycles-hs.mmioAt <= hs.loopCycles+hangSampleCycles
+	if !polled && len(seen) > 2 {
 		hs.loopCycles = 0
 		return
 	}

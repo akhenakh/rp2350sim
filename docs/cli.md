@@ -467,6 +467,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-peek ADDR` | print a word at exit |
 | `-sample N` | print the PC in 10M-cycle chunks (obeys input, expectations and the wall timeout) |
 | `-continue-after-halt` | keep peripherals (PIO/PWM/DMA) running after a core halts |
+| `-hang-cycles N` | report a tight poll loop after N cycles (default 30M, 0 disables) |
 | `-strict-mmio` | halt on the first unmapped peripheral access |
 | `-unhandled` | report unmapped accesses at exit |
 | `-msg` | at `-bp`, decode `r1` as a runtime message string |
