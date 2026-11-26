@@ -31,3 +31,13 @@ the always-on timer, HSTX DVI output and A/B flash partitions.
 preemptive RTOS support and Zephyr, interactive board controls and BOOTSEL, the
 card GPIO view, built-in I2C/SPI device presets, live reload and the
 Source/Build drawer, plus the decoder and peripheral fidelity fixes.
+
+## Update #4
+
+[![rp2350sim update #4](https://img.youtube.com/vi/2-QTgrp61pM/hqdefault.jpg)](https://youtu.be/2-QTgrp61pM)
+
+[Watch on YouTube](https://youtu.be/2-QTgrp61pM) — the fourth feature tour:
+USB HID, the scope FFT and 10–90% rise/fall measurements, the virtual BOOTSEL
+drive, hang detection with DWARF and SVD explanations, the paced ADC and
+generated signal sources, the shared instruction predecode cache, and profiling
+with exact coverage, LCOV export and the Profile tab.
