@@ -1,6 +1,9 @@
 package devices
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestMeasureDigital(t *testing.T) {
 	// 1 MHz sampling, 100-sample period, 50% duty => 10 kHz.
@@ -37,5 +40,30 @@ func TestMeasureDigitalNoEdges(t *testing.T) {
 	m := MeasureDigital(samples, 0, 150)
 	if m.Valid || m.Edges != 0 || m.High != 1 {
 		t.Fatalf("measure = %+v, want a static high", m)
+	}
+}
+
+func TestMeasureAnalogRiseFall(t *testing.T) {
+	// 1 kHz sine, 1.65 V amplitude around 1.65 V, sampled at 1 MHz. The
+	// 10–90% transition time of a sine is about 295 us.
+	const interval = 150
+	var samples []TraceSample
+	for i := range 2000 {
+		var s TraceSample
+		s.T = uint64(i) * interval
+		s.V[0] = float32(1.65 + 1.65*math.Sin(2*math.Pi*1000*float64(i)/1e6))
+		samples = append(samples, s)
+	}
+	m := MeasureDigital(samples, 0, interval)
+	if !m.RiseValid || !m.FallValid {
+		t.Fatalf("rise/fall not measured: %+v", m)
+	}
+	for name, got := range map[string]float64{"rise": m.Rise, "fall": m.Fall} {
+		if math.Abs(got-295e-6) > 15e-6 {
+			t.Fatalf("%s = %v, want ~295us", name, got)
+		}
+	}
+	if m.MinV > 0.05 || m.MaxV < 3.25 {
+		t.Fatalf("min/max = %v/%v", m.MinV, m.MaxV)
 	}
 }

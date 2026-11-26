@@ -41,6 +41,7 @@ var (
 	scopeFFT           bool
 	scopeFFTChannel    int
 	scopeFFTLog        = true
+	scopeAnalog        = map[int]bool{}
 	scopeAnalyzer      scopeSpectrum
 	triggerKind        string
 	triggerPause       bool
@@ -2065,6 +2066,22 @@ func scopePanel() {
 						}
 						Label("static "+level, FontSize(11), TextColor(200, 10, 55, 1))
 					}
+					analogLabel := "10–90"
+					if scopeAnalog[p] {
+						analogLabel = "● 10–90"
+					}
+					if Button(NoIcon, analogLabel) {
+						scopeAnalog[p] = !scopeAnalog[p]
+						RequestNextFrame()
+					}
+					if scopeAnalog[p] {
+						if m.RiseValid && m.FallValid {
+							Label(fmt.Sprintf("rise %s · fall %s", formatPeriod(m.Rise), formatPeriod(m.Fall)),
+								FontSize(11), TextColor(20, 60, 80, 1))
+						} else {
+							Label("rise/fall n/a", FontSize(11), TextColor(220, 6, 62, 1))
+						}
+					}
 				})
 			}
 		})
@@ -3150,6 +3167,7 @@ func main() {
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
 	fftFlag := flag.Bool("fft", false, "show the scope spectrum (FFT) view")
+	measureFlag := flag.Bool("measure", false, "show 10–90% rise/fall measurements for scope channels")
 	rFlag := flag.Float64("scope-range", 3.3, "initial scope voltage range in volts")
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
@@ -3316,6 +3334,11 @@ func main() {
 		scopeZoom = *zFlag
 	}
 	scopeFFT = *fftFlag
+	if *measureFlag {
+		for _, p := range scopePins {
+			scopeAnalog[p] = true
+		}
+	}
 	best := 0
 	for i, v := range scopeRanges {
 		if abs(float64(v)-*rFlag) < abs(float64(scopeRanges[best])-*rFlag) {
