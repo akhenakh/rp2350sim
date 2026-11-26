@@ -995,6 +995,11 @@ func (c *Chip) flashAliasIndex(addr uint32, size int) (uint32, bool) {
 // BootCount is the number of times the chip has booted, including self-updates.
 func (c *Chip) BootCount() uint64 { return c.boots }
 
+// Booted reports whether the chip has taken a reset vector and has an
+// executable image. A board can exist without firmware; that chip must stay
+// parked instead of running from an uninitialised PC.
+func (c *Chip) Booted() bool { return c != nil && c.booted }
+
 // LastResetReason describes the most recent boot.
 func (c *Chip) LastResetReason() string { return c.resetReason }
 

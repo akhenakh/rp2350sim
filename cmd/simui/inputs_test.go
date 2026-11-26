@@ -194,6 +194,9 @@ func TestQueuedEncoderSteps(t *testing.T) {
 	e := NewEmu()
 	e.SetBoard(testInputsBoard())
 	e.mu.Lock()
+	// RunFor only advances a booted machine; park both cores so virtual time
+	// moves through the peripheral idle path.
+	e.chip.Boot()
 	e.chip.CPU0.Parked = true
 	e.chip.CPU1.Parked = true
 	e.mu.Unlock()
@@ -208,6 +211,7 @@ func TestQueuedEncoderSteps(t *testing.T) {
 	e = NewEmu()
 	e.SetBoard(testInputsBoard())
 	e.mu.Lock()
+	e.chip.Boot()
 	e.chip.CPU0.Parked = true
 	e.chip.CPU1.Parked = true
 	e.mu.Unlock()

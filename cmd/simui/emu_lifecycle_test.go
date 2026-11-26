@@ -58,6 +58,10 @@ func TestReloadPreservesPauseAndFailureState(t *testing.T) {
 
 func TestLogicPauseStopsSynchronousRunFor(t *testing.T) {
 	c := rp2350.New()
+	// RunFor refuses a chip that has never taken a reset vector.
+	binary.LittleEndian.PutUint32(c.Flash[0:], rp2350.SRAMBase+0x1000)
+	binary.LittleEndian.PutUint32(c.Flash[4:], rp2350.FlashBase+8+1)
+	c.Boot()
 	c.CPU0.Parked = true
 	d := rp2350.NewDebugger()
 	e := &Emu{chip: c, debugger: d, running: true}

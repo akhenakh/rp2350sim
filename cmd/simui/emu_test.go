@@ -172,6 +172,28 @@ func writeFlashELF(t *testing.T) string {
 	return path
 }
 
+// A board can be selected before a firmware is loaded. The machine must stay
+// parked: an un-booted chip has PC 0 and would otherwise execute the empty
+// boot ROM and slide through unmapped memory at a fraction of real time.
+func TestBoardWithoutFirmwareStaysIdle(t *testing.T) {
+	e := NewEmu()
+	defer e.SetBoard(nil)
+	defer e.SetRunning(false)
+	e.SetBoard(&BoardDef{ID: "bare", Name: "Bare"})
+	e.SetRunning(true)
+	time.Sleep(60 * time.Millisecond)
+	snap := e.Snapshot()
+	if snap.Cycles != 0 {
+		t.Fatalf("no-firmware board ran %d cycles", snap.Cycles)
+	}
+	if snap.Running {
+		t.Fatal("no-firmware board reports running")
+	}
+	if snap.Halted {
+		t.Fatal("no-firmware board halts instead of staying idle")
+	}
+}
+
 func TestCycleDuration(t *testing.T) {
 	if got := cycleDuration(150_000); got != time.Millisecond {
 		t.Fatalf("cycleDuration(150000) = %v, want 1ms", got)

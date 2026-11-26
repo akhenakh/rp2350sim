@@ -1915,6 +1915,9 @@ func (e *Emu) ReloadFlash(path string) error {
 func (e *Emu) RunFor(cycles uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.chip == nil || !e.chip.Booted() {
+		return
+	}
 	e.debugger.Resume()
 	const chunk = 500_000
 	for cycles > 0 && !e.chip.Halted && !e.debugger.Stopped &&
@@ -1957,6 +1960,13 @@ func (e *Emu) ToggleRunning() bool {
 	return e.running
 }
 
+// runnableLocked reports whether the selected board has an executable image.
+// A board can be inspected without firmware; the CPU then has no reset vector
+// and must not execute the uninitialised boot ROM (or the empty flash mapping).
+func (e *Emu) runnableLocked() bool {
+	return e.board != nil && e.chip != nil && e.chip.Booted()
+}
+
 func (e *Emu) loop() {
 	// Small chunks keep the mutex hold time low enough for a smooth UI while
 	// still running the firmware as fast as the interpreter allows.
@@ -1980,7 +1990,7 @@ func (e *Emu) loop() {
 		// empty reset vector is not executed in the background. A debugger
 		// stop (GDB breakpoint/watchpoint) also parks the chip.
 		stopped := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
-		running := e.running && e.board != nil && e.chip != nil && !e.chip.Halted && !stopped
+		running := e.running && e.runnableLocked() && !e.chip.Halted && !stopped
 		boots := e.lastBoots
 		var sleepFor time.Duration
 		if running {
@@ -2104,7 +2114,7 @@ func (e *Emu) Snapshot() MachineState {
 	s.PC = e.chip.CPU0.R[15]
 	s.SP = e.chip.CPU0.R[13]
 	s.Halted = e.chip.Halted
-	s.Running = e.running
+	s.Running = e.running && e.runnableLocked()
 	if e.chip.Debug != nil && e.chip.Debug.Stopped {
 		s.Running = false
 	}
