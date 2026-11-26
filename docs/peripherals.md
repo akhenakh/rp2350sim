@@ -50,6 +50,7 @@ commands and UI steps; the register-level wiring lives in
 | HC-SR04 ultrasonic | `-ultrasonic TRIG:ECHO[:CM]` | `ultrasonic`, Board | `ultrasonic` |
 | GPS / NMEA 0183 | `-gps UART[:LAT:LON]` | `gps`, Board and Console | `gps` |
 | CAN 2.0B / MCP2515 | `-can CS[:INT[:PEER_ID]]` | `can`, Board and Console | `can` |
+| ITM / DWT trace | `-itm` | Debug / CLI trace | `firmware/c/itmdemo` |
 
 Build the demo firmware once with:
 
@@ -822,6 +823,20 @@ can:
 The peer answers a request frame by incrementing each data byte. This is
 classic CAN 2.0B; CAN FD needs an MCP2518FD-class controller and is a separate
 model. Reference firmware: `firmware/can`; board `pico2-can`; task `run:can`.
+
+## ITM and DWT trace
+
+Cortex-M33 ITM stimulus writes and the DWT cycle/PC registers are modelled.
+`-itm` prints stimulus bytes to stdout; DWT `CYCCNT` follows the virtual clock
+and `PCSR` returns the current PC.
+
+```sh
+rp2350sim -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm
+```
+
+The C fixture writes a string to ITM stimulus port 0 without UART or USB
+stdio. ITM logging is also available to the Debug tab through the chip trace
+sink; SWO pin decoding is a separate follow-up.
 
 ## Board-to-flag map
 

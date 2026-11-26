@@ -459,6 +459,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 |---|---|
 | `-trace N` | trace the first N instructions (stderr) |
 | `-trace-from ADDR` | start tracing at this address |
+| `-itm` | print Cortex-M33 ITM stimulus writes to stdout |
 | `-trace-last` | keep a ring of recent instructions for faults |
 | `-trace-pins 25,15` | log GPIO level changes |
 | `-bp ADDR\|SYMBOL`, `-bp2 ADDR\|SYMBOL` | log at an address or ELF symbol (requires ELF symbols for names) |

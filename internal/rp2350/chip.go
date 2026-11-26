@@ -191,6 +191,9 @@ type Chip struct {
 	// OnUART0 and OnUART1 receive console bytes written by firmware.
 	OnUART0 func(b byte)
 	OnUART1 func(b byte)
+	// ITM/DWT trace state and sink.
+	itmTER, itmTPR, itmTCR, dwtCTRL uint32
+	OnTrace                         func(TraceEvent)
 	// OnUSBMIDI receives USB-MIDI event packets (4 bytes per event) sent by
 	// firmware on the MIDI IN endpoint.
 	OnUSBMIDI func(b []byte)
@@ -1440,6 +1443,9 @@ func (c *Chip) Read16(addr uint32) uint16 {
 }
 
 func (c *Chip) Read32(addr uint32) uint32 {
+	if v, ok := c.traceRead32(addr); ok {
+		return v
+	}
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-3 {
 		o := addr - SRAMBase
 		return binary.LittleEndian.Uint32(c.SRAM[o:])
@@ -1566,6 +1572,9 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 }
 
 func (c *Chip) Write32(addr uint32, v uint32) {
+	if c.traceWrite32(addr, v) {
+		return
+	}
 	if c.OnWrite != nil {
 		c.OnWrite(addr, v, 4)
 	}

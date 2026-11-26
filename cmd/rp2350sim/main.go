@@ -168,6 +168,7 @@ func main() {
 		quiet        = flag.Bool("quiet", false, "suppress the firmware header and final summary")
 		traceN       = flag.Int("trace", 0, "trace the first N instructions")
 		traceLast    = flag.Bool("trace-last", false, "dump the last 64 instructions on a fault")
+		itmFlag      = flag.Bool("itm", false, "print ITM stimulus writes to stdout")
 		bpStr        = flag.String("bp", "", "log a breakpoint at this address or symbol")
 		watchStr     = flag.String("watch", "", "log writes to this address or symbol")
 		bp2Str       = flag.String("bp2", "", "secondary breakpoint address or symbol")
@@ -498,6 +499,16 @@ func main() {
 		c.SetBootsel(true)
 	}
 	c.Boot()
+	if *itmFlag {
+		c.OnTrace = func(ev rp2350.TraceEvent) {
+			if ev.Kind == "itm" {
+				_, _ = os.Stdout.WriteString(ev.Text)
+				return
+			}
+			log.Info("trace", slog.String("kind", ev.Kind), slog.Int("port", ev.Port),
+				slog.String("pc", fmt.Sprintf("%08x", ev.PC)), slog.Uint64("cycle", ev.Cycle))
+		}
+	}
 	if !*core1 {
 		c.CPU1.Parked = true
 	}

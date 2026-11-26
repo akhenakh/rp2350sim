@@ -342,6 +342,8 @@ out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 -quiet \
 	-spi-plugin 0:21=plugins/examples/spi-flash.wasm 2>/dev/null)
 contains "WASM SPI flash plugin" "w25q16 wasm: ef 40 15" "$out"
 
+out=$("$EMU" -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm 2>/dev/null)
+contains "ITM stimulus trace" "itm: hello from ITM" "$out"
 out=$("$EMU" -fw "$BUILD/can.elf" -seconds 2 -quiet -can 17:20:0x123 2>/dev/null)
 contains "MCP2515 CAN" "can: tx=123 rx=124 data=42" "$out"
 out=$("$EMU" -fw "$BUILD/gps.elf" -seconds 2 -quiet -gps 1 2>/dev/null)

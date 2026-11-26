@@ -98,6 +98,7 @@ tasks:
       - firmware:ultrasonic
       - firmware:gps
       - firmware:can
+      - c:build
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -1063,10 +1064,17 @@ tasks:
       - 'build/aontimer.elf'
       - 'build/rtosctx.elf'
       - 'build/inputs.elf'
+      - 'build/itmdemo.elf'
     cmds:
       - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
       - cmake -S . -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release
       - cmake --build build
+
+  c:itm:
+    desc: Run the ITM stimulus demo and print the trace stream
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm'
 
   c:hello:
     desc: Run the Pico SDK hello world and assert its UART output
