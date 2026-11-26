@@ -79,6 +79,7 @@ const (
 	tabOTP
 	tabBus
 	tabDebug
+	tabHID
 	tabConsole
 )
 
@@ -153,7 +154,7 @@ func RootView() {
 			boardPicker()
 			return
 		}
-		tabsBar()
+		tabsBar(snap)
 		content := func() {
 			switch activeTab {
 			case tabLCD:
@@ -180,6 +181,8 @@ func RootView() {
 				busPanel(snap)
 			case tabDebug:
 				debugPanel(snap)
+			case tabHID:
+				hidPanel(snap)
 			case tabConsole:
 				consolePanel(snap)
 			default:
@@ -288,6 +291,8 @@ func releaseBoardResources() {
 	// Queue Note-Off/All-Notes-Off before SetBoard flushes them to the old
 	// transport, then close UI terminals owned by the old board.
 	panicMIDI()
+	hidLED = 0
+	hidSendHex = ""
 	for _, term := range busTerms {
 		term.Close()
 	}
@@ -529,13 +534,15 @@ func setTab(name string) {
 		}
 	case "debug", "dbg":
 		activeTab = tabDebug
+	case "hid", "usb", "keyboard", "mouse", "gamepad":
+		activeTab = tabHID
 	case "console":
 		activeTab = tabConsole
 	}
 }
 
 // tabsBar lists the main view plus one tab per device on the selected board.
-func tabsBar() {
+func tabsBar(snap MachineState) {
 	if selectedBoard == nil {
 		return
 	}
@@ -571,6 +578,9 @@ func tabsBar() {
 		tabButton("Debug", tabDebug)
 		if boardHasBuses(selectedBoard) {
 			tabButton("Bus", tabBus)
+		}
+		if len(snap.HID) > 0 || activeTab == tabHID {
+			tabButton("HID", tabHID)
 		}
 		tabButton("Console", tabConsole)
 		Filler(1)
@@ -3105,7 +3115,7 @@ func main() {
 		return nil
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, hid, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")

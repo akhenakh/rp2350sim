@@ -46,6 +46,17 @@ if [ -f "$BUILD/midi.elf" ]; then
 	contains "USB-MIDI note on" '"msg":"midi"' "$out"
 fi
 
+# --- USB HID keyboard, mouse and gamepad -------------------------------------
+if [ -f "$BUILD/hid.elf" ]; then
+	out=$("$EMU" -fw "$BUILD/hid.elf" -seconds 3 -usb-hid 2>&1)
+	contains "USB HID keyboard" '"kind":"keyboard"' "$out"
+	contains "USB HID mouse" '"kind":"mouse"' "$out"
+fi
+if [ -f "$BUILD/hidgamepad.elf" ]; then
+	out=$("$EMU" -fw "$BUILD/hidgamepad.elf" -seconds 2 -usb-hid 2>&1)
+	contains "USB HID gamepad" '"kind":"gamepad"' "$out"
+fi
+
 # --- console input over USB CDC --------------------------------------------
 out=$("$EMU" -fw "$BUILD/echo.elf" -seconds 0.4 -input "smoke-input" 2>&1)
 contains "console echo" "smoke-input" "$out"
@@ -419,6 +430,9 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			contains "pico-examples hello_serial" "Hello, world!" "$out"
 			out=$("$EMU" -fw "$EX/hello_usb/hello_usb.elf" -seconds 1.2 -quiet 2>&1)
 			contains "pico-examples hello_usb" "Hello, world!" "$out"
+			out=$("$EMU" -fw "$EX/dev_hid_composite/dev_hid_composite.elf" -seconds 1 -bootsel -usb-hid 2>&1)
+			contains "pico-examples HID keyboard" '"kind":"keyboard"' "$out"
+			contains "pico-examples HID gamepad" '"kind":"gamepad"' "$out"
 			out=$("$EMU" -fw "$EX/sha256/hello_sha256.elf" -seconds 3 -quiet \
 				-expect "Success" -stop-on-expect 2>&1)
 			contains "pico-examples SHA-256" "Success" "$out"

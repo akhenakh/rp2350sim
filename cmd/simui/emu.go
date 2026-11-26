@@ -77,6 +77,7 @@ type MachineState struct {
 	Backlight *BacklightState
 	SD        *SDState
 	OTP       *OTPState
+	HID       []HIDDeviceState
 
 	// Inputs is a copy of the interactive board-control state, keyed by
 	// InputDef.ID.
@@ -219,6 +220,9 @@ type Emu struct {
 	midiParser  midi.Parser
 	midiNotes   map[int]bool
 
+	hidEvents []HIDEvent
+	hidQueue  [][]byte
+
 	trigger LogicTrigger
 	frozen  frozenLogic
 
@@ -270,6 +274,29 @@ type MIDIEvent struct {
 	Cycle uint64
 	Text  string
 	Bytes string
+}
+
+// HIDEvent is one decoded USB HID input report from the firmware.
+type HIDEvent struct {
+	Cycle     uint64
+	Interface int
+	Kind      string
+	ReportID  byte
+	Text      string
+	Bytes     string
+}
+
+// HIDDeviceState is one HID interface the firmware enumerated.
+type HIDDeviceState struct {
+	Interface        int
+	Kinds            []string
+	Protocol         uint8
+	Subclass         uint8
+	InEndpoint       int
+	OutEndpoint      int
+	ReportID         byte
+	KeyboardReportID byte
+	OutputReportID   byte
 }
 
 // LogicTrigger arms a stop condition for the logic analyzer. Kind is "",
@@ -1061,6 +1088,8 @@ func (e *Emu) resetChip() {
 	e.uartEvents = e.uartEvents[:0]
 	e.spiEvents = e.spiEvents[:0]
 	e.i2cEvents = e.i2cEvents[:0]
+	e.hidEvents = e.hidEvents[:0]
+	e.hidQueue = e.hidQueue[:0]
 	e.scope = nil
 	e.logic = nil
 	e.signals = e.signals[:0]
@@ -1281,6 +1310,17 @@ func (e *Emu) resetChip() {
 	c.SetUSBCDC(func(b []byte) {
 		appendConsole(b)
 		e.addUSBEvent(c.Cycles, true, b)
+	})
+	c.SetUSBHID(func(ev rp2350.USBHIDEvent) {
+		e.hidEvents = append(e.hidEvents, HIDEvent{
+			Cycle:     c.Cycles,
+			Interface: ev.Interface,
+			Kind:      ev.Kind,
+			ReportID:  ev.ReportID,
+			Text:      ev.Text,
+			Bytes:     fmt.Sprintf("% x", ev.Data),
+		})
+		e.hidEvents = trimRing(e.hidEvents, 256, 128)
 	})
 
 	// The module owns UART1, so it must install its hook after the console
@@ -1606,6 +1646,45 @@ func (e *Emu) MIDIEvents() []MIDIEvent {
 	return append([]MIDIEvent(nil), e.midiEvents...)
 }
 
+// HIDEvents returns the recent decoded USB HID reports.
+func (e *Emu) HIDEvents() []HIDEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]HIDEvent(nil), e.hidEvents...)
+}
+
+// ClearHIDEvents drops the HID monitor history.
+func (e *Emu) ClearHIDEvents() {
+	e.mu.Lock()
+	e.hidEvents = e.hidEvents[:0]
+	e.mu.Unlock()
+}
+
+// SendHID queues a host-to-device HID report (keyboard LEDs, gamepad
+// feedback). It is flushed on the emulator thread when the OUT endpoint is
+// armed.
+func (e *Emu) SendHID(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.hidQueue) < 64 {
+		e.hidQueue = append(e.hidQueue, append([]byte(nil), data...))
+	}
+}
+
+// flushHIDLocked delivers queued host-to-device HID reports. The caller holds
+// e.mu.
+func (e *Emu) flushHIDLocked() {
+	for len(e.hidQueue) > 0 && e.chip != nil && e.chip.USBHIDReady() {
+		if !e.chip.SendUSBHID(e.hidQueue[0]) {
+			return
+		}
+		e.hidQueue = e.hidQueue[1:]
+	}
+}
+
 // SendMIDI queues a host-to-device message. It is flushed on the emulator
 // thread so the USB DPRAM is only touched while the chip is locked there.
 func (e *Emu) SendMIDI(m midi.Message) {
@@ -1925,6 +2004,7 @@ func (e *Emu) RunFor(cycles uint64) {
 		e.advanceScheduledInputsLocked()
 		e.flushMIDILocked()
 		e.flushUSBInputLocked()
+		e.flushHIDLocked()
 		e.checkScopeTriggerLocked()
 		cycles -= n
 	}
@@ -1996,6 +2076,7 @@ func (e *Emu) loop() {
 			e.advanceScheduledInputsLocked()
 			e.flushMIDILocked()
 			e.flushUSBInputLocked()
+			e.flushHIDLocked()
 			e.checkScopeTriggerLocked()
 			boots = e.chip.BootCount()
 			if e.debugger.Stopped {
@@ -2215,6 +2296,22 @@ func (e *Emu) Snapshot() MachineState {
 		otp.Pages[page].SoftwareLocked = e.chip.OTPSoftwareLocked(page)
 	}
 	s.OTP = otp
+	if infos := e.chip.USBHIDInterfaces(); len(infos) > 0 {
+		s.HID = make([]HIDDeviceState, 0, len(infos))
+		for _, info := range infos {
+			s.HID = append(s.HID, HIDDeviceState{
+				Interface:        info.Interface,
+				Kinds:            append([]string(nil), info.Kinds...),
+				Protocol:         info.Protocol,
+				Subclass:         info.Subclass,
+				InEndpoint:       info.InEndpoint,
+				OutEndpoint:      info.OutEndpoint,
+				ReportID:         info.ReportID,
+				KeyboardReportID: info.KeyboardReportID,
+				OutputReportID:   info.OutputReportID,
+			})
+		}
+	}
 	if len(e.console) > 0 {
 		start := max(len(e.console)-16*1024, 0)
 		s.Console = string(e.console[start:])

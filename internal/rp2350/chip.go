@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	hidpkg "github.com/akhenakh/rp2350sim/internal/hid"
 	"github.com/akhenakh/rp2350sim/internal/m33"
 )
 
@@ -172,6 +173,8 @@ type Chip struct {
 	// OnUSBMIDI receives USB-MIDI event packets (4 bytes per event) sent by
 	// firmware on the MIDI IN endpoint.
 	OnUSBMIDI func(b []byte)
+	// OnUSBHID receives decoded HID input reports (keyboard, mouse, gamepad).
+	OnUSBHID func(USBHIDEvent)
 
 	// Logger receives peripheral diagnostics. It is never nil: New installs a
 	// discarding logger so callers can log unconditionally.
@@ -1736,6 +1739,46 @@ func (c *Chip) USBMIDIReady() bool { return c.usb != nil && c.usb.MIDIReady() }
 // SetUSBMIDI installs the callback that receives USB-MIDI packets from the
 // firmware's MIDI IN endpoint.
 func (c *Chip) SetUSBMIDI(fn func([]byte)) { c.OnUSBMIDI = fn }
+
+// SetUSBHID installs the callback that receives HID input reports from the
+// firmware (keyboard, mouse, gamepad).
+func (c *Chip) SetUSBHID(fn func(USBHIDEvent)) { c.OnUSBHID = fn }
+
+// USBHIDInterfaces reports the HID interfaces the firmware enumerated.
+func (c *Chip) USBHIDInterfaces() []USBHIDInterface {
+	if c.usb == nil {
+		return nil
+	}
+	out := make([]USBHIDInterface, 0, len(c.usb.hids))
+	for i := range c.usb.hids {
+		h := &c.usb.hids[i]
+		kinds := h.kinds()
+		names := make([]string, len(kinds))
+		for j, k := range kinds {
+			names[j] = string(k)
+		}
+		out = append(out, USBHIDInterface{
+			Interface:        h.number,
+			Kinds:            names,
+			Subclass:         h.subclass,
+			Protocol:         h.protocol,
+			InEndpoint:       h.inEP,
+			OutEndpoint:      h.outEP,
+			ReportLength:     h.reportLen,
+			ReportID:         h.device.PrimaryReportID(),
+			KeyboardReportID: h.device.ReportIDForKind(hidpkg.Keyboard),
+			OutputReportID:   h.device.OutputReportID(),
+		})
+	}
+	return out
+}
+
+// SendUSBHID publishes one host-to-device HID report (keyboard LEDs or gamepad
+// feedback) on the first HID OUT endpoint.
+func (c *Chip) SendUSBHID(data []byte) bool { return c.usb != nil && c.usb.SendHID(data) }
+
+// USBHIDReady reports whether a HID OUT endpoint is armed.
+func (c *Chip) USBHIDReady() bool { return c.usb != nil && c.usb.HIDReady() }
 
 // SendUART delivers host bytes to a UART receive FIFO (0 or 1).
 func (c *Chip) SendUART(idx int, data []byte) {

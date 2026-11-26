@@ -55,6 +55,12 @@ Working notes for changes after v0.3 go here.
   with these devices keep the idle fast-forward when they are idle: an idle
   audio-plus-LED board went from about 0.30× to 9.7× real time on a desktop
   host. Decoder output and Ethernet behaviour are unchanged.
+- USB HID joins CDC and MIDI. The emulated host follows the configuration
+  descriptor for HID interfaces, fetches the report descriptor, sends SET_IDLE,
+  and decodes keyboard, mouse and gamepad reports (including composite devices
+  and report IDs). `-usb-hid` logs reports, `-hid-out` sends host-to-device
+  output such as keyboard LEDs, and the new **HID** tab monitors reports and
+  sends output reports.
 - Selecting a board before loading a firmware keeps the machine parked. It used
   to execute the empty boot ROM and slide through unmapped memory, which showed
   up as about 0.03× in the UI and grew the unmapped-access map.

@@ -19,6 +19,7 @@ commands and UI steps; the register-level wiring lives in
 | PIO | `-logic-pins`, `-continue-after-halt` | Logic, Scope | `piotest`, `ws2812` |
 | USB CDC (TinyGo, TinyUSB) | `-input`, `-stdin`, `-expect` | Console | `echo`, `firmware/c/usbhello` |
 | USB-MIDI / UART MIDI | `-usb-midi`, `-midi-uart`, `-midi-udp` | `midi`, MIDI | `midi` |
+| USB HID (keyboard/mouse/gamepad) | `-usb-hid`, `-hid-out` | `hid` | `hid`, `hidgamepad` |
 | Audio (I2S/PDM/PWM) | `-audio-*`, `-audio-out` | `audio`, Audio | `audio` |
 | HSTX / DVI | `-dvi-png` | `hstx`, DVI | pico-examples DVI |
 | RP2350B QFN-80 | `-rp2350b` | `package: qfn80` | `pico-examples` |
@@ -574,6 +575,40 @@ Board changes flush those release messages to the old endpoint before switch.
 Reference boards: `pico2-midi` (USB) and `pico2-midi-uart`; firmware `midi`.
 Tasks: `task run:midi`, `task run:midi:uart`, `task ui:midi`,
 `task ui:midi:uart`.
+
+## USB HID
+
+The emulated host enumerates USB HID keyboard, mouse and gamepad interfaces,
+follows the configuration descriptor for interrupt endpoints, fetches the HID
+report descriptor and sends `SET_IDLE`. Reports are decoded from that descriptor,
+so composite devices (for example TinyGo's keyboard + mouse + media descriptor)
+and custom gamepad layouts work without a hardcoded report format.
+
+**Headless.** `-usb-hid` logs every decoded report; `-hid-out HEX` sends one
+host-to-device output report once the interrupt OUT endpoint is armed (keyboard
+LEDs are `02 01` for NumLock in TinyGo's descriptor).
+
+```sh
+rp2350sim -fw build/hid.elf -seconds 3 -usb-hid
+rp2350sim -fw build/hid.elf -seconds 3 -usb-hid -hid-out 0201
+rp2350sim -fw build/hidgamepad.elf -seconds 3 -usb-hid
+```
+
+Reports appear as `kind=keyboard|mouse|gamepad` with decoded text (`keys=A`,
+`buttons=left dx=12`, `buttons=1 hat=right x=-12000`) and raw hex. The host
+supports multiple HID interfaces and report IDs; the descriptor request uses the
+class-specific length from the HID descriptor. `-bootsel` holds QSPI CS low,
+which pico-sdk's HID composite example uses as its report trigger.
+
+**UI.** The **HID** tab appears once an interface enumerates. It lists reports
+newest first, shows the interface endpoints, and offers keyboard LED toggles plus
+a generic output-report hex field for gamepad feedback. The firmware is the USB
+device; the emulator is the host, so the monitor shows device-to-host reports and
+the controls send host-to-device output reports.
+
+Reference firmware: `hid` (TinyGo keyboard + mouse), `hidgamepad` (TinyGo
+joystick). Tasks: `task run:hid`, `task run:hidgamepad`,
+`task ui:hid`.
 
 ## Oscilloscope
 

@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	hexpkg "encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -160,6 +161,7 @@ func main() {
 		busWait     = flag.Duration("bus-wait", 2*time.Second, "I2C/SPI TCP bridge first-client wait")
 		stopOnMMIO  = flag.Bool("strict-mmio", false, "halt on the first unmapped peripheral access")
 		core1       = flag.Bool("core1", true, "start core 1")
+		bootsel     = flag.Bool("bootsel", false, "hold BOOTSEL/QSPI CS low (the bootrom samples it at reset)")
 		quiet       = flag.Bool("quiet", false, "suppress the firmware header and final summary")
 		traceN      = flag.Int("trace", 0, "trace the first N instructions")
 		traceLast   = flag.Bool("trace-last", false, "dump the last 64 instructions on a fault")
@@ -213,6 +215,8 @@ func main() {
 		audioPWM    = flag.Int("audio-pwm", -1, "decode PWM/GPIO audio on this GPIO")
 		audioRate   = flag.Int("audio-rate", 48000, "audio sample rate in Hz")
 		usbMIDI     = flag.Bool("usb-midi", false, "enable the USB-MIDI class endpoint")
+		usbHID      = flag.Bool("usb-hid", false, "log decoded USB HID reports (keyboard, mouse, gamepad)")
+		hidOut      = flag.String("hid-out", "", "send one host-to-device HID report after enumeration (hex)")
 		midiUART    = flag.Int("midi-uart", -1, "tap this UART (0/1) as 31250-baud MIDI")
 		midiMonitor = flag.Bool("midi-monitor", false, "log parsed MIDI messages")
 		midiUDP     = flag.String("midi-udp", "", "bidirectional UDP-MIDI endpoint (e.g. 127.0.0.1:5004)")
@@ -457,6 +461,9 @@ func main() {
 			log.Error("unsupported flash image", slog.String("path", *flashIn), slog.Any("err", err))
 			exit(1)
 		}
+	}
+	if *bootsel {
+		c.SetBootsel(true)
 	}
 	c.Boot()
 	if !*core1 {
@@ -1023,12 +1030,20 @@ func main() {
 	// Console input: USB CDC is flow-controlled by the emulated host, UART0 is
 	// queue-safe, so stdin and -input feed both without disturbing the CPU.
 	var usbPending []byte
+	var hidPending []byte
+	flushHIDLocked := func() {
+		if len(hidPending) > 0 && c.USBHIDReady() {
+			c.SendUSBHID(hidPending)
+			hidPending = nil
+		}
+	}
 	flushUSBLocked := func() {
 		for len(usbPending) > 0 && c.USBCDCReady() {
 			n := min(len(usbPending), 64)
 			c.SendUSBCDC(usbPending[:n])
 			usbPending = usbPending[n:]
 		}
+		flushHIDLocked()
 	}
 	flushUSB := func() {
 		debugMu.Lock()
@@ -1126,6 +1141,23 @@ func main() {
 				exit(2)
 			}
 		}
+	}
+	if *usbHID {
+		c.SetUSBHID(func(ev rp2350.USBHIDEvent) {
+			log.Info("usb hid",
+				slog.Int("interface", ev.Interface),
+				slog.String("kind", ev.Kind),
+				slog.String("report", ev.Text),
+				slog.String("bytes", fmt.Sprintf("% x", ev.Data)))
+		})
+	}
+	if *hidOut != "" {
+		data, err := hexpkg.DecodeString(strings.TrimSpace(*hidOut))
+		if err != nil {
+			log.Error("hid-out", slog.Any("err", err))
+			exit(2)
+		}
+		hidPending = data
 	}
 	if *keepAfter {
 		c.ContinueAfterHalt = true

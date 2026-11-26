@@ -4,7 +4,7 @@ rp2350sim is a Raspberry Pi RP2350 (Pico 2 and compatible boards) emulator for d
 
 
 Status: runs real programs end to end, package initialisation, the task
-scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, UART, SPI with DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a CST816D touch controller, a QMI8658 IMU, a microSD card model that can be backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, the OTP array (fuses, Hamming ECC, page locks, bootrom access), and optional QSPI PSRAM (1-16 MiB on QMI CS1, with configurable access latency).
+scheduler, `time.Sleep`, GPIO, USB CDC `println`/panic output, USB HID keyboard/mouse/gamepad reports, UART, SPI with DMA, PWM, ADC, I2C, PIO (with a WS2812B wire decoder), ST7789 displays, a CST816D touch controller, a QMI8658 IMU, a microSD card model that can be backed by a real host directory, W5500 Ethernet, plus a W6300 driver for the PoE board, the OTP array (fuses, Hamming ECC, page locks, bootrom access), and optional QSPI PSRAM (1-16 MiB on QMI CS1, with configurable access latency).
 Stock **Pico SDK C**
 firmware boots through the same vector table and runs its runtime, UART stdio, GPIO, alarms and multicore; single-precision FPU is supported. The Cortex-M33 interpreter is checked against QEMU instruction by instruction.
 
@@ -97,6 +97,8 @@ Useful flags:
 | `-list-presets` | print the built-in device registry |
 | `-continue-after-halt` | keep PIO/PWM/DMA running after a core halts (firmware that returns from `main`) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
+| `-bootsel` | hold BOOTSEL/QSPI CS low at boot and during the run |
+| `-usb-hid`, `-hid-out HEX` | log decoded HID reports / send a host-to-device HID output report |
 | `-sample N` | print the PC in 10M-cycle chunks |
 | `-cpuprofile PATH` | write a CPU profile |
 | `-input-file FILE`, `-input-at D`, `-stdin` | scripted console input |
@@ -260,6 +262,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
 | `task run:echo` | echo injected console input through USB CDC |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
+| `task run:hid`, `run:hidgamepad` | log decoded USB HID keyboard/mouse or gamepad reports |
 | `task run:w5500` | run the W5500 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |
@@ -342,7 +345,8 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 
 - The emulated CPU is the Cortex-M33 (thumbv8m.main); there is no RISC-V path.
   TinyGo `-target=pico2` emits Arm, and that is the contract.
-- Missing peripherals: USB host.
+- Missing peripherals: USB host mode. The RP2350 USB controller is modelled
+  as a device, with CDC, MIDI and HID classes enumerated by the emulated host.
 - The default `pico2` build does not launch core 1. With
   `tinygo build -scheduler=cores` the runtime starts core 1 through the SIO
   FIFO; both cores then run tasks (see `firmware/cores` and `task run:cores`).

@@ -1,6 +1,39 @@
 package rp2350
 
-import "testing"
+import (
+	"testing"
+
+	hidpkg "github.com/akhenakh/rp2350sim/internal/hid"
+)
+
+// hidKeyboardReport is a compact keyboard report descriptor: report ID 2,
+// modifiers, reserved byte and six key slots.
+var hidKeyboardReport = []byte{
+	0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x02,
+	0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7,
+	0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
+	0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
+	0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0xFF,
+	0x05, 0x07, 0x19, 0x00, 0x29, 0xFF, 0x81, 0x00,
+	0xC0,
+}
+
+func hidConfigDescriptor() []byte {
+	desc := []byte{
+		9, 2, 0, 0, 3, 1, 0, 0x80, 50, // configuration, 3 interfaces
+		9, 4, 0, 0, 1, 0x02, 0x02, 0, 0, // CDC control
+		7, 5, 0x81, 0x03, 8, 0, 0xFF, // notification EP1 IN
+		9, 4, 1, 0, 2, 0x0A, 0, 0, 0, // CDC data
+		7, 5, 0x02, 0x02, 64, 0, 0, // EP2 OUT
+		7, 5, 0x82, 0x02, 64, 0, 0, // EP2 IN
+		9, 4, 2, 0, 2, 0x03, 0, 0, 0, // HID interface 2
+		9, 0x21, 0x11, 0x01, 0, 1, 0x22, 50, 0, // report descriptor, 50 bytes
+		7, 5, 0x83, 0x03, 64, 0, 1, // HID EP3 IN
+		7, 5, 0x03, 0x03, 64, 0, 1, // HID EP3 OUT
+	}
+	desc[2] = byte(len(desc))
+	return desc
+}
 
 // TestUSBDPRAMAccess checks that the DPRAM window behaves like byte-addressed
 // memory through the bus (the firmware writes endpoint buffers with copy()).
@@ -414,6 +447,96 @@ func TestUSBSetupClearsEP0StallArm(t *testing.T) {
 	}
 	if got := c.Read32(usbRegsBase + usbEPSTALLARM); got != 0 {
 		t.Fatalf("EP0 stall arm after SETUP = %#x", got)
+	}
+}
+
+func TestUSBParseConfigHID(t *testing.T) {
+	c := New()
+	u := c.usb
+	u.parseConfig(hidConfigDescriptor())
+	if !u.hasCDC {
+		t.Fatal("CDC interface was not detected")
+	}
+	if u.cdcNotify != 1 || u.cdcOut != 2 || u.cdcIn != 2 {
+		t.Fatalf("CDC endpoints = %d/%d/%d", u.cdcNotify, u.cdcOut, u.cdcIn)
+	}
+	if len(u.hids) != 1 {
+		t.Fatalf("HID interfaces = %d, want 1", len(u.hids))
+	}
+	h := u.hids[0]
+	if h.number != 2 || h.inEP != 3 || h.outEP != 3 || h.reportLen != 50 {
+		t.Fatalf("HID interface = %+v", h)
+	}
+	// The tail must ask for the report descriptor and send SET_IDLE.
+	u.requests = append(u.requests[:0], hostEnumerationBase...)
+	u.buildTail()
+	report, idle := false, false
+	for _, r := range u.requests {
+		if r.reqType == 0x81 && r.request == 6 && r.value == 0x2200 && r.index == 2 && r.length == 50 {
+			report = true
+		}
+		if r.reqType == 0x21 && r.request == 10 && r.index == 2 {
+			idle = true
+		}
+	}
+	if !report || !idle {
+		t.Fatalf("tail missing HID requests: report=%v idle=%v", report, idle)
+	}
+}
+
+func TestUSBHIDRoutingAndSend(t *testing.T) {
+	c := New()
+	u := c.usb
+	u.parseConfig(hidConfigDescriptor())
+	u.state = usbHostRunning
+	// The CDC/MIDI defaults also use EP2/EP3; HID must take priority.
+	u.midiIn = 3
+	u.setHIDReport(2, hidKeyboardReport)
+
+	var got USBHIDEvent
+	c.SetUSBHID(func(ev USBHIDEvent) { got = ev })
+	report := []byte{2, 0x02, 0, 0x04, 0, 0, 0, 0, 0}
+	u.writeBytes(usbBufDataOff(3, true), report)
+	u.setWord(usbBufCtrlOff(3), uint32(len(report))|usbBufFull|usbBufAvail)
+	u.pollEndpoints(c)
+	if got.Kind != "keyboard" || got.ReportID != 2 {
+		t.Fatalf("HID event = %+v", got)
+	}
+	if got.Text == "" || got.Text[:3] != "mod" {
+		t.Fatalf("HID text = %q", got.Text)
+	}
+
+	// Host-to-device LED report.
+	u.setWord(usbBufCtrlOffOut(3), usbBufAvail)
+	if !c.USBHIDReady() {
+		t.Fatal("HID OUT endpoint not ready")
+	}
+	if !c.SendUSBHID([]byte{2, 0x01}) {
+		t.Fatal("SendUSBHID refused an armed endpoint")
+	}
+	if out := u.word(usbBufCtrlOffOut(3)); out&usbBufFull == 0 || out&0x3FF != 2 {
+		t.Fatalf("HID OUT control = %#x", out)
+	}
+	if data := u.readBytes(usbBufDataOff(3, false), 2); string(data) != "\x02\x01" {
+		t.Fatalf("HID OUT data = % x", data)
+	}
+}
+
+func TestUSBHIDReportDescriptorKinds(t *testing.T) {
+	c := New()
+	u := c.usb
+	u.parseConfig(hidConfigDescriptor())
+	u.setHIDReport(2, hidKeyboardReport)
+	infos := c.USBHIDInterfaces()
+	if len(infos) != 1 {
+		t.Fatalf("interfaces = %d", len(infos))
+	}
+	info := infos[0]
+	if len(info.Kinds) != 1 || info.Kinds[0] != string(hidpkg.Keyboard) {
+		t.Fatalf("kinds = %v", info.Kinds)
+	}
+	if info.ReportID != 2 || info.KeyboardReportID != 2 {
+		t.Fatalf("report IDs = %d/%d", info.ReportID, info.KeyboardReportID)
 	}
 }
 

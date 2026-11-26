@@ -3,7 +3,7 @@
 `rp2350sim-ui` is a Shirei desktop application that wraps the same emulator as
 the headless runner. It starts with a board picker, attaches that board's
 devices, and exposes the live machine through tabs: GPIO, LCD, DVI, sensors,
-Ethernet, LEDs, scope, logic analyzer, audio, MIDI, OTP, built-in bus presets,
+Ethernet, LEDs, scope, logic analyzer, audio, MIDI, HID, OTP, built-in bus presets,
 Bus Pirate terminals, the debugger and the firmware console. The optional
 Source/Build drawer adds a single-file editor and a live-reload build loop.
 
@@ -395,6 +395,24 @@ messages use the same USB-MIDI or UART endpoint as the headless runner. Board
 changes flush Note-Off/All-Notes-Off to the old transport before switching.
 
 ![MIDI tab](images/midi.png)
+
+### HID
+
+Shown once the firmware enumerates a USB HID interface (keyboard, mouse,
+gamepad or a composite). The monitor lists decoded reports newest first with the
+virtual cycle, kind, readable text and raw bytes. The header names the
+interfaces, their report kinds and interrupt endpoints.
+
+The emulator is the USB host, so the monitor shows device-to-host reports. The
+bottom row sends host-to-device output: **Num/Caps/Scroll** keyboard LEDs and a
+generic output-report hex field (useful for gamepad rumble/feedback). Keyboard
+LEDs use the report ID from the report descriptor; a boot keyboard without report
+IDs gets the one-byte LED report.
+
+```sh
+task ui:hid          # TinyGo keyboard + mouse firmware
+task ui:hidgamepad   # TinyGo joystick firmware
+```
 
 ### OTP
 

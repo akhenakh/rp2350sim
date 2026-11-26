@@ -241,9 +241,10 @@ output or bit timing.
   alarm and timer IRQ (45). `firmware/c/aontimer` exercises `pico_aon_timer`;
   deep-sleep power state sequencing is not modelled.
 
-## Audio and MIDI
-Both are host-side taps on GPIO or USB; no board wiring is needed beyond the
-pins the firmware drives.
+## Audio, MIDI and HID
+
+Audio, MIDI and HID are host-side taps on GPIO or USB; no board wiring is needed
+beyond the pins the firmware drives.
 
 - **Audio:** `-audio-pwm PIN`, `-audio-i2s bclk,lrclk,data[,bits]` or
   `-audio-pdm data,clock[,decimation]`, plus `-audio-out out.wav`. UI boards
@@ -253,6 +254,10 @@ pins the firmware drives.
   31250-baud UART, `-midi-monitor` and `-midi-udp ADDR` for the bridge. UI
   boards `pico2-midi` (USB-MIDI) and `pico2-midi-uart` (UART1 GP4/GP5).
   Reference firmware: `firmware/midi` (USB note traffic plus UART echo).
+- **HID:** `-usb-hid` decodes keyboard, mouse and gamepad reports;
+  `-hid-out HEX` sends one host-to-device output report such as keyboard LEDs.
+  HID is firmware-driven, so no board YAML key is needed. Reference firmware:
+  `firmware/hid` (keyboard + mouse) and `firmware/hidgamepad` (TinyGo joystick).
 
 ![Audio tab](images/audio.png)
 
@@ -359,6 +364,8 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/ws2812` | WS2812B strip over PIO |
 | `firmware/audio` | GPIO square wave for the audio decoder and WAV export |
 | `firmware/midi` | USB-MIDI traffic and UART MIDI echo |
+| `firmware/hid` | USB HID keyboard + mouse reports |
+| `firmware/hidgamepad` | USB HID gamepad reports |
 | `firmware/cores` | `-scheduler=cores` and core 1 |
 | `firmware/echo` | USB CDC console input |
 | `firmware/uart` | UART output for the logic analyzer |

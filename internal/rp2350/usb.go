@@ -3,6 +3,8 @@ package rp2350
 import (
 	"fmt"
 	"log/slog"
+
+	hidpkg "github.com/akhenakh/rp2350sim/internal/hid"
 )
 
 // usbBlock models the RP2350 USB device controller together with enough of the
@@ -44,6 +46,19 @@ type usbBlock struct {
 	// composite descriptor and by pico-sdk TinyUSB MIDI descriptors.
 	midi bool
 
+	// HID interfaces discovered from the configuration descriptor. Each one
+	// has its own interrupt IN/OUT endpoints and report descriptor.
+	hids []usbHIDInterface
+	// hasCDC reports whether the configuration has a CDC interface; the tail
+	// of enumeration sends SET_CONTROL_LINE_STATE/GET_LINE_CODING only then.
+	hasCDC bool
+
+	// requests is the dynamic enumeration sequence. The base entries are
+	// known before the configuration descriptor; the tail (strings, class
+	// requests, SET_CONFIGURATION) is appended once the interfaces are known.
+	requests  []setupRequest
+	tailBuilt bool
+
 	// Endpoint numbers discovered from the configuration descriptor. Defaults
 	// match TinyGo's CDC (EP1 notification, EP2 data) and CDCMIDI (EP3 MIDI)
 	// so a run still works if the descriptor is truncated or malformed.
@@ -68,6 +83,57 @@ type usbBlock struct {
 
 	// OnCDC receives bytes the firmware sends on the CDC data endpoint.
 	OnCDC func(b []byte)
+}
+
+// usbHIDInterface is one HID interface from the configuration descriptor.
+type usbHIDInterface struct {
+	number    int
+	subclass  byte
+	protocol  byte
+	reportLen int
+	inEP      int
+	outEP     int
+	desc      []byte
+	device    hidpkg.Device
+}
+
+// kinds lists the report kinds, falling back to the boot protocol when the
+// report descriptor was not fetched.
+func (h *usbHIDInterface) kinds() []hidpkg.Kind {
+	kinds := h.device.Kinds()
+	if len(kinds) > 0 {
+		return kinds
+	}
+	switch h.protocol {
+	case 1:
+		return []hidpkg.Kind{hidpkg.Keyboard}
+	case 2:
+		return []hidpkg.Kind{hidpkg.Mouse}
+	}
+	return nil
+}
+
+// USBHIDInterface is the UI/CLI view of one enumerated HID interface.
+type USBHIDInterface struct {
+	Interface        int
+	Kinds            []string
+	Subclass         uint8
+	Protocol         uint8
+	InEndpoint       int
+	OutEndpoint      int
+	ReportLength     int
+	ReportID         byte
+	KeyboardReportID byte
+	OutputReportID   byte
+}
+
+// USBHIDEvent is one HID input report from the firmware.
+type USBHIDEvent struct {
+	Interface int
+	Kind      string
+	ReportID  byte
+	Data      []byte
+	Text      string
 }
 
 type usbHostState int
@@ -327,6 +393,10 @@ func (u *usbBlock) reset() {
 	u.needStatus = false
 	u.statusSent = false
 	u.collected = u.collected[:0]
+	u.hids = u.hids[:0]
+	u.hasCDC = true
+	u.requests = append(u.requests[:0], hostEnumerationBase...)
+	u.tailBuilt = false
 	u.setEndpointDefaults()
 }
 
@@ -580,20 +650,53 @@ func (r setupRequest) bytes() [8]byte {
 	}
 }
 
-// hostEnumeration is the sequence a Linux host performs for a CDC ACM device.
-var hostEnumeration = []setupRequest{
+// hostEnumerationBase is the part of the sequence a Linux host performs before
+// it knows the configuration. The tail (strings, SET_CONFIGURATION, class
+// requests for CDC and HID) depends on the interfaces and is appended by
+// buildTail after the configuration descriptor is parsed.
+var hostEnumerationBase = []setupRequest{
 	{0x80, 6, 0x0100, 0, 64},  // GET_DESCRIPTOR device
 	{0x00, 5, 1, 0, 0},        // SET_ADDRESS 1
 	{0x80, 6, 0x0100, 0, 18},  // GET_DESCRIPTOR device (full)
 	{0x80, 6, 0x0200, 0, 9},   // GET_DESCRIPTOR configuration header
 	{0x80, 6, 0x0200, 0, 255}, // GET_DESCRIPTOR configuration
-	{0x80, 6, 0x0300, 0, 255}, // GET_DESCRIPTOR string 0
-	{0x80, 6, 0x0301, 0, 255}, // manufacturer
-	{0x80, 6, 0x0302, 0, 255}, // product
-	{0x80, 6, 0x0303, 0, 255}, // serial
-	{0x00, 9, 1, 0, 0},        // SET_CONFIGURATION 1
-	{0x21, 0x22, 0x03, 0, 0},  // SET_CONTROL_LINE_STATE: DTR | RTS
-	{0xA1, 0x21, 0, 0, 7},     // GET_LINE_CODING
+}
+
+// buildTail appends the requests that depend on the parsed configuration. It
+// runs once, after the configuration descriptor. A truncated descriptor keeps
+// the CDC default so the pre-HID behaviour still enumerates.
+func (u *usbBlock) buildTail() {
+	if u.tailBuilt {
+		return
+	}
+	u.tailBuilt = true
+	u.requests = append(u.requests,
+		setupRequest{0x80, 6, 0x0300, 0, 255}, // string 0
+		setupRequest{0x80, 6, 0x0301, 0, 255}, // manufacturer
+		setupRequest{0x80, 6, 0x0302, 0, 255}, // product
+		setupRequest{0x80, 6, 0x0303, 0, 255}, // serial
+		setupRequest{0x00, 9, 1, 0, 0},        // SET_CONFIGURATION 1
+	)
+	if u.hasCDC {
+		u.requests = append(u.requests,
+			setupRequest{0x21, 0x22, 0x03, 0, 0}, // SET_CONTROL_LINE_STATE: DTR | RTS
+			setupRequest{0xA1, 0x21, 0, 0, 7},    // GET_LINE_CODING
+		)
+	}
+	for i := range u.hids {
+		h := &u.hids[i]
+		length := h.reportLen
+		if length <= 0 {
+			length = 255
+		}
+		u.requests = append(u.requests,
+			// GET_DESCRIPTOR(HID report): class, interface, report type.
+			setupRequest{0x81, 6, 0x2200, uint16(h.number), uint16(length)},
+			// SET_IDLE: every HID implementation we support acknowledges it,
+			// and TinyGo's handler expects the class request before reports.
+			setupRequest{0x21, 10, 0, uint16(h.number), 0},
+		)
+	}
 }
 
 // tick advances the host state machine. It is called once per chip cycle.
@@ -629,12 +732,12 @@ func (u *usbBlock) tick(c *Chip) {
 }
 
 func (u *usbBlock) beginStep() {
-	if u.step >= len(hostEnumeration) {
+	if u.step >= len(u.requests) {
 		u.state = usbHostRunning
 		u.chip.Logger.Debug("usb enumeration complete")
 		return
 	}
-	req := hostEnumeration[u.step]
+	req := u.requests[u.step]
 	setup := req.bytes()
 	u.writeBytes(0, setup[:4])
 	u.writeBytes(4, setup[4:])
@@ -687,7 +790,7 @@ func (u *usbBlock) writeEP0OUT(n int, data1 bool) {
 }
 
 func (u *usbBlock) pollControl() {
-	req := hostEnumeration[u.step]
+	req := u.requests[u.step]
 	in := req.reqType&0x80 != 0
 
 	// A control-IN data stage ends with an OUT zero-length status packet from
@@ -785,8 +888,8 @@ func (u *usbBlock) pollControl() {
 }
 
 func (u *usbBlock) finishStep() {
-	if u.step < len(hostEnumeration) {
-		req := hostEnumeration[u.step]
+	if u.step < len(u.requests) {
+		req := u.requests[u.step]
 		if req.request == 6 && len(u.collected) >= 8 {
 			u.chip.Logger.Debug("usb descriptor",
 				slog.Int("value", int(req.value)),
@@ -795,12 +898,18 @@ func (u *usbBlock) finishStep() {
 		}
 		// The full configuration descriptor (not the 9-byte header) carries the
 		// interface classes and endpoints the host must address.
-		if req.request == 6 && req.value == 0x0200 && req.length > 9 && len(u.collected) >= 9 {
-			u.parseConfig(u.collected)
+		if req.request == 6 && req.value == 0x0200 && req.length > 9 {
+			if len(u.collected) >= 9 {
+				u.parseConfig(u.collected)
+			}
+			u.buildTail()
+		}
+		if req.reqType == 0x81 && req.request == 6 && req.value == 0x2200 {
+			u.setHIDReport(int(req.index), u.collected)
 		}
 	}
 	u.step++
-	if u.step < len(hostEnumeration) {
+	if u.step < len(u.requests) {
 		u.beginStep()
 		return
 	}
@@ -808,8 +917,8 @@ func (u *usbBlock) finishStep() {
 	u.chip.Logger.Debug("usb enumeration complete")
 }
 
-// parseConfig discovers the CDC and MIDI endpoints from the configuration
-// descriptor. TinyGo's CDCMIDI and pico-sdk TinyUSB are free to number their
+// parseConfig discovers the CDC, MIDI and HID endpoints from the configuration
+// descriptor. TinyGo's composites and pico-sdk TinyUSB are free to number their
 // interfaces and endpoints differently; the host must follow the descriptor
 // rather than assume EP2/EP3.
 func (u *usbBlock) parseConfig(desc []byte) {
@@ -817,9 +926,13 @@ func (u *usbBlock) parseConfig(desc []byte) {
 	if len(desc) < 9 || desc[1] != 2 { // CONFIGURATION
 		return
 	}
+	u.hids = u.hids[:0]
+	u.hasCDC = false
 	total := int(desc[2]) | int(desc[3])<<8
 	total = min(total, len(desc))
-	var class, subclass byte
+	var class, subclass, protocol byte
+	curHID := -1
+	foundMIDI := false
 	found := false
 	for off := 0; off+2 <= total; {
 		blen := int(desc[off])
@@ -830,7 +943,25 @@ func (u *usbBlock) parseConfig(desc []byte) {
 		switch typ {
 		case 4: // INTERFACE
 			if blen >= 9 {
-				class, subclass = desc[off+5], desc[off+6]
+				class, subclass, protocol = desc[off+5], desc[off+6], desc[off+7]
+				curHID = -1
+				if class == 0x03 && desc[off+3] == 0 { // HID, alt 0
+					u.hids = append(u.hids, usbHIDInterface{
+						number:   int(desc[off+2]),
+						subclass: subclass,
+						protocol: protocol,
+					})
+					curHID = len(u.hids) - 1
+					found = true
+				}
+				if class == 0x02 || class == 0x0A {
+					u.hasCDC = true
+					found = true
+				}
+			}
+		case 0x21: // HID class descriptor (report length)
+			if curHID >= 0 && blen >= 9 {
+				u.hids[curHID].reportLen = int(desc[off+7]) | int(desc[off+8])<<8
 			}
 		case 5: // ENDPOINT
 			if blen >= 7 {
@@ -839,6 +970,13 @@ func (u *usbBlock) parseConfig(desc []byte) {
 				in := addr&0x80 != 0
 				ep := int(addr & 0x0F)
 				switch {
+				case curHID >= 0 && xfer == 3:
+					if in {
+						u.hids[curHID].inEP = ep
+					} else {
+						u.hids[curHID].outEP = ep
+					}
+					found = true
 				// CDC data interface: bulk IN/OUT.
 				case class == 0x0A:
 					if in {
@@ -858,11 +996,18 @@ func (u *usbBlock) parseConfig(desc []byte) {
 					} else {
 						u.midiOut = ep
 					}
+					foundMIDI = true
 					found = true
 				}
 			}
 		}
 		off += blen
+	}
+	if !u.hasCDC {
+		u.cdcNotify, u.cdcIn, u.cdcOut = 0, 0, 0
+	}
+	if !foundMIDI {
+		u.midiIn, u.midiOut = 0, 0
 	}
 	if found {
 		u.chip.Logger.Debug("usb endpoints",
@@ -870,13 +1015,63 @@ func (u *usbBlock) parseConfig(desc []byte) {
 			slog.Int("cdc_in", u.cdcIn),
 			slog.Int("cdc_out", u.cdcOut),
 			slog.Int("midi_in", u.midiIn),
-			slog.Int("midi_out", u.midiOut))
+			slog.Int("midi_out", u.midiOut),
+			slog.Int("hid", len(u.hids)))
 	}
 }
 
+// setHIDReport stores and parses the report descriptor for one interface.
+func (u *usbBlock) setHIDReport(iface int, desc []byte) {
+	for i := range u.hids {
+		h := &u.hids[i]
+		if h.number != iface {
+			continue
+		}
+		h.desc = append(h.desc[:0], desc...)
+		h.device = hidpkg.Parse(desc)
+		kinds := h.kinds()
+		names := make([]string, len(kinds))
+		for j, k := range kinds {
+			names[j] = string(k)
+		}
+		u.chip.Logger.Debug("usb hid report descriptor",
+			slog.Int("interface", iface),
+			slog.Int("in_ep", h.inEP),
+			slog.Int("out_ep", h.outEP),
+			slog.Int("bytes", len(desc)),
+			slog.Any("kinds", names),
+			slog.Any("report_ids", h.device.ReportIDs()))
+		return
+	}
+}
+
+// hidForIn returns the HID interface using an IN endpoint.
+func (u *usbBlock) hidForIn(ep int) *usbHIDInterface {
+	if ep == 0 {
+		return nil
+	}
+	for i := range u.hids {
+		if u.hids[i].inEP == ep {
+			return &u.hids[i]
+		}
+	}
+	return nil
+}
+
+func (u *usbBlock) hidForOut() *usbHIDInterface {
+	for i := range u.hids {
+		if u.hids[i].outEP > 0 {
+			return &u.hids[i]
+		}
+	}
+	return nil
+}
+
 // pollEndpoints drains the IN packets the firmware arms for the descriptors'
-// endpoints: CDC data goes to the console, MIDI to the MIDI bridge. CDC
-// notification (serial state) packets are acknowledged and ignored.
+// endpoints: HID reports go to the HID consumer, CDC data to the console, MIDI
+// to the MIDI bridge. HID is checked first because a composite can reuse the
+// default CDC/MIDI endpoint numbers (TinyGo uses EP3 for both HID and MIDI).
+// CDC notification (serial state) packets are acknowledged and ignored.
 func (u *usbBlock) pollEndpoints(c *Chip) {
 	for ep := range 16 {
 		if !u.epInReady(ep) {
@@ -884,6 +1079,27 @@ func (u *usbBlock) pollEndpoints(c *Chip) {
 		}
 		data := u.takeIN(ep)
 		if len(data) == 0 {
+			continue
+		}
+		if h := u.hidForIn(ep); h != nil {
+			if c.OnUSBHID != nil {
+				id, kind, text := h.device.Decode(data)
+				if kind == hidpkg.Other {
+					switch h.protocol {
+					case 1:
+						kind = hidpkg.Keyboard
+					case 2:
+						kind = hidpkg.Mouse
+					}
+				}
+				c.OnUSBHID(USBHIDEvent{
+					Interface: h.number,
+					Kind:      string(kind),
+					ReportID:  id,
+					Data:      data,
+					Text:      text,
+				})
+			}
 			continue
 		}
 		switch ep {
@@ -930,6 +1146,24 @@ func (u *usbBlock) sendOUT(ep int, data []byte) bool {
 // a host-to-device packet.
 func (u *usbBlock) MIDIReady() bool {
 	return u.midi && u.state == usbHostRunning && u.epOutReady(u.midiOut)
+}
+
+// HIDReady reports whether a HID interface has armed an interrupt OUT endpoint
+// for a host-to-device report (keyboard LEDs, gamepad feedback).
+func (u *usbBlock) HIDReady() bool {
+	if u.state != usbHostRunning {
+		return false
+	}
+	h := u.hidForOut()
+	return h != nil && u.epOutReady(h.outEP)
+}
+
+// SendHID publishes one host-to-device HID report on the first OUT endpoint.
+func (u *usbBlock) SendHID(data []byte) bool {
+	if !u.HIDReady() {
+		return false
+	}
+	return u.sendOUT(u.hidForOut().outEP, data)
 }
 
 // SendMIDI queues a host-to-device USB-MIDI packet on the MIDI OUT endpoint.

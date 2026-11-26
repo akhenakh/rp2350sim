@@ -60,6 +60,8 @@ tasks:
       - firmware:blinky
       - firmware:audio
       - firmware:midi
+      - firmware:hid
+      - firmware:hidgamepad
       - firmware:debugvars
       - firmware:lcd
       - firmware:touchlcd
@@ -129,6 +131,18 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/midi.elf -seconds 1.2 -midi-uart 1 -midi-monitor'
 
+  run:hid:
+    desc: Run the USB HID keyboard + mouse demo with the report monitor
+    deps: [build, firmware:hid]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/hid.elf -seconds 3 -usb-hid'
+
+  run:hidgamepad:
+    desc: Run the USB HID gamepad demo with the report monitor
+    deps: [build, firmware:hidgamepad]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/hidgamepad.elf -seconds 3 -usb-hid'
+
   firmware:blinky:
     desc: Build the TinyGo blinky firmware for the Pico 2
     dir: firmware/blinky
@@ -164,6 +178,30 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/midi.elf .'
+
+  firmware:hid:
+    desc: Build the TinyGo USB HID keyboard + mouse example
+    dir: firmware/hid
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/hid.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/hid.elf .'
+
+  firmware:hidgamepad:
+    desc: Build the TinyGo USB HID gamepad example
+    dir: firmware/hidgamepad
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/hidgamepad.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/hidgamepad.elf .'
 
   firmware:blinky:uf2:
     desc: Build the blinky firmware as a UF2 image for flashing a real board
@@ -633,6 +671,20 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-midi-uart --tab midi '../../{{.BUILD}}/midi.elf'
+
+  ui:hid:
+    desc: Run the UI on the USB HID keyboard + mouse firmware and open the HID tab
+    deps: [firmware:hid]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab hid '../../{{.BUILD}}/hid.elf'
+
+  ui:hidgamepad:
+    desc: Run the UI on the USB HID gamepad firmware and open the HID tab
+    deps: [firmware:hidgamepad]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab hid '../../{{.BUILD}}/hidgamepad.elf'
 
   ui:debug:
     desc: Open the Debug tab on the C debugger fixture at debug_marker
