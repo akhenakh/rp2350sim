@@ -154,6 +154,12 @@ func RootView() {
 			return
 		}
 		toolbar(snap)
+		if snap.Hang != "" {
+			Container(Attrs(Row, CrossMid, Gap(10), Pad4(4, 10, 4, 10), Background(140, 40, 18, 1)), func() {
+				Label("HANG", FontSize(12), FontWeight(700), TextColor(50, 20, 90, 1))
+				Label(snap.Hang, FontSize(12), TextColor(50, 20, 95, 1))
+			})
+		}
 		// The toolbar's Board… button clears the selection mid-frame; show
 		// the picker instead of the tabs for this frame.
 		if selectedBoard == nil {

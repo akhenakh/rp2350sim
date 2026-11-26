@@ -47,6 +47,9 @@ target_link_libraries(otp pico_stdlib)
 add_executable(debug debug/main.c)
 target_link_libraries(debug pico_stdlib)
 
+add_executable(hang hang/main.c)
+target_link_libraries(hang pico_stdlib)
+
 add_executable(psram psram/main.c)
 target_link_libraries(psram pico_stdlib hardware_psram)
 pico_override_psram_size(psram 8388608)
@@ -69,7 +72,7 @@ add_executable(ota ota/main.c ${OTA2_IMAGE_C})
 target_link_libraries(ota pico_stdlib hardware_flash)
 add_dependencies(ota ota2)
 
-foreach(app hello blinky floatdemo dcp multicore otp psram debug ota ota2 rtosctx inputs)
+foreach(app hello blinky floatdemo dcp multicore otp psram debug hang ota ota2 rtosctx inputs)
     pico_enable_stdio_uart(${app} 1)
     pico_enable_stdio_usb(${app} 0)
     pico_add_extra_outputs(${app})

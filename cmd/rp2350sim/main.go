@@ -22,6 +22,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/gdb"
+	"github.com/akhenakh/rp2350sim/internal/hang"
 	"github.com/akhenakh/rp2350sim/internal/logging"
 	"github.com/akhenakh/rp2350sim/internal/m33"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -202,6 +203,7 @@ func main() {
 		wallLimit   = flag.Duration("wall-timeout", 0, "fail after this much wall time (0 = unlimited)")
 		summaryOut  = flag.String("summary-file", "", "write a JSON run summary to this path")
 		allowHalt   = flag.Bool("allow-halt", false, "exit 0 even when a core halts")
+		hangCycles  = flag.Uint64("hang-cycles", 30_000_000, "tight-loop detection threshold in cycles (0 disables)")
 		keepAfter   = flag.Bool("continue-after-halt", false, "keep peripherals running after a core halts (PIO/PWM keep driving)")
 		serialTCP   = flag.String("serial-tcp", "", "bridge UARTs to TCP: uart:addr[,uart:addr] (use 127.0.0.1:0 for an automatic port)")
 		cpuProfile  = flag.String("cpuprofile", "", "write a CPU profile to this path")
@@ -468,6 +470,13 @@ func main() {
 	c.Boot()
 	if !*core1 {
 		c.CPU1.Parked = true
+	}
+	c.SetHangDetection(*hangCycles)
+	c.OnHang = func(info rp2350.HangInfo) {
+		log.Error("hang detected",
+			slog.String("why", hang.Describe(info, dbgInfo, c.PeekRegister)),
+			slog.Int("core", info.Core), slog.String("pc", hex(info.PC)),
+			slog.Uint64("cycles", info.Cycles))
 	}
 	var debugMu sync.Mutex
 	var gdbSrv *gdb.Server
@@ -1238,6 +1247,10 @@ func main() {
 				break
 			}
 			done := c.Run(n)
+			if c.Hang != nil {
+				debugMu.Unlock()
+				break
+			}
 			if midiBr != nil {
 				midiBr.tick()
 			}
@@ -1297,6 +1310,9 @@ func main() {
 				break
 			}
 			c.Run(10_000_000)
+			if c.Hang != nil {
+				break
+			}
 			if midiBr != nil {
 				midiBr.tick()
 			}

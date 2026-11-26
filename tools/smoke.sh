@@ -368,6 +368,8 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		out=$("$EMU" -fw "$BUILD/pico-c/rtosctx.elf" -seconds 2 -quiet \
 			-expect "rtosctx ok" -stop-on-expect 2>&1)
 		contains "C RTOS context switch" "rtosctx ok a=5 b=5 nested=1 crit=1" "$out"
+		out=$("$EMU" -fw "$BUILD/pico-c/hang.elf" -seconds 1 -hang-cycles 500000 2>&1)
+		contains "C hang detector" '"msg":"hang detected"' "$out"
 		out=$("$EMU" -fw "$BUILD/pico-c/inputs.elf" -seconds 0.5 -quiet 2>&1)
 		contains "C board inputs demo" "inputs: btn=0 sw=0 enc=0 boot=0" "$out"
 		contains "C board inputs float" "0.00 V" "$out"

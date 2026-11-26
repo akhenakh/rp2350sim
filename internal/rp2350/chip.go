@@ -48,6 +48,26 @@ const (
 )
 
 // Chip is one RP2350 device: two M33 cores, memory and peripherals.
+// HangInfo describes a detected tight poll loop.
+type HangInfo struct {
+	Core       int
+	PC         uint32
+	Cycles     uint64
+	LoopCycles uint64
+	MMIOAddr   uint32
+	MMIOVal    uint32
+}
+
+type hangTrack struct {
+	ring       [32]uint32
+	pos        int
+	count      int
+	loopCycles uint64
+	mmioAddr   uint32
+	mmioVal    uint32
+	reported   bool
+}
+
 type Chip struct {
 	Flash []byte
 	SRAM  []byte
@@ -200,6 +220,13 @@ type Chip struct {
 	pendingReset       bool
 	pendingResetAt     uint64
 	pendingResetReason string
+
+	// Hang detection: a tight PC loop that stops making progress, optionally
+	// polling one MMIO register. Zero disables it.
+	HangCycles uint64
+	Hang       *HangInfo
+	OnHang     func(HangInfo)
+	hang       [2]hangTrack
 
 	// Unhandled records accesses to unmapped peripheral addresses.
 	Unhandled map[uint32]uint32
@@ -578,6 +605,85 @@ func (c *Chip) Run(n uint64) uint64 {
 	return done
 }
 
+// SetHangDetection enables tight-loop detection after cycles of virtual time.
+// Zero disables it. It clears any previous report.
+func (c *Chip) SetHangDetection(cycles uint64) {
+	c.HangCycles = cycles
+	c.Hang = nil
+	c.hang = [2]hangTrack{}
+	c.Paused = false
+}
+
+// ClearHang clears a reported hang and resumes the cores.
+func (c *Chip) ClearHang() {
+	c.Hang = nil
+	c.hang = [2]hangTrack{}
+	c.Paused = false
+}
+
+// noteMMIO records the most recent peripheral read for hang diagnostics.
+func (c *Chip) noteMMIO(addr, val uint32) {
+	if c.HangCycles == 0 || c.Hang != nil {
+		return
+	}
+	core := c.core
+	if core < 0 || core > 1 {
+		return
+	}
+	c.hang[core].mmioAddr = addr &^ 3
+	c.hang[core].mmioVal = val
+}
+
+const hangSampleCycles = 64
+
+// hangSample checks a sampled PC for a tight loop. It runs on the emulator
+// thread from stepCore.
+func (c *Chip) hangSample(core int, pc uint32) {
+	if c.HangCycles == 0 || c.Hang != nil || c.Cycles&(hangSampleCycles-1) != 0 {
+		return
+	}
+	hs := &c.hang[core]
+	if hs.reported {
+		return
+	}
+	hs.ring[hs.pos] = pc
+	hs.pos = (hs.pos + 1) % len(hs.ring)
+	if hs.count < len(hs.ring) {
+		hs.count++
+	}
+	if hs.count < 16 {
+		return
+	}
+	seen := map[uint32]int{}
+	for i := 0; i < hs.count; i++ {
+		seen[hs.ring[i]]++
+	}
+	repeat := seen[pc]
+	if len(seen) > 8 || repeat < 4 {
+		hs.loopCycles = 0
+		return
+	}
+	hs.loopCycles += hangSampleCycles
+	if hs.loopCycles < c.HangCycles {
+		return
+	}
+	hs.reported = true
+	c.Hang = &HangInfo{
+		Core:       core,
+		PC:         pc,
+		Cycles:     c.Cycles,
+		LoopCycles: hs.loopCycles,
+		MMIOAddr:   hs.mmioAddr,
+		MMIOVal:    hs.mmioVal,
+	}
+	// Pause execution; peripherals and virtual time keep ticking so the UI can
+	// still show the state at the moment of the report.
+	c.Paused = true
+	if c.OnHang != nil {
+		c.OnHang(*c.Hang)
+	}
+}
+
 // canIdleSkip reports whether a jump to the next microsecond tick cannot
 // change any observable state: both cores are asleep, parked or halted, no DMA
 // or PIO engine is running, and the USB device is off. Interval samplers and
@@ -685,6 +791,7 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 		return
 	}
 	cpu.Step()
+	c.hangSample(c.core, cpu.R[15])
 	c.writeCore = -1
 }
 
@@ -894,6 +1001,9 @@ func (c *Chip) Reset() {
 	c.core = 0
 	c.writeCore = -1
 	c.pendingReset = false
+	c.Hang = nil
+	c.hang = [2]hangTrack{}
+	c.Paused = false
 	c.usbPoll = 0
 	c.pioLogN = 0
 	c.rewindPeriodicHooks()
@@ -1207,7 +1317,7 @@ func (c *Chip) Read8(addr uint32) uint8 {
 	if addr >= PeriphBase {
 		// Peripherals are word registers; byte and halfword accesses select
 		// within the containing word (the DPRAM is byte-addressed this way).
-		v := c.readMMIO(addr &^ 3)
+		v := c.readMMIOObserved(addr &^ 3)
 		return uint8(v >> ((addr & 3) * 8))
 	}
 	return c.unhandledRead8(addr)
@@ -1246,7 +1356,7 @@ func (c *Chip) Read16(addr uint32) uint16 {
 		return binary.LittleEndian.Uint16(c.ROM[addr:])
 	}
 	if addr >= PeriphBase {
-		v := c.readMMIO(addr &^ 3)
+		v := c.readMMIOObserved(addr &^ 3)
 		if addr&2 != 0 {
 			return uint16(v >> 16)
 		}
@@ -1283,7 +1393,7 @@ func (c *Chip) Read32(addr uint32) uint32 {
 		return binary.LittleEndian.Uint32(c.ROM[addr:])
 	}
 	if addr >= PeriphBase {
-		return c.readMMIO(addr)
+		return c.readMMIOObserved(addr)
 	}
 	return c.unhandledRead32(addr)
 }
@@ -1470,6 +1580,12 @@ func (c *Chip) regBlockFor(addr uint32) *regBlock {
 }
 
 // readMMIO dispatches a 32-bit peripheral read.
+func (c *Chip) readMMIOObserved(addr uint32) uint32 {
+	v := c.readMMIO(addr)
+	c.noteMMIO(addr, v)
+	return v
+}
+
 func (c *Chip) readMMIO(addr uint32) uint32 {
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
 		return c.sio.read(c, addr-SIOBase)

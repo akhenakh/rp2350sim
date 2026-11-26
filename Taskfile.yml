@@ -879,6 +879,7 @@ tasks:
       - 'build/otp.elf'
       - 'build/psram.elf'
       - 'build/debug.elf'
+      - 'build/hang.elf'
       - 'build/ota.elf'
       - 'build/ota2.elf'
       - 'build/usbhello.elf'
@@ -902,6 +903,32 @@ tasks:
     deps: [build, c:build]
     cmds:
       - '{{.EMU}} -fw firmware/c/build/rtosctx.elf -seconds 2 -quiet -expect "rtosctx ok a=5 b=5 nested=1 crit=1" -stop-on-expect'
+
+  c:hang:
+    desc: Run the deliberate PLL_USB poll loop and assert the hang detector
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/hang.elf -seconds 1 -hang-cycles 500000 2>&1 | grep -q "hang detected"'
+
+  run:hang:
+    desc: Run the hang-detector fixture and print the explanation
+    deps: [build, c:build]
+    cmds:
+      - '{{.EMU}} -fw firmware/c/build/hang.elf -seconds 1 -hang-cycles 500000'
+
+  ui:hang:
+    desc: Open the UI on the deliberate PLL hang and show the HANG explanation
+    deps: [build, c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 '../../firmware/c/build/hang.elf'
+
+  ui:hang:png:
+    desc: Render the HANG banner for the PLL_SYS poll loop to build/ui-hang.png
+    deps: [build, c:build]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --run 0.4 --png '../../{{.BUILD}}/ui-hang.png' '../../firmware/c/build/hang.elf'
 
   c:inputs:
     desc: Run the board-controls firmware with the default (released) inputs

@@ -18,6 +18,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
+	"github.com/akhenakh/rp2350sim/internal/hang"
 	"github.com/akhenakh/rp2350sim/internal/midi"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 	"go.hasen.dev/shirei"
@@ -78,6 +79,7 @@ type MachineState struct {
 	SD        *SDState
 	OTP       *OTPState
 	HID       []HIDDeviceState
+	Hang      string
 
 	// Inputs is a copy of the interactive board-control state, keyed by
 	// InputDef.ID.
@@ -222,6 +224,9 @@ type Emu struct {
 
 	hidEvents []HIDEvent
 	hidQueue  [][]byte
+
+	hang     *rp2350.HangInfo
+	hangText string
 
 	trigger LogicTrigger
 	frozen  frozenLogic
@@ -1133,6 +1138,8 @@ func (e *Emu) resetChip() {
 	e.i2cEvents = e.i2cEvents[:0]
 	e.hidEvents = e.hidEvents[:0]
 	e.hidQueue = e.hidQueue[:0]
+	e.hang = nil
+	e.hangText = ""
 	e.scope = nil
 	e.logic = nil
 	e.signals = e.signals[:0]
@@ -1354,6 +1361,12 @@ func (e *Emu) resetChip() {
 		appendConsole(b)
 		e.addUSBEvent(c.Cycles, true, b)
 	})
+	c.SetHangDetection(30_000_000)
+	c.OnHang = func(info rp2350.HangInfo) {
+		e.hang = &info
+		e.hangText = hang.Describe(info, e.debugInfo, c.PeekRegister)
+		e.running = false
+	}
 	c.SetUSBHID(func(ev rp2350.USBHIDEvent) {
 		e.hidEvents = append(e.hidEvents, HIDEvent{
 			Cycle:     c.Cycles,
@@ -2049,6 +2062,10 @@ func (e *Emu) RunFor(cycles uint64) {
 		e.flushUSBInputLocked()
 		e.flushHIDLocked()
 		e.checkScopeTriggerLocked()
+		if e.chip.Hang != nil {
+			e.running = false
+			break
+		}
 		cycles -= n
 	}
 }
@@ -2065,6 +2082,11 @@ func (e *Emu) SetRunning(run bool) {
 	e.mu.Lock()
 	e.running = run
 	if run {
+		if e.chip != nil {
+			e.chip.ClearHang()
+			e.hang = nil
+			e.hangText = ""
+		}
 		e.debugger.Resume()
 	} else if e.chip != nil {
 		e.debugger.Pause(0, e.chip.CPU0.R[15], e.chip.Cycles)
@@ -2121,6 +2143,9 @@ func (e *Emu) loop() {
 			e.flushUSBInputLocked()
 			e.flushHIDLocked()
 			e.checkScopeTriggerLocked()
+			if e.chip.Hang != nil {
+				e.running = false
+			}
 			boots = e.chip.BootCount()
 			if e.debugger.Stopped {
 				e.running = false
@@ -2236,7 +2261,7 @@ func (e *Emu) Snapshot() MachineState {
 	s.PC = e.chip.CPU0.R[15]
 	s.SP = e.chip.CPU0.R[13]
 	s.Halted = e.chip.Halted
-	s.Running = e.running && e.runnableLocked()
+	s.Running = e.running && e.runnableLocked() && e.chip.Hang == nil
 	if e.chip.Debug != nil && e.chip.Debug.Stopped {
 		s.Running = false
 	}
@@ -2339,6 +2364,7 @@ func (e *Emu) Snapshot() MachineState {
 		otp.Pages[page].SoftwareLocked = e.chip.OTPSoftwareLocked(page)
 	}
 	s.OTP = otp
+	s.Hang = e.hangText
 	if infos := e.chip.USBHIDInterfaces(); len(infos) > 0 {
 		s.HID = make([]HIDDeviceState, 0, len(infos))
 		for _, info := range infos {

@@ -142,11 +142,14 @@ func newPLL(c *Chip, base uint32) *regBlock {
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
 		if off == 0 { // CS
 			v := b.regs[0]
-			if b.regs[1]&0x5 == 0 { // PD and VCOPD cleared
+			// LOCK is a PLL status bit, not a function of the CS configuration
+			// fields. It sets only when the PLL is powered (PD and VCOPD
+			// cleared); a configured CS with PWR.PD still asserted must read
+			// LOCK=0 or bring-up firmware spins forever.
+			if b.regs[1]&0x5 == 0 {
 				v |= 1 << 31 // LOCK
-			}
-			if v != 0 {
-				v |= 1 << 31
+			} else {
+				v &^= 1 << 31
 			}
 			return v, true
 		}

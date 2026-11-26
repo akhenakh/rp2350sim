@@ -470,3 +470,19 @@ func TestWatchdogScratchSurvivesReset(t *testing.T) {
 		t.Fatalf("watchdog scratch[4] after reset = %#x", got)
 	}
 }
+
+// TestPLLLockRequiresPower pins the PLL model: LOCK is a status bit gated by
+// PWR.PD/VCOPD, not a function of the CS configuration fields. Reading a
+// configured CS with PD still asserted must not report a lock, or bring-up
+// firmware that polls LOCK spins forever.
+func TestPLLLockRequiresPower(t *testing.T) {
+	c := New()
+	c.Write32(0x40050004, 0x2d) // PLL_SYS_PWR: PD and VCOPD set
+	if v := c.Read32(0x40050000); v&(1<<31) != 0 {
+		t.Fatalf("CS = %#x with PD asserted", v)
+	}
+	c.Write32(0x40050004, 0) // power up
+	if v := c.Read32(0x40050000); v&(1<<31) == 0 {
+		t.Fatalf("CS = %#x after power-up", v)
+	}
+}

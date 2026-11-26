@@ -229,9 +229,27 @@ func (c *Chip) PokeFlash(addr uint32, v byte) bool {
 	return true
 }
 
+// PeekRegister returns a modeled peripheral register's raw word without running
+// its read hook, so diagnostics can inspect power/reset fields without clearing
+// status bits.
+func (c *Chip) PeekRegister(addr uint32) (uint32, bool) {
+	if addr < PeriphBase {
+		return 0, false
+	}
+	if addr >= SIOBase && addr < SIOBase+0x1000 {
+		return c.sio.read(c, addr-SIOBase), true
+	}
+	if addr >= SCSBase && addr < SCSBase+0x1000 {
+		return c.ppbForCore().read(addr - SCSBase), true
+	}
+	if b := c.regBlockFor(addr); b != nil {
+		return b.regs[(addr-b.base)/4], true
+	}
+	return 0, false
+}
+
 // PeekBytes reads a side-effect-free byte range.
-func (c *Chip) PeekBytes(addr uint32, size int) ([]byte, bool) {
-	if size <= 0 || size > 1<<20 {
+func (c *Chip) PeekBytes(addr uint32, size int) ([]byte, bool) {	if size <= 0 || size > 1<<20 {
 		return nil, false
 	}
 	out := make([]byte, size)
