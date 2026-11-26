@@ -38,6 +38,10 @@ var (
 	scopePins          []int
 	scopeZoom          = 1.0
 	scopeRangeIdx      = 4
+	scopeFFT           bool
+	scopeFFTChannel    int
+	scopeFFTLog        = true
+	scopeAnalyzer      scopeSpectrum
 	triggerKind        string
 	triggerPause       bool
 	logicSaveMsg       string
@@ -1912,6 +1916,13 @@ func scopePanel() {
 			marker = trigIdx - start
 		}
 	}
+	plotH := 420
+	if scopeFFT {
+		plotH = 200
+	}
+	if len(pins) > 0 {
+		scopeFFTChannel = min(max(scopeFFTChannel, 0), len(pins)-1)
+	}
 	Container(Attrs(Grow(1), Expand, Gap(8)), func() {
 		Container(Attrs(Row, CrossMid, Gap(8)), func() {
 			Label("Oscilloscope", FontSize(16), FontWeight(700))
@@ -1921,6 +1932,14 @@ func scopePanel() {
 				Label(fmt.Sprintf("%.1f MS/s · %.2f ms window", rate/1e6, window), FontSize(12))
 			}
 			Filler(1)
+			fftLabel := "Show FFT"
+			if scopeFFT {
+				fftLabel = "Hide FFT"
+			}
+			if Button(NoIcon, fftLabel) {
+				scopeFFT = !scopeFFT
+				RequestNextFrame()
+			}
 			Label("click pins to add or remove traces", FontSize(11), TextColor(220, 6, 60, 1))
 		})
 		Container(Attrs(Row, CrossMid, Gap(6)), func() {
@@ -1944,6 +1963,27 @@ func scopePanel() {
 				if Button(NoIcon, "Reset") {
 					scopeZoom = 1
 					scopeRangeIdx = 4
+				}
+			}
+			Container(Attrs(FixWidth(10)), func() {})
+			if scopeFFT && len(pins) > 1 {
+				Label("GP", FontSize(11))
+				if Button(NoIcon, "−") {
+					scopeFFTChannel = (scopeFFTChannel + len(pins) - 1) % len(pins)
+				}
+				Label(fmt.Sprintf("%d", pins[scopeFFTChannel]), FontSize(11), FontWeight(600))
+				if Button(NoIcon, "+") {
+					scopeFFTChannel = (scopeFFTChannel + 1) % len(pins)
+				}
+			}
+			if scopeFFT {
+				label := "Log"
+				if !scopeFFTLog {
+					label = "Lin"
+				}
+				if Button(NoIcon, label) {
+					scopeFFTLog = !scopeFFTLog
+					RequestNextFrame()
 				}
 			}
 		})
@@ -1977,7 +2017,7 @@ func scopePanel() {
 		})
 		scopePinPicker()
 		Container(Attrs(Row, Gap(6), Expand), func() {
-			Container(Attrs(FixWidth(38), FixHeight(420)), func() {
+			Container(Attrs(FixWidth(38), FixHeight(float32(plotH))), func() {
 				Label(fmt.Sprintf("%s V", strconv.FormatFloat(float64(vmax), 'g', 3, 32)), FontSize(10))
 				Filler(1)
 				Label("0 V", FontSize(10))
@@ -1987,11 +2027,14 @@ func scopePanel() {
 				if w < 200 {
 					w = 1100 // first frame, before layout has resolved
 				}
-				img := scopeImage(pins, visible, int(w), 420, vmax, marker)
+				img := scopeImage(pins, visible, int(w), plotH, vmax, marker)
 				id := UseImage("scope", img)
-				ImageViewAt(id, Vec2{w, 420})
+				ImageViewAt(id, Vec2{w, float32(plotH)})
 			})
 		})
+		if scopeFFT {
+			scopeSpectrumPanel(pins, visible, interval, vmax)
+		}
 		Container(Attrs(Row, Wrap, Gap(14), Pad2(2, 0)), func() {
 			if len(pins) == 0 {
 				Label("no channels selected", FontSize(11), TextColor(220, 5, 55, 1))
@@ -3106,6 +3149,7 @@ func main() {
 	winW := flag.Int("width", 1280, "window width in points")
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
+	fftFlag := flag.Bool("fft", false, "show the scope spectrum (FFT) view")
 	rFlag := flag.Float64("scope-range", 3.3, "initial scope voltage range in volts")
 	trigFlag := flag.String("logic-trigger", "", "arm a logic trigger: any, uart, i2c, spi")
 	trigPause := flag.Bool("logic-pause", false, "pause the machine when the logic trigger fires")
@@ -3271,6 +3315,7 @@ func main() {
 	if *zFlag >= 1 {
 		scopeZoom = *zFlag
 	}
+	scopeFFT = *fftFlag
 	best := 0
 	for i, v := range scopeRanges {
 		if abs(float64(v)-*rFlag) < abs(float64(scopeRanges[best])-*rFlag) {

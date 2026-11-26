@@ -628,9 +628,19 @@ window with a quarter of post-trigger data and marks the trigger instant.
 2, 3.3 or 5 V full scale, and **Reset** restores 1×/3.3 V. `analog:` board
 entries drive generated sine, square or triangle sources.
 
+**Show FFT** adds a Hann-windowed, one-sided real FFT of the visible window below
+the time trace; the button toggles to **Hide FFT**. The display is dBFS (the
+selected range is 0 dB), defaults to a log frequency axis with a Log/Lin toggle,
+and shows the selected channel and interpolated peak. With multiple channels the
+GP −/+ selector chooses the analyzed trace. `--fft` starts with the spectrum
+shown for headless renders.
+
 ![Scope with the 1 kHz sine on GP26](images/scope.png)
 
-Reference board: `pico2-analog`. Task: `task ui:scope`.
+![Scope FFT of the same sine](images/scope-fft.png)
+
+Reference board: `pico2-analog`. Tasks: `task ui:scope`,
+`task ui:scope:fft`, `task ui:scope:png`, `task ui:scope:fft:png`.
 
 ## Bus Pirate I2C and SPI targets
 

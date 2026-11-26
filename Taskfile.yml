@@ -640,9 +640,31 @@ tasks:
 
   ui:scope:
     desc: Run the UI oscilloscope demo (1 kHz sine on GP26)
+    deps: [firmware:blinky]
     dir: cmd/simui
     cmds:
-      - go run . --board pico2-analog --tab scope
+      - go run . --board pico2-analog --tab scope '../../{{.BUILD}}/blinky.elf'
+
+  ui:scope:fft:
+    desc: Run the UI oscilloscope with the FFT spectrum of the 1 kHz sine
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-analog --tab scope --fft '../../{{.BUILD}}/blinky.elf'
+
+  ui:scope:png:
+    desc: Render the scope time view to build/ui-scope.png
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-analog --tab scope --run 0.5 --png '../../{{.BUILD}}/ui-scope.png' '../../{{.BUILD}}/blinky.elf'
+
+  ui:scope:fft:png:
+    desc: Render the scope FFT view to build/ui-scope-fft.png
+    deps: [firmware:blinky]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-analog --tab scope --fft --run 0.5 --png '../../{{.BUILD}}/ui-scope-fft.png' '../../{{.BUILD}}/blinky.elf'
 
   ui:psram:
     desc: Run the UI on the PSRAM board with the Pico SDK PSRAM demo

@@ -61,6 +61,11 @@ Working notes for changes after v0.3 go here.
   and report IDs). `-usb-hid` logs reports, `-hid-out` sends host-to-device
   output such as keyboard LEDs, and the new **HID** tab monitors reports and
   sends output reports.
+- The scope gains a **Show FFT** view: a Hann-windowed one-sided real FFT of
+  the visible window, dBFS-normalised, with a log/linear frequency axis, channel
+  selector, interpolated peak readout and `--fft` for headless renders. The FFT
+  is UI-only (`github.com/go-fft/fft` in `cmd/simui`); the root module remains
+  dependency-free.
 - Selecting a board before loading a firmware keeps the machine parked. It used
   to execute the empty boot ROM and slide through unmapped memory, which showed
   up as about 0.03× in the UI and grew the unmapped-access map.

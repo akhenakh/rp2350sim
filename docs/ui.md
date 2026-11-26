@@ -341,6 +341,15 @@ orange dashed line; measurements then reflect the frozen window.
 entries generate waveforms (the `pico2-analog` board puts a 1 kHz sine on GP26,
 which the ADC also reads).
 
+**Show FFT** splits the tab into the time trace and a live spectrum (the button
+becomes **Hide FFT**). It uses a Hann window and a one-sided real FFT of the
+visible window, normalised to dBFS where the full-scale range is 0 dB. The
+frequency axis defaults to a **log** scale over `binHz..Nyquist` (toggle
+**Log/Lin**), with the selected channel and the **peak** frequency/level in the
+header. With several channels, use the GP **−/+** selector; `--fft` opens the
+spectrum view for headless renders. `task ui:scope:fft` and
+`task ui:scope:fft:png` run/render it.
+
 The scope and logic traces sample on a fixed virtual-time grid (1 MHz and
 2 MHz) through periodic hooks, so they do not stop an idle core from being
 fast-forwarded. A live window paces virtual time to real time (see the toolbar
@@ -349,6 +358,8 @@ cannot keep up, in which case it turns red; `--turbo` runs flat out. The Debug
 tab pauses the chip.
 
 ![Scope tab](images/scope.png)
+
+![Scope FFT](images/scope-fft.png)
 
 ### Logic
 

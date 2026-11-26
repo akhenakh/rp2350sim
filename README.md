@@ -202,7 +202,8 @@ the tabs accordingly:
   connect to, and a device log.
 - **LEDs**: only for WS2812B boards; the last latched colours.
 - **Scope** (always): up to 8 pin traces, 1 MHz sampling, a ~16 ms window,
-  zoom/range controls and generated `analog:` waveforms.
+  zoom/range controls, generated `analog:` waveforms and a toggleable Hann
+  FFT/spectrum with a log frequency axis and peak readout.
 - **Logic** (always): UART/I2C/SPI/USB decoding, triggers and **Save trace**.
 - **OTP**: pages, rows, ECC status and locks.
 - **Debug**: breakpoints, cycle stepping, registers, memory, source lines and
@@ -277,6 +278,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
+| `task ui:scope:fft` | scope with the FFT spectrum view; `ui:scope:fft:png` renders it |
 | `task ui:hid` | HID tab with the TinyGo keyboard + mouse firmware |
 | `task ui:hid:composite` | HID tab with pico-sdk keyboard/mouse/media/gamepad (BOOTSEL latched) |
 | `task ui:hid:png` | headless HID-tab render to `build/ui-hid.png` |
