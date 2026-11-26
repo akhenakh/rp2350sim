@@ -37,6 +37,10 @@ type PinState struct {
 
 	// OnChange is called when a pin's resolved level changes.
 	OnChange func(pin int, level bool)
+	// changeListeners are additional edge observers (decoders, bus models).
+	// They are kept separate so an application can use OnChange for its own
+	// chaining without dropping device listeners.
+	changeListeners []func(pin int, level bool)
 
 	// LevelOverride, when it returns ok, supplies a pin's level from a
 	// peripheral that drives it between microsecond ticks (the PWM slices).
@@ -243,10 +247,26 @@ func (p *PinState) ReleaseExternal(pin int) {
 }
 
 func (p *PinState) notifyChange(pin int, before bool) {
+	if after := p.Level(pin); after != before {
+		p.fireChange(pin, after)
+	}
+}
+
+// AddChangeListener registers an edge observer. Unlike OnChange it can be
+// added by any number of devices independently.
+func (p *PinState) AddChangeListener(fn func(pin int, level bool)) {
+	if fn != nil {
+		p.changeListeners = append(p.changeListeners, fn)
+	}
+}
+
+// fireChange reports one resolved-level transition to every observer.
+func (p *PinState) fireChange(pin int, level bool) {
 	if p.OnChange != nil {
-		if after := p.Level(pin); after != before {
-			p.OnChange(pin, after)
-		}
+		p.OnChange(pin, level)
+	}
+	for _, fn := range p.changeListeners {
+		fn(pin, level)
 	}
 }
 
@@ -258,8 +278,8 @@ func (p *PinState) setOutput(pin int, level bool) {
 	} else {
 		p.Out &^= bit
 	}
-	if p.OnChange != nil && p.rawLevel(pin) != before {
-		p.OnChange(pin, p.rawLevel(pin))
+	if p.rawLevel(pin) != before && (p.OnChange != nil || len(p.changeListeners) != 0) {
+		p.fireChange(pin, p.rawLevel(pin))
 	}
 }
 
@@ -271,8 +291,8 @@ func (p *PinState) setOE(pin int, oe bool) {
 	} else {
 		p.OE &^= bit
 	}
-	if p.OnChange != nil && p.rawLevel(pin) != before {
-		p.OnChange(pin, p.rawLevel(pin))
+	if p.rawLevel(pin) != before && (p.OnChange != nil || len(p.changeListeners) != 0) {
+		p.fireChange(pin, p.rawLevel(pin))
 	}
 }
 
@@ -730,7 +750,7 @@ func (p *PinState) levelWith(out, oe uint64, pin int) bool {
 // output latch or output enable changed. A pad whose isolation latch holds the
 // controls or whose output is disabled cannot change on the wire.
 func (c *Chip) pinsChanged(oldOut, oldOE uint64) {
-	if c.Pins.OnChange == nil {
+	if c.Pins.OnChange == nil && len(c.Pins.changeListeners) == 0 {
 		return
 	}
 	for pin := range 48 {
@@ -748,7 +768,7 @@ func (c *Chip) pinsChanged(oldOut, oldOE uint64) {
 		old := c.Pins.levelWith(oldOut, oldOE, pin)
 		now := c.Pins.Level(pin)
 		if old != now {
-			c.Pins.OnChange(pin, now)
+			c.Pins.fireChange(pin, now)
 		}
 	}
 }

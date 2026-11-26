@@ -1142,25 +1142,24 @@ func (e *Emu) resetChip() {
 				e.ch9120 = ch
 			} else {
 				var transfer func(byte) byte
-				var tick func()
 				if d.Kind == "w6300" {
 					eth := devices.NewW6300(c, d.CS)
 					eth.Logger = logEth
 					e.w6300 = eth
-					transfer, tick = eth.Transfer, eth.Tick
+					transfer = eth.Transfer
 				} else {
 					eth := devices.NewW5500(c, d.CS)
 					eth.Logger = logEth
 					e.w5500 = eth
-					transfer, tick = eth.Transfer, eth.Tick
+					transfer = eth.Transfer
 				}
+				// A raised chip select is observed by the next Transfer; there
+				// is no per-cycle state to poll.
 				attachSPI(d.SPI, d.CS, transfer)
-				c.CycleHooks = append(c.CycleHooks, tick)
 			}
 		}
 		if d := b.WS2812; d != nil {
 			e.ws = devices.NewWS2812B(c, d.Pin)
-			c.CycleHooks = append(c.CycleHooks, e.ws.Tick)
 		}
 		if d := b.Audio; d != nil {
 			kind := devices.AudioPWM
@@ -1175,7 +1174,6 @@ func (e *Emu) resetChip() {
 				Clock: d.Clock, Pin: d.Pin, Bits: d.Bits, Delay: 1,
 				Decimation: d.Decimation, Rate: d.Rate,
 			})
-			c.CycleHooks = append(c.CycleHooks, e.audio.Tick)
 		}
 
 		for _, sd := range b.Analog {

@@ -95,7 +95,6 @@ func TestEmuResetClosesEthernetListener(t *testing.T) {
 			old.Transfer(b)
 		}
 		c.Pins.SetExternal(17, true)
-		old.Tick()
 		c.Pins.SetExternal(17, false)
 	}
 	write(0x00, 1) // TCP

@@ -37,8 +37,9 @@ type AudioConfig struct {
 	Channels int
 }
 
-// AudioDecoder samples audio pins on every emulated cycle and accumulates
-// 16-bit PCM samples. Register Tick as a Chip.CycleHook.
+// AudioDecoder samples audio pins from edge listeners and a periodic sample
+// window; nothing runs on a quiet cycle. The chip calls the clock listener
+// when BCLK/PDMCLK changes and the periodic hook once per output sample.
 type AudioDecoder struct {
 	chip *rp2350.Chip
 	cfg  AudioConfig
@@ -46,24 +47,23 @@ type AudioDecoder struct {
 	samples []int16
 	limit   int
 
-	lastBCLK bool
-	lastWS   bool
-	started  bool
-	skip     int
-	shift    uint32
-	bits     int
-	left     int16
-	right    int16
-	haveL    bool
-	haveR    bool
+	started bool
+	lastWS  bool
+	skip    int
+	shift   uint32
+	bits    int
+	left    int16
+	right   int16
+	haveL   bool
+	haveR   bool
 
-	pdmBits  int
-	pdmOnes  int
-	pdmClock bool
+	pdmBits int
+	pdmOnes int
 
-	pwmHigh   uint64
-	pwmCycles uint64
-	pwmWindow uint64
+	pwmHigh      uint64
+	pwmHighSince uint64
+	pwmHighLevel bool
+	pwmWindow    uint64
 }
 
 // NewAudio creates a decoder. cfg.Rate/Channels/Bits/Decimation are filled in
@@ -92,34 +92,47 @@ func NewAudio(chip *rp2350.Chip, cfg AudioConfig) *AudioDecoder {
 	if d.pwmWindow == 0 {
 		d.pwmWindow = 1
 	}
+	switch cfg.Kind {
+	case AudioI2S:
+		chip.Pins.AddChangeListener(d.onPin)
+	case AudioPDM:
+		chip.Pins.AddChangeListener(d.onPin)
+	case AudioPWM:
+		chip.Pins.AddChangeListener(d.onPin)
+		d.pwmHighSince = chip.Cycles
+		d.pwmHighLevel = chip.Pins.Level(cfg.Pin)
+		chip.AddPeriodicHook(d.pwmWindow, d.samplePWMWindow)
+	}
 	return d
 }
 
 // Config returns the effective configuration.
 func (d *AudioDecoder) Config() AudioConfig { return d.cfg }
 
-// Tick samples the configured pins. It must run every cycle.
-func (d *AudioDecoder) Tick() {
-	if len(d.samples) >= d.limit {
-		return
-	}
+// onPin consumes one edge. I2S samples the data line on BCLK rises, PDM on
+// clock rises, and PWM/GPIO integrates the high time instead of polling.
+func (d *AudioDecoder) onPin(pin int, level bool) {
 	switch d.cfg.Kind {
 	case AudioI2S:
-		d.tickI2S()
+		if pin == d.cfg.BCLK {
+			if level {
+				d.sampleI2S()
+			}
+		}
 	case AudioPDM:
-		d.tickPDM()
+		if pin == d.cfg.Clock {
+			if level {
+				d.samplePDM()
+			}
+		}
 	case AudioPWM:
-		d.tickPWM()
+		if pin == d.cfg.Pin {
+			d.pwmEdge(level)
+		}
 	}
 }
 
-func (d *AudioDecoder) tickI2S() {
-	bclk := d.chip.Pins.Level(d.cfg.BCLK)
-	rise := bclk && !d.lastBCLK
-	d.lastBCLK = bclk
-	if !rise {
-		return
-	}
+func (d *AudioDecoder) sampleI2S() {
 	ws := d.chip.Pins.Level(d.cfg.LRCLK)
 	if !d.started {
 		// The first observed frame is a frame boundary even when LRCLK is
@@ -169,13 +182,7 @@ func (d *AudioDecoder) tickI2S() {
 	}
 }
 
-func (d *AudioDecoder) tickPDM() {
-	clock := d.chip.Pins.Level(d.cfg.Clock)
-	rise := clock && !d.pdmClock
-	d.pdmClock = clock
-	if !rise {
-		return
-	}
+func (d *AudioDecoder) samplePDM() {
 	if d.chip.Pins.Level(d.cfg.Data) {
 		d.pdmOnes++
 	}
@@ -190,28 +197,46 @@ func (d *AudioDecoder) tickPDM() {
 	d.pdmOnes = 0
 }
 
-func (d *AudioDecoder) tickPWM() {
+func (d *AudioDecoder) pwmEdge(level bool) {
 	if d.chip.PinIsPWM(d.cfg.Pin) {
-		d.pwmCycles++
-		if d.pwmCycles < d.pwmWindow {
-			return
+		// The PWM slice owns the pin: the window sampler reads its duty
+		// directly, so edge integration would be redundant.
+		return
+	}
+	now := d.chip.Cycles
+	if level {
+		d.pwmHighSince = now
+		d.pwmHighLevel = true
+		return
+	}
+	if d.pwmHighLevel {
+		if now >= d.pwmHighSince {
+			d.pwmHigh += now - d.pwmHighSince
 		}
-		duty := d.chip.PinBrightness(d.cfg.Pin)
-		d.append(int16((duty*2 - 1) * 32767))
-		d.pwmCycles = 0
-		return
+		d.pwmHighLevel = false
 	}
-	if d.chip.Pins.Level(d.cfg.Pin) {
-		d.pwmHigh++
+}
+
+// samplePWMWindow runs on the output-sample grid. A PWM-routed pin reports its
+// hardware duty; a plain GPIO is integrated from the edge timeline.
+func (d *AudioDecoder) samplePWMWindow() {
+	now := d.chip.Cycles
+	var duty float32
+	if d.chip.PinIsPWM(d.cfg.Pin) {
+		duty = d.chip.PinBrightness(d.cfg.Pin)
+		d.pwmHigh = 0
+		d.pwmHighLevel = false
+	} else {
+		if d.pwmHighLevel {
+			if now >= d.pwmHighSince {
+				d.pwmHigh += now - d.pwmHighSince
+			}
+			d.pwmHighSince = now
+		}
+		duty = float32(d.pwmHigh) / float32(d.pwmWindow)
+		d.pwmHigh = 0
 	}
-	d.pwmCycles++
-	if d.pwmCycles < d.pwmWindow {
-		return
-	}
-	duty := float32(d.pwmHigh) / float32(d.pwmCycles)
 	d.append(int16((duty*2 - 1) * 32767))
-	d.pwmHigh = 0
-	d.pwmCycles = 0
 }
 
 func (d *AudioDecoder) append(v int16) {

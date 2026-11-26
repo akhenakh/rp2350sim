@@ -203,15 +203,16 @@ type Chip struct {
 	// OnUnhandled is called for each unmapped access (may be nil).
 	OnUnhandled func(addr uint32, write bool, val uint32)
 
-	// CycleHooks run once per virtual cycle. Devices use them to observe pin
-	// levels that change without a bus access (for example chip select).
-	CycleHooks []func()
-
 	// periodicHooks run on a virtual-cycle grid instead of every cycle.
 	// periodicNext caches the earliest deadline so the per-cycle cost stays a
 	// single comparison (see AddPeriodicHook).
 	periodicHooks []periodicHook
 	periodicNext  uint64
+
+	// deadlines are edge-driven one-shot callbacks (see AddDeadline). They do
+	// not forbid the idle fast-forward: the jump stops on the earliest one.
+	deadlines    []*Deadline
+	deadlineNext uint64
 
 	// MMIO trace hook.
 	Trace func(addr uint32, write bool, val uint32, pc uint32)
@@ -237,6 +238,7 @@ func New() *Chip {
 		byBase:             map[uint32]*regBlock{},
 		resetReason:        "power-on",
 		writeCore:          -1,
+		deadlineNext:       noPeriodic,
 		packageSel:         1, // QFN-60 / RP2350A
 		preferredPartition: -1,
 	}
@@ -341,9 +343,9 @@ type periodicHook struct {
 // an idle core (see canIdleSkip). every is clamped to at least one cycle.
 //
 // Missed slots are skipped, never replayed, so this is for value samplers, not
-// edge-sensitive observers (use CycleHooks for those). A callback may add a
-// hook, but the new hook waits for the next dispatch pass; callbacks must not
-// remove hooks.
+// edge-sensitive observers (use a pin listener plus a Deadline for those). A
+// callback may add a hook, but the new hook waits for the next dispatch pass;
+// callbacks must not remove hooks.
 func (c *Chip) AddPeriodicHook(every uint64, fn func()) {
 	if fn == nil {
 		return
@@ -372,6 +374,93 @@ func (c *Chip) rewindPeriodicHooks() {
 		c.periodicHooks[i].next = c.Cycles + c.periodicHooks[i].every
 	}
 	c.refreshPeriodicNext()
+}
+
+// Deadline is a reschedulable one-shot callback on the virtual clock. Unlike a
+// per-cycle hook it does not forbid the idle fast-forward: Run stops on the
+// earliest live deadline, fires it, and carries on. Devices use it for events
+// whose time is known in advance (a WS2812B reset gap, a scripted input).
+type Deadline struct {
+	chip *Chip
+	fn   func()
+	at   uint64
+	live bool
+}
+
+// AddDeadline registers fn and returns its handle. Arm it with Schedule.
+func (c *Chip) AddDeadline(fn func()) *Deadline {
+	if fn == nil {
+		return nil
+	}
+	d := &Deadline{chip: c, fn: fn}
+	c.deadlines = append(c.deadlines, d)
+	return d
+}
+
+// Schedule arms the deadline. A time at or before the current cycle moves to
+// the next cycle so the callback cannot re-enter the step that scheduled it.
+func (d *Deadline) Schedule(at uint64) {
+	if d == nil {
+		return
+	}
+	if now := d.chip.Cycles; at <= now {
+		at = now + 1
+	}
+	d.at = at
+	d.live = true
+	d.chip.refreshDeadlines()
+}
+
+// Cancel disarms the deadline without removing it.
+func (d *Deadline) Cancel() {
+	if d == nil || !d.live {
+		return
+	}
+	d.live = false
+	d.chip.refreshDeadlines()
+}
+
+// Live reports whether the deadline is armed.
+func (d *Deadline) Live() bool { return d != nil && d.live }
+
+func (c *Chip) refreshDeadlines() {
+	c.deadlineNext = noPeriodic
+	for _, d := range c.deadlines {
+		if d.live && d.at < c.deadlineNext {
+			c.deadlineNext = d.at
+		}
+	}
+}
+
+// runDeadlines fires every deadline that has come due. A callback may
+// reschedule itself; the entry is disarmed first so the callback observes a
+// clean state.
+func (c *Chip) runDeadlines() {
+	if c.Cycles < c.deadlineNext {
+		return
+	}
+	for i := range c.deadlines {
+		d := c.deadlines[i]
+		if !d.live || d.at > c.Cycles {
+			continue
+		}
+		d.live = false
+		d.fn()
+	}
+	c.refreshDeadlines()
+}
+
+// nextEventCycle is the nearest cycle at which a periodic sampler or deadline
+// must run. Run caps an idle jump so neither grid is overshot.
+func (c *Chip) nextEventCycle() uint64 { return min(c.periodicNext, c.deadlineNext) }
+
+// cancelDeadlines disarms every deadline after the clock rewinds. Devices
+// re-arm from their next edge or periodic tick.
+func (c *Chip) cancelDeadlines() {
+	for _, d := range c.deadlines {
+		d.live = false
+	}
+	c.deadlineNext = noPeriodic
 }
 
 // runPeriodicHooks fires every hook whose deadline has been reached and moves
@@ -413,7 +502,7 @@ func (c *Chip) runPeriodicHooks() {
 }
 
 // coreIdle reports whether a core has no instructions to run this cycle.
-func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked }
+func coreIdle(cpu *m33.CPU) bool { return cpu.Sleeping || cpu.Parked || cpu.Halted }
 
 // invalidateMonitors applies a write to each core's exclusive monitor. writer
 // is the writing core, or -1 for DMA/host writes. A local store clears only its
@@ -460,10 +549,10 @@ func (c *Chip) Run(n uint64) uint64 {
 			// microsecond boundary.
 			skip = min(skip, c.ppb[0].cyclesUntilSysTick(c.Cycles))
 			skip = min(skip, c.ppb[1].cyclesUntilSysTick(c.Cycles))
-			// Interval samplers must be called on their grid, so the jump
-			// cannot pass the next deadline.
-			if c.periodicNext > c.Cycles {
-				skip = min(skip, c.periodicNext-c.Cycles)
+			// Interval samplers and one-shot deadlines must be called on
+			// their grid, so the jump cannot pass the earliest one.
+			if next := c.nextEventCycle(); next > c.Cycles {
+				skip = min(skip, next-c.Cycles)
 			}
 			if skip == 0 {
 				skip = 1
@@ -487,10 +576,10 @@ func (c *Chip) Run(n uint64) uint64 {
 }
 
 // canIdleSkip reports whether a jump to the next microsecond tick cannot
-// change any observable state: both cores are asleep or parked, no DMA or PIO
-// engine is running, no per-cycle hook samples pins, and the USB device is off.
-// Periodic hooks (traces, analog sources) do not forbid the jump: Run bounds it
-// by their next deadline and tickPeripherals fires them on arrival.
+// change any observable state: both cores are asleep, parked or halted, no DMA
+// or PIO engine is running, and the USB device is off. Interval samplers and
+// one-shot deadlines do not forbid the jump: Run bounds it by their next
+// deadline and tickPeripherals fires them on arrival.
 func (c *Chip) canIdleSkip() bool {
 	if c.Paused || c.pendingReset || !coreIdle(c.CPU0) || !coreIdle(c.CPU1) {
 		return false
@@ -501,7 +590,7 @@ func (c *Chip) canIdleSkip() bool {
 	if c.pwm != nil && c.pwm.busy() {
 		return false
 	}
-	if c.pioActive != 0 || len(c.CycleHooks) != 0 {
+	if c.pioActive != 0 {
 		return false
 	}
 	if c.usb != nil && !c.usb.idleForSkip() {
@@ -522,6 +611,11 @@ func (c *Chip) canIdleSkip() bool {
 	}
 	return true
 }
+
+// IdleFastForward reports whether Run may currently jump over idle cycles.
+// Devices use it in tests and benchmarks to assert that attaching a decoder or
+// bus model did not reintroduce a per-cycle poll.
+func (c *Chip) IdleFastForward() bool { return c.canIdleSkip() }
 
 // Step advances the machine by one cycle.
 func (c *Chip) Step() {
@@ -695,9 +789,7 @@ func (c *Chip) tickPeripherals() {
 		}
 		p.tickWithInputs(pioInputs)
 	}
-	for _, h := range c.CycleHooks {
-		h()
-	}
+	c.runDeadlines()
 	if c.Cycles >= c.periodicNext {
 		c.runPeriodicHooks()
 	}
@@ -802,6 +894,7 @@ func (c *Chip) Reset() {
 	c.usbPoll = 0
 	c.pioLogN = 0
 	c.rewindPeriodicHooks()
+	c.cancelDeadlines()
 	c.CPU0.Reset()
 	c.CPU1.Reset()
 	c.CPU0.Parked = false

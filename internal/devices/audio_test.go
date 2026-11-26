@@ -10,20 +10,12 @@ import (
 )
 
 func setExt(c *rp2350.Chip, pin int, level bool) {
-	bit := uint64(1) << uint(pin)
-	c.Pins.ExtValid |= bit
-	if level {
-		c.Pins.ExtLevel |= bit
-	} else {
-		c.Pins.ExtLevel &^= bit
-	}
+	c.Pins.SetExternal(pin, level)
 }
 
 func clockPulse(c *rp2350.Chip, d *AudioDecoder, pin int) {
 	setExt(c, pin, false)
-	d.Tick()
 	setExt(c, pin, true)
-	d.Tick()
 }
 
 func TestSampleFromBits(t *testing.T) {
@@ -91,15 +83,13 @@ func TestAudioPDM(t *testing.T) {
 func TestAudioPWM(t *testing.T) {
 	c := rp2350.New()
 	d := NewAudio(c, AudioConfig{Kind: AudioPWM, Pin: 0, Rate: 1000})
+	c.CPU0.Sleeping = true
+	c.CPU1.Sleeping = true
 	window := int(d.pwmWindow)
-	for range window * 3 / 4 {
-		setExt(c, 0, true)
-		d.Tick()
-	}
-	for range window / 4 {
-		setExt(c, 0, false)
-		d.Tick()
-	}
+	setExt(c, 0, true)
+	c.Run(uint64(window * 3 / 4))
+	setExt(c, 0, false)
+	c.Run(uint64(window - window*3/4))
 	got := d.Samples()
 	if len(got) != 1 {
 		t.Fatalf("PWM samples = %d", len(got))

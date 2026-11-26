@@ -16,8 +16,8 @@ const (
 )
 
 // SignalSource drives a pin with an analog waveform so the scope and ADC have
-// a signal to measure. It is a CycleHook and only samples the clock; the
-// voltage is updated every Interval cycles.
+// a signal to measure. Register Tick with Chip.AddPeriodicHook: it only samples
+// the clock, and the voltage changes every Interval cycles.
 type SignalSource struct {
 	Chip      *rp2350.Chip
 	Pin       int

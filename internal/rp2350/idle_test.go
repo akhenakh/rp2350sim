@@ -85,25 +85,88 @@ func TestIdleSkipRefusedWhilePIORunning(t *testing.T) {
 	}
 }
 
-// TestIdleSkipRefusedByCycleHook checks that a device sampling pins every
-// cycle keeps the per-cycle schedule.
-func TestIdleSkipRefusedByCycleHook(t *testing.T) {
+// TestDeadlineBoundsIdleSkip checks that a live one-shot deadline still allows
+// the fast-forward and that Run lands on the exact cycle.
+func TestDeadlineBoundsIdleSkip(t *testing.T) {
 	c := New()
 	c.CPU0.Sleeping = true
 	c.CPU1.Parked = true
-	ticks := 0
-	c.CycleHooks = append(c.CycleHooks, func() { ticks++ })
-	if c.canIdleSkip() {
-		t.Fatal("a cycle hook must forbid the fast-forward")
+	var fired []uint64
+	c.AddDeadline(func() { fired = append(fired, c.Cycles) }).Schedule(500)
+	if !c.canIdleSkip() {
+		t.Fatal("a live deadline must not forbid the fast-forward")
 	}
 	c.Run(1000)
-	if ticks != 1000 {
-		t.Fatalf("cycle hook ran %d times for Run(1000)", ticks)
+	if len(fired) != 1 || fired[0] != 500 {
+		t.Fatalf("deadline fired at %v, want [500]", fired)
+	}
+	if c.Cycles != 1000 {
+		t.Fatalf("Run advanced %d cycles, want 1000", c.Cycles)
 	}
 }
 
-// busyChip returns a chip whose PWM slice, PIO state machine and cycle hook
-// all require per-cycle execution, plus the hook's invocation counter.
+// TestDeadlineRescheduleAndCancel covers a callback that re-arms itself and a
+// cancelled deadline that must not fire.
+func TestDeadlineRescheduleAndCancel(t *testing.T) {
+	c := New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	var fired []uint64
+	var d *Deadline
+	d = c.AddDeadline(func() {
+		fired = append(fired, c.Cycles)
+		if c.Cycles < 300 {
+			d.Schedule(300)
+		}
+	})
+	d.Schedule(100)
+	c.Run(400)
+	if len(fired) != 2 || fired[0] != 100 || fired[1] != 300 {
+		t.Fatalf("rescheduled deadline fired at %v, want [100 300]", fired)
+	}
+	d.Schedule(500)
+	d.Cancel()
+	c.Run(400)
+	if len(fired) != 2 {
+		t.Fatalf("cancelled deadline fired: %v", fired)
+	}
+}
+
+// TestResetCancelsDeadlines checks that a rewound clock cannot leave an
+// absolute deadline pending against the old timeline.
+func TestResetCancelsDeadlines(t *testing.T) {
+	c := New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	fired := 0
+	d := c.AddDeadline(func() { fired++ })
+	d.Schedule(100)
+	c.Reset()
+	if d.Live() {
+		t.Fatal("reset left the deadline armed")
+	}
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	c.Run(200)
+	if fired != 0 {
+		t.Fatalf("deadline fired %d times after reset", fired)
+	}
+}
+
+// TestHaltedCoreIsIdle checks the halted/lockup path: a core that cannot make
+// progress must not keep the whole chip out of the fast-forward.
+func TestHaltedCoreIsIdle(t *testing.T) {
+	c := New()
+	c.CPU0.Halted = true
+	c.CPU1.Parked = true
+	if !c.canIdleSkip() {
+		t.Fatal("a halted core plus a parked core must allow the fast-forward")
+	}
+}
+
+// busyChip returns a chip whose PWM slice, PIO state machine and 1-cycle
+// sampler all require per-cycle execution, plus the sampler's invocation
+// counter.
 func busyChip() (*Chip, *int) {
 	c := New()
 	c.CPU0.Sleeping = true
@@ -117,16 +180,16 @@ func busyChip() (*Chip, *int) {
 	c.Write32(pioBase0+0xCC, 2<<12) // wrap top 2
 	c.Write32(pioBase0+0x00, 1)     // enable SM0
 	ticks := 0
-	c.CycleHooks = append(c.CycleHooks, func() { ticks++ })
+	c.AddPeriodicHook(1, func() { ticks++ })
 	return c, &ticks
 }
 
 // TestChunkedRunMatchesStepWhenBusy checks that Run's chunk boundaries are
-// invisible when the fast-forward is forbidden.
+// invisible when a 1-cycle sampler forces per-cycle dispatch.
 func TestChunkedRunMatchesStepWhenBusy(t *testing.T) {
 	chunked, chunkTicks := busyChip()
-	if chunked.canIdleSkip() {
-		t.Fatal("busy chip must not fast-forward")
+	if next := chunked.nextEventCycle(); next > chunked.Cycles+1 {
+		t.Fatalf("next event at %d, want the 1-cycle grid", next)
 	}
 	for _, n := range []uint64{17, 3, 80} {
 		chunked.Run(n)

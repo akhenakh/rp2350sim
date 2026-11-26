@@ -25,7 +25,6 @@ func (w *W5500) xfer(b ...byte) []byte {
 
 func (w *W5500) endFrame(c *rp2350.Chip) {
 	c.Pins.SetExternal(5, true)
-	w.Tick()
 	c.Pins.SetExternal(5, false)
 }
 

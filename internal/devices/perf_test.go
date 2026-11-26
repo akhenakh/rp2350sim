@@ -6,16 +6,36 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
-// BenchmarkAudioPWM measures the per-cycle cost of the audio hook in the
-// common PWM/GPIO mode, which runs on every emulated cycle.
-func BenchmarkAudioPWM(b *testing.B) {
+// BenchmarkChipIdleAudioAndLED measures an idle chip with the devices that used
+// to install a per-cycle hook. The audio window and the WS2812B reset gap are
+// calendar events now, so the fast-forward is still available.
+func BenchmarkChipIdleAudioAndLED(b *testing.B) {
+	c := rp2350.New()
+	NewWS2812B(c, 0)
+	NewAudio(c, AudioConfig{Kind: AudioPWM, Pin: 1, Rate: 48000})
+	c.CPU0.Sleeping = true
+	c.CPU1.Sleeping = true
+	b.ReportAllocs()
+	for b.Loop() {
+		c.Run(1_000_000)
+	}
+	if !c.IdleFastForward() {
+		b.Fatal("devices forbade the fast-forward")
+	}
+}
+
+// BenchmarkAudioPWMWindow measures one sample-window callback, the only work
+// the PWM decoder does now that pin edges are listener-driven.
+func BenchmarkAudioPWMWindow(b *testing.B) {
 	c := rp2350.New()
 	d := NewAudio(c, AudioConfig{Kind: AudioPWM, Pin: 0, Rate: 48000})
 	b.ReportAllocs()
 	for b.Loop() {
-		d.Tick()
+		c.Cycles += d.pwmWindow
+		d.samplePWMWindow()
+		d.samples = d.samples[:0]
 	}
-	if d.Len() == 0 && d.pwmCycles == 0 {
+	if d.pwmWindow == 0 {
 		b.Fatal("decoder did not run")
 	}
 }

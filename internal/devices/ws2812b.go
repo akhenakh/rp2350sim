@@ -14,6 +14,10 @@ import (
 // high pulse whose width selects 0 or 1, and a long low period latches a frame
 // of 24-bit GRB values (MSB first).
 //
+// The decoder observes edges through a pin-change listener, so it costs
+// nothing on a cycle where the line is steady. The reset gap is a one-shot
+// Deadline on the chip's calendar and does not forbid the idle fast-forward.
+//
 // Timing thresholds follow the WS2812B datasheet at the emulated 150 MHz
 // clock: T0H is nominally 0.4 us and T1H 0.8 us (split at 0.6 us), and a low
 // period longer than 50 us is a reset.
@@ -24,6 +28,7 @@ type WS2812B struct {
 	// Logger, when non-nil, records every latched frame.
 	Logger *slog.Logger
 
+	deadline    *rp2350.Deadline
 	lastLevel   bool
 	riseCycle   uint64
 	lowStart    uint64
@@ -41,45 +46,84 @@ const (
 
 // NewWS2812B creates a monitor for the strip wired to pin.
 func NewWS2812B(chip *rp2350.Chip, pin int) *WS2812B {
-	return &WS2812B{Chip: chip, Pin: pin}
+	w := &WS2812B{Chip: chip, Pin: pin}
+	chip.Pins.AddChangeListener(w.onPin)
+	w.deadline = chip.AddDeadline(w.latchIfReset)
+	return w
 }
 
-// Tick samples the pin; register it with Chip.CycleHooks.
-func (w *WS2812B) Tick() {
-	level := w.Chip.Pins.Level(w.Pin)
+// onPin records one edge at the virtual cycle the pin model reported it.
+func (w *WS2812B) onPin(pin int, level bool) {
+	if pin != w.Pin {
+		return
+	}
 	now := w.Chip.Cycles
 	if !w.initialized || now < w.lastCycle {
-		w.bits = w.bits[:0]
-		w.lastLevel = level
-		w.riseCycle = now
-		w.lowStart = now
-		w.lastCycle = now
-		w.initialized = true
+		w.reset(now, level)
 		return
 	}
 	w.lastCycle = now
-	if level != w.lastLevel {
-		if level {
-			w.riseCycle = now
-		} else {
-			width := now - w.riseCycle
-			bit := byte(0)
-			if width > ws2812BitCycles {
-				bit = 1
-			}
-			w.bits = append(w.bits, bit)
-			w.lowStart = now
-			if len(w.bits) > 24*1024 {
-				w.bits = w.bits[:0]
-			}
-		}
-		w.lastLevel = level
+	if level == w.lastLevel {
 		return
 	}
-	if !level && len(w.bits) > 0 && now-w.lowStart > ws2812ResetCycles {
+	if level {
+		// A low gap longer than the reset threshold is a frame boundary even
+		// if the deadline has not run yet (a caller can drive the pin model by
+		// hand). The deadline at lowStart+reset+1 normally handles this.
+		if now-w.lowStart > ws2812ResetCycles {
+			w.latch()
+		}
+		w.riseCycle = now
+		w.deadline.Cancel()
+	} else {
+		width := now - w.riseCycle
+		bit := byte(0)
+		if width > ws2812BitCycles {
+			bit = 1
+		}
+		w.bits = append(w.bits, bit)
+		w.lowStart = now
+		if len(w.bits) > 24*1024 {
+			w.bits = w.bits[:0]
+		}
+		// One cycle after the 50 us threshold, so a rising edge exactly at
+		// 50 us still belongs to the frame and cancels the latch.
+		w.deadline.Schedule(now + ws2812ResetCycles + 1)
+	}
+	w.lastLevel = level
+}
+
+func (w *WS2812B) reset(now uint64, level bool) {
+	w.bits = w.bits[:0]
+	w.lastLevel = level
+	w.riseCycle = now
+	w.lowStart = now
+	w.lastCycle = now
+	w.initialized = true
+	w.deadline.Cancel()
+}
+
+// latchIfReset is the deadline callback: the line has been low long enough to
+// end the frame. A chip reset rewinds the clock, so a stale partial frame is
+// dropped instead of being latched against the old timeline.
+func (w *WS2812B) latchIfReset() {
+	now := w.Chip.Cycles
+	if now < w.lastCycle {
+		w.reset(now, w.Chip.Pins.Level(w.Pin))
+		return
+	}
+	if w.Chip.Pins.Level(w.Pin) {
+		return
+	}
+	if len(w.bits) > 0 && now-w.lowStart >= ws2812ResetCycles {
 		w.latch()
 	}
 }
+
+// Tick applies the reset-gap check at the current cycle. NewWS2812B schedules
+// this as a deadline; the method is exposed for tests and for callers that
+// drive the pin model without the chip clock.
+func (w *WS2812B) Tick() { w.latchIfReset() }
 
 func (w *WS2812B) latch() {
 	n := len(w.bits) / 24

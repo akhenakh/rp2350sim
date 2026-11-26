@@ -296,9 +296,7 @@ func (c *Chip) advanceEngines(cycles uint64) {
 				p.tickWithInputs(pioInputs)
 			}
 		}
-		for _, h := range c.CycleHooks {
-			h()
-		}
+		c.runDeadlines()
 		if c.Cycles >= c.periodicNext {
 			c.runPeriodicHooks()
 		}

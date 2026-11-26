@@ -148,7 +148,20 @@ func NewW5500(chip *rp2350.Chip, cs int) *W5500 {
 		w.txMem[i] = make([]byte, 16*1024)
 		w.rxMem[i] = make([]byte, 16*1024)
 	}
+	chip.Pins.AddChangeListener(w.csEdge)
 	return w
+}
+
+// csEdge ends the current frame when the host raises chip select. No per-cycle
+// poll is needed: the frame boundary is a pin event.
+func (w *W5500) csEdge(pin int, level bool) {
+	if pin != w.CS || !level {
+		return
+	}
+	w.mu.Lock()
+	w.active = false
+	w.hcount = 0
+	w.mu.Unlock()
 }
 
 // Close cancels pending dials, closes every socket and joins network goroutines.
@@ -185,16 +198,9 @@ func (w *W5500) dialContext(network, addr string) (net.Conn, error) {
 	return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, addr)
 }
 
-// Tick samples chip select between SPI bytes, ending a transaction when the
-// host raises CS. Register it with Chip.CycleHooks.
-func (w *W5500) Tick() {
-	if w.Chip.Pins.Level(w.CS) {
-		w.active = false
-		w.hcount = 0
-	}
-}
-
-// Transfer feeds one SPI byte to the chip and returns the MISO byte.
+// Transfer feeds one SPI byte to the chip and returns the MISO byte. A raised
+// chip select ends the current transaction; checking it here is exactly when
+// the next byte would be sampled, so no per-cycle poll is needed.
 func (w *W5500) Transfer(tx byte) byte {
 	if w.Chip.Pins.Level(w.CS) {
 		w.active = false

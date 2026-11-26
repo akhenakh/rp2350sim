@@ -10,22 +10,12 @@ func TestWS2812BRewindDropsPartialFrame(t *testing.T) {
 	c := rp2350.New()
 	configurePin(c, 0)
 	w := NewWS2812B(c, 0)
-	setLevel := func(high bool) {
-		const bit = uint64(1)
-		c.Pins.OE |= bit
-		if high {
-			c.Pins.Out |= bit
-		} else {
-			c.Pins.Out &^= bit
-		}
-	}
+	setLevel := func(high bool) { c.Pins.SetExternal(0, high) }
 	for range 23 {
 		c.Cycles++
 		setLevel(true)
-		w.Tick()
 		c.Cycles += 10
 		setLevel(false)
-		w.Tick()
 	}
 	c.Cycles = 1000
 	w.Tick()

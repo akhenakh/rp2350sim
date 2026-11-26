@@ -66,7 +66,7 @@ func TestLogicPauseStopsSynchronousRunFor(t *testing.T) {
 	d := rp2350.NewDebugger()
 	e := &Emu{chip: c, debugger: d, running: true}
 	e.SetLogicTrigger(LogicTrigger{Kind: "uart", Pause: true})
-	c.CycleHooks = append(c.CycleHooks, func() {
+	c.AddPeriodicHook(1, func() {
 		e.addUART(0, c.Cycles, false, 'A')
 	})
 

@@ -49,10 +49,16 @@ func TestPeriodicHookAllowsIdleSkip(t *testing.T) {
 	if want := 200; fired < want-4 || fired > want {
 		t.Fatalf("hook fired %d times, want about %d", fired, want)
 	}
-	// A per-cycle hook still forbids the jump (WS2812B, audio, chip select).
-	c.CycleHooks = append(c.CycleHooks, func() {})
-	if c.canIdleSkip() {
-		t.Fatal("a per-cycle hook must forbid the fast-forward")
+	// A one-shot deadline bounds the jump but does not forbid it; the old
+	// per-cycle hooks (WS2812B, audio, chip select) did forbid it.
+	d := c.AddDeadline(func() {})
+	d.Schedule(c.Cycles + 50)
+	if !c.canIdleSkip() {
+		t.Fatal("a deadline must not forbid the fast-forward")
+	}
+	c.Run(100)
+	if c.Cycles != 15100 {
+		t.Fatalf("deadline run ended at %d, want 15100", c.Cycles)
 	}
 }
 

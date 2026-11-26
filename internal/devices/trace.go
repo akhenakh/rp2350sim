@@ -32,8 +32,8 @@ func (s TraceSample) Bit(ch int) bool {
 }
 
 // Trace samples a set of pins at a fixed virtual-time interval into a ring.
-// It is a CycleHook; Snapshot must be called with the chip (and therefore the
-// trace) locked by the owner.
+// Register Tick with Chip.AddPeriodicHook; Snapshot must be called with the
+// chip (and therefore the trace) locked by the owner.
 type Trace struct {
 	Chip     *rp2350.Chip
 	Interval uint64

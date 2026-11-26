@@ -568,14 +568,12 @@ func main() {
 	var ch9120 *devices.CH9120
 	if *w6300Flag {
 		w6300 = devices.NewW6300(c, 17)
-		c.CycleHooks = append(c.CycleHooks, w6300.Tick)
 		if os.Getenv("RP2350SIM_W6300_LOG") != "" {
 			w6300.Logger = debugLog()
 		}
 	}
 	if *ethFlag {
 		w5500 = devices.NewW5500(c, 17)
-		c.CycleHooks = append(c.CycleHooks, w5500.Tick)
 		if os.Getenv("RP2350SIM_ETH_LOG") != "" {
 			w5500.Logger = debugLog()
 		}
@@ -584,7 +582,6 @@ func main() {
 	if *wsPin >= 0 {
 		ws := devices.NewWS2812B(c, *wsPin)
 		ws.Logger = log
-		c.CycleHooks = append(c.CycleHooks, ws.Tick)
 	}
 
 	spiLog := os.Getenv("RP2350SIM_SPI_LOG") != ""
@@ -739,19 +736,17 @@ func main() {
 		}
 		at := uint64(touchAt.Seconds() * 150e6)
 		end := at + uint64(touchHold.Seconds()*150e6)
-		var applied, released bool
-		c.CycleHooks = append(c.CycleHooks, func() {
-			if !applied && c.Cycles >= at {
-				log.Debug("inject touch", "x", x, "y", y, "cycles", c.Cycles)
-				touch.SetTouch(x, y, true)
-				applied = true
-			}
-			if applied && !released && c.Cycles >= end {
-				log.Debug("release touch", "cycles", c.Cycles)
-				touch.SetTouch(x, y, false)
-				released = true
-			}
-		})
+		if end <= at {
+			end = at + 1
+		}
+		c.AddDeadline(func() {
+			log.Debug("inject touch", "x", x, "y", y, "cycles", c.Cycles)
+			touch.SetTouch(x, y, true)
+		}).Schedule(at)
+		c.AddDeadline(func() {
+			log.Debug("release touch", "cycles", c.Cycles)
+			touch.SetTouch(x, y, false)
+		}).Schedule(end)
 	}
 
 	if *ch9120Flag {
@@ -1121,7 +1116,6 @@ func main() {
 			log.Error("audio", slog.Any("err", audioErr))
 			exit(2)
 		}
-		c.CycleHooks = append(c.CycleHooks, audioDec.Tick)
 	}
 	var midiBr *midiBridge
 	if *usbMIDI || *midiUART >= 0 || *midiUDP != "" || *midiMonitor {

@@ -41,7 +41,6 @@ func pushWS2812(c *rp2350.Chip, word uint32) { c.Write32(0x50200010, word) }
 func TestWS2812BDecode(t *testing.T) {
 	c := rp2350.New()
 	ws := NewWS2812B(c, 0)
-	c.CycleHooks = append(c.CycleHooks, ws.Tick)
 	setupWS2812PIO(c)
 
 	// GRB words: red, green, blue.

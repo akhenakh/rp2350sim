@@ -174,7 +174,19 @@ func NewW6300(chip *rp2350.Chip, cs int) *W6300 {
 	w.common[w6CIDR2] = 0x11
 	w.common[w6SYCR0] = 0x80
 	w.common[w6SYCR1] = 0x80
+	chip.Pins.AddChangeListener(w.csEdge)
 	return w
+}
+
+// csEdge ends the current frame when the host raises chip select.
+func (w *W6300) csEdge(pin int, level bool) {
+	if pin != w.CS || !level {
+		return
+	}
+	w.mu.Lock()
+	w.active = false
+	w.phase = 0
+	w.mu.Unlock()
 }
 
 // Close cancels pending dials, closes every socket and joins network goroutines.
@@ -211,15 +223,9 @@ func (w *W6300) dialContext(network, addr string) (net.Conn, error) {
 	return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, addr)
 }
 
-// Tick samples chip select between SPI bytes, ending a frame when CS is raised.
-func (w *W6300) Tick() {
-	if w.Chip.Pins.Level(w.CS) {
-		w.active = false
-		w.phase = 0
-	}
-}
-
-// Transfer feeds one SPI byte to the chip and returns the MISO byte.
+// Transfer feeds one SPI byte to the chip and returns the MISO byte. A raised
+// chip select ends the current frame; checking it here is exactly when the
+// next byte would be sampled, so no per-cycle poll is needed.
 func (w *W6300) Transfer(tx byte) byte {
 	if w.Chip.Pins.Level(w.CS) {
 		w.active = false
