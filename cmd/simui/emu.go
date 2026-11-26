@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1483,7 +1482,8 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 	if b == nil {
 		return selects
 	}
-	add := func(def PluginDef, slot, kind string, pins map[string]int) *deviceplugin.Plugin {
+	// add loads one plugin. uart is its UART index, or -1 for I2C/SPI models.
+	add := func(def PluginDef, slot, kind string, pins map[string]int, uart int) *deviceplugin.Plugin {
 		name := def.Name
 		if name == "" {
 			name = kind + " plugin"
@@ -1522,11 +1522,7 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 		for _, pin := range pins {
 			allowed[pin] = true
 		}
-		var uart int
-		if _, number, ok := strings.Cut(slot, " "); ok {
-			uart, _ = strconv.Atoi(number)
-		}
-		p, err := deviceplugin.Load(deviceplugin.Config{
+		cfg := deviceplugin.Config{
 			Name:   name,
 			Lang:   lang,
 			Source: source,
@@ -1546,10 +1542,11 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 				}
 				c.Pins.SetExternal(pin, level)
 			},
-			UARTWrite: func(data []byte) {
-				c.SendUART(uart, data)
-			},
-		})
+		}
+		if uart >= 0 {
+			cfg.UARTWrite = func(data []byte) { c.SendUART(uart, data) }
+		}
+		p, err := deviceplugin.Load(cfg)
 		if err != nil {
 			e.pluginErrs = append(e.pluginErrs, fmt.Sprintf("%s: %v", name, err))
 			return nil
@@ -1564,13 +1561,13 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 		return p
 	}
 	for _, d := range b.I2CPlugins {
-		p := add(d.PluginDef, fmt.Sprintf("i2c%d 0x%02x", d.Bus, d.Addr), "i2c", nil)
+		p := add(d.PluginDef, fmt.Sprintf("i2c%d 0x%02x", d.Bus, d.Addr), "i2c", nil, -1)
 		if p != nil {
 			c.AttachI2C(d.Bus, uint8(d.Addr), deviceplugin.NewI2C(p, uint8(d.Addr)))
 		}
 	}
 	for _, d := range b.SPIPlugins {
-		p := add(d.PluginDef, fmt.Sprintf("spi%d cs%d", d.Bus, d.CS), "spi", nil)
+		p := add(d.PluginDef, fmt.Sprintf("spi%d cs%d", d.Bus, d.CS), "spi", nil, -1)
 		if p != nil {
 			spi := deviceplugin.NewSPI(p)
 			attachSPI(d.Bus, d.CS, spi.Transfer)
@@ -1578,7 +1575,7 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 		}
 	}
 	for _, d := range b.UARTPlugins {
-		p := add(d.PluginDef, fmt.Sprintf("%d", d.UART), "uart", d.Pins)
+		p := add(d.PluginDef, fmt.Sprintf("%d", d.UART), "uart", d.Pins, d.UART)
 		if p != nil {
 			c.AttachUART(d.UART, deviceplugin.NewUART(p))
 		}
