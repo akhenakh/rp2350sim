@@ -71,6 +71,7 @@ has no tab.
 | `i2c_presets` / `spi_presets` | Bus | built-in device models |
 | `i2c_plugins` / `spi_plugins` | Bus | Lua or WASM device files |
 | `serial_plugins` | Console | Lua or WASM UART device files |
+| `onewire` | Board | Timed 1-Wire devices (DS18B20) |
 
 The Board, Scope, Logic, OTP, Debug, Profile and Console tabs always exist.
 
@@ -457,6 +458,25 @@ Built-in presets:
 | `w25q16` | SPI | any CS |
 
 Run `rp2350sim -list-presets` for the current list.
+
+## `onewire`
+
+A timed 1-Wire bus on one GPIO. The model drives the line through the chip's
+pin state and schedules slots/deadlines on the virtual clock.
+
+```yaml
+onewire:
+  - { pin: 6, type: ds18b20, temperature: 22.5 }
+```
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `pin` | GPIO | required | 1-Wire data line |
+| `type` | `ds18b20` | `ds18b20` | device model |
+| `temperature` | float | `22.5` | reported Celsius value |
+
+Only one device per pin is supported today; duplicate pins are a validation
+error.
 
 ## `i2c_plugins`, `spi_plugins` and `serial_plugins`
 

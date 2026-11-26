@@ -36,6 +36,7 @@ type BoardDef struct {
 	SPITCP      []SPITCPBridge  `yaml:"spi_tcp"`
 	I2CPresets  []I2CPresetDef  `yaml:"i2c_presets"`
 	SPIPresets  []SPIPresetDef  `yaml:"spi_presets"`
+	OneWire     []OneWireDevice `yaml:"onewire"`
 	I2CPlugins  []I2CPluginDef  `yaml:"i2c_plugins"`
 	SPIPlugins  []SPIPluginDef  `yaml:"spi_plugins"`
 	UARTPlugins []UARTPluginDef `yaml:"serial_plugins"`
@@ -90,6 +91,13 @@ type SPITCPBridge struct {
 	CS      int    `yaml:"cs"`
 	Listen  string `yaml:"listen"`
 	Connect string `yaml:"connect"`
+}
+
+// OneWireDevice attaches a DS18B20-style sensor to one GPIO.
+type OneWireDevice struct {
+	Pin         int     `yaml:"pin"`
+	Type        string  `yaml:"type"`
+	Temperature float64 `yaml:"temperature"`
 }
 
 // I2CPresetDef attaches a built-in I2C device preset. Addr 0 selects the
@@ -618,6 +626,24 @@ func LoadBoards() ([]BoardDef, error) {
 		case "qfn60", "qfn80":
 		default:
 			return nil, fmt.Errorf("boards: %s: unknown package %q (qfn60 or qfn80)", b.ID, b.Package)
+		}
+		seenOneWire := map[int]bool{}
+		for i := range b.OneWire {
+			d := &b.OneWire[i]
+			if d.Pin < 0 || d.Pin > 47 {
+				return nil, fmt.Errorf("boards: %s: onewire pin must be 0..47", b.ID)
+			}
+			if d.Type != "" && d.Type != "ds18b20" {
+				return nil, fmt.Errorf("boards: %s: unknown onewire device %q", b.ID, d.Type)
+			}
+			if seenOneWire[d.Pin] {
+				return nil, fmt.Errorf("boards: %s: onewire pin %d used twice", b.ID, d.Pin)
+			}
+			seenOneWire[d.Pin] = true
+			d.Type = "ds18b20"
+			if d.Temperature == 0 {
+				d.Temperature = 22.5
+			}
 		}
 		for i := range b.I2CTCP {
 			br := &b.I2CTCP[i]

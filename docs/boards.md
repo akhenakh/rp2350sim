@@ -11,6 +11,7 @@ and reference firmware. In short:
 |---|---|
 | `pico2` | none |
 | `pico2-lcd` | `-lcd` |
+| `pico2-onewire` | `-onewire 6` |
 | `pico2-dvi` | `-dvi-png PATH` |
 | `pico2b` | `-rp2350b` |
 | `pico2-audio` | `-audio-pwm 0 -audio-out PATH` |

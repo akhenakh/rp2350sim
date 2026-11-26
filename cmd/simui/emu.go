@@ -1296,6 +1296,10 @@ func (e *Emu) resetChip() {
 
 		e.attachBus(c, b, attachSPI)
 		e.attachBusPresets(c, b, attachSPI)
+		for _, d := range b.OneWire {
+			w := devices.NewWire(c, d.Pin)
+			devices.NewDS18B20(w, devices.DS18B20Config{TemperatureC: d.Temperature})
+		}
 		pluginSelects := e.attachPlugins(c, b, attachSPI)
 		if len(pluginSelects) > 0 {
 			prev := c.Pins.OnChange

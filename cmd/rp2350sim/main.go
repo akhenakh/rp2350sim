@@ -246,6 +246,11 @@ func main() {
 	flag.Var(&spiPluginFlag, "spi-plugin", "Lua/WASM SPI device: bus:cs=path (repeatable)")
 	flag.Var(&uartPluginFlag, "uart-plugin", "Lua/WASM UART device: uart=path (repeatable)")
 	listPresets := flag.Bool("list-presets", false, "list built-in I2C/SPI device presets and exit")
+	var oneWireSpecs []string
+	flag.Func("onewire", "attach a DS18B20 on PIN[:TEMP_C] (repeatable)", func(v string) error {
+		oneWireSpecs = append(oneWireSpecs, v)
+		return nil
+	})
 	flag.Parse()
 	if *listPresets {
 		printBusPresets()
@@ -575,6 +580,16 @@ func main() {
 			exit(1)
 		}
 		spiCardBus = 0
+	}
+
+	if err := attachOneWire(c, oneWireSpecs); err != nil {
+		log.Error("onewire", slog.Any("err", err))
+		exit(2)
+	}
+	for _, raw := range oneWireSpecs {
+		if pin, temp, err := parseOneWireSpec(raw); err == nil {
+			log.Info("onewire attached", slog.Int("pin", pin), slog.Float64("celsius", temp))
+		}
 	}
 
 	if os.Getenv("RP2350SIM_DMA_LOG") != "" {

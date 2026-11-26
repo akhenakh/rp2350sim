@@ -93,6 +93,7 @@ tasks:
       - firmware:busdevice
       - firmware:presets
       - firmware:pluginlcd
+      - firmware:onewire
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -289,6 +290,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/presets.elf -seconds 2 -i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 -i2c-preset 0:ssd1306@0x3c -spi-preset 0:w25q16@17'
 
+  run:onewire:
+    desc: Run the DS18B20 example with a 22.5 C sensor on GP6
+    deps: [build, firmware:onewire]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/onewire.elf -seconds 2 -onewire 6:22.5'
+
   run:pluginlcd:
     desc: Run the Touch-LCD-2 plugin dashboard headlessly
     deps: [build, firmware:pluginlcd]
@@ -444,6 +451,15 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/presets.elf .'
+
+  firmware:onewire:
+    desc: Build the bit-banged DS18B20 example
+    dir: firmware/onewire
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/onewire.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/onewire.elf .'
 
   firmware:pluginlcd:
     desc: Build the plugin dashboard firmware for the RP2350-Touch-LCD-2

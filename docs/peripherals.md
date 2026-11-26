@@ -45,6 +45,7 @@ commands and UI steps; the register-level wiring lives in
 | Bus Pirate target | `-i2c-tcp`, `-spi-tcp` | `i2c_tcp` / `spi_tcp`, Bus | `busmaster`, `busdevice` |
 | Built-in bus presets | `-i2c-preset`, `-spi-preset`, `-list-presets` | `i2c_presets` / `spi_presets`, Bus | `presets` |
 | Scripted I2C/SPI/UART devices | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `i2c_plugins` / `spi_plugins` / `serial_plugins`, Bus and Console | `plugins/examples` |
+| 1-Wire DS18B20 | `-onewire PIN[:C]` | `onewire`, Board | `onewire` |
 
 Build the demo firmware once with:
 
@@ -727,6 +728,25 @@ The **Bus** tab lists loaded plugin instances and their `print`/`host_log`
 output, so a script's debug lines are visible without a separate console. The
 CLI writes the same lines as `plugin` log records. `pico2-plugins` is a
 ready-made board; `task ui:plugins` opens it.
+
+## 1-Wire and DS18B20
+
+A DS18B20 can be attached to any GPIO with a bit-banged or PIO 1-Wire master.
+The model implements reset/presence, Skip ROM, Read ROM, Convert T and Read
+Scratchpad with the Dallas CRC8; timing runs on the virtual clock.
+
+```sh
+rp2350sim -fw build/onewire.elf -seconds 2 -onewire 6:22.5
+```
+
+```yaml
+onewire:
+  - { pin: 6, type: ds18b20, temperature: 22.5 }
+```
+
+`type` defaults to `ds18b20`; `temperature` is in Celsius. The reference
+firmware is `firmware/onewire`, and `task run:onewire` runs it with a 22.5 °C
+sensor on GP6. The board `pico2-onewire` is the UI equivalent.
 
 ## Board-to-flag map
 

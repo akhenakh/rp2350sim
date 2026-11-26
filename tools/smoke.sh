@@ -342,6 +342,9 @@ out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 -quiet \
 	-spi-plugin 0:21=plugins/examples/spi-flash.wasm 2>/dev/null)
 contains "WASM SPI flash plugin" "w25q16 wasm: ef 40 15" "$out"
 
+out=$("$EMU" -fw "$BUILD/onewire.elf" -seconds 2 -quiet -onewire 6:22.5 2>/dev/null)
+contains "1-Wire DS18B20" "onewire: 22.50 C" "$out"
+
 out=$("$EMU" -fw "$BUILD/pluginlcd.elf" -seconds 2 -quiet \
 	-i2c-plugin 0:0x76=plugins/examples/env-sensor.lua \
 	-uart-plugin 1=plugins/examples/aq-sensor.wasm 2>/dev/null)
