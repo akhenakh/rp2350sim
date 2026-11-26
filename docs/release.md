@@ -48,6 +48,17 @@ release page consistent without retroactively editing the tagged commit.
 
 Working notes for changes after v0.3 go here.
 
+- Peripheral scheduling no longer polls every cycle. WS2812B, audio
+  (I2S/PDM/PWM) and the W5500/W6300 Ethernet models observe pin edges through
+  listeners, and their timed work (the WS2812B 50 µs reset gap, the audio sample
+  window, a scripted touch) runs on the emulator's virtual-time calendar. Boards
+  with these devices keep the idle fast-forward when they are idle: an idle
+  audio-plus-LED board went from about 0.30× to 9.7× real time on a desktop
+  host. Decoder output and Ethernet behaviour are unchanged.
+- Selecting a board before loading a firmware keeps the machine parked. It used
+  to execute the empty boot ROM and slide through unmapped memory, which showed
+  up as about 0.03× in the UI and grew the unmapped-access map.
+
 ## v0.3 highlights
 
 v0.3 focuses on virtual-time scheduling, desktop and browser performance, and
