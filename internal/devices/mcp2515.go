@@ -72,7 +72,7 @@ func (m *MCP2515) Transfer(tx byte) byte {
 		case tx == 0xA0: // READ STATUS
 			return m.status()
 		case tx == 0x05: // BIT MODIFY
-			m.state = 4
+			m.state = 7
 			return 0xFF
 		case tx >= 0x80 && tx <= 0x87: // RTS
 			for i := range 3 {
@@ -106,7 +106,12 @@ func (m *MCP2515) Transfer(tx byte) byte {
 		m.regs[m.addr] = tx
 		m.addr = (m.addr + 1) & 0x7F
 		return 0xFF
-	case 4: // BIT MODIFY address/mask/value
+	case 7: // BIT MODIFY address
+		m.addr = tx
+		m.data = m.data[:0]
+		m.state = 4
+		return 0xFF
+	case 4: // BIT MODIFY mask/value
 		if len(m.data) == 0 {
 			m.data = append(m.data, tx) // mask
 		} else {

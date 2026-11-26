@@ -496,6 +496,11 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-spi-plugin bus:cs=path` | attach a Lua/WASM SPI device (repeatable) |
 | `-uart-plugin uart=path` | attach a Lua/WASM UART device (repeatable) |
 | `-spi-preset bus:name@cs` | attach a built-in SPI device (repeatable) |
+| `-onewire PIN[:TEMP]` | attach a DS18B20 on a GPIO (repeatable) |
+| `-dht PIN[:KIND[:HUM[:TEMP]]]` | attach a DHT11/22 (repeatable) |
+| `-ultrasonic TRIG:ECHO[:CM]` | attach an HC-SR04 (repeatable) |
+| `-gps UART[:LAT:LON]` | attach an NMEA GPS source |
+| `-can CS[:INT[:PEER_ID]]` | attach an MCP2515 and a CAN peer |
 | `-list-presets` | print the built-in device registry |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
 | `-bus-wait D` | first-client wait for an I2C/SPI bridge (default 2s) |

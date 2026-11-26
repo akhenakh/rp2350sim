@@ -36,3 +36,17 @@ func TestMCP2515LoopbackPeer(t *testing.T) {
 	}
 	_ = peer
 }
+
+func TestMCP2515BitModify(t *testing.T) {
+	c := rp2350.New()
+	m := NewMCP2515(c, NewCANBus(c), 17, -1)
+	m.regs[0x2B] = 0
+	m.Select()
+	m.Transfer(0x05)
+	m.Transfer(0x2B)
+	m.Transfer(0x03)
+	m.Transfer(0x01)
+	if m.regs[0x2B] != 1 {
+		t.Fatalf("CANINTE = %#x, want 1", m.regs[0x2B])
+	}
+}
