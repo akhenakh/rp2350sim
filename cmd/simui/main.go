@@ -206,20 +206,7 @@ func RootView() {
 				boardAndPins(snap)
 			}
 		}
-		Container(Attrs(Row, Grow(1), Expand, Gap(8)), func() {
-			if buildPanelOpen {
-				w := float32(viewW) - 478
-				if w < 480 {
-					w = 480
-				}
-				Container(Attrs(FixWidth(w), Expand, Clip, Pad4(10, 10, 10, 10)), content)
-			} else {
-				Container(Attrs(Grow(1), Expand, Pad4(10, 10, 10, 10)), content)
-			}
-			if buildPanelOpen {
-				buildDrawer(snap)
-			}
-		})
+		Container(Attrs(Grow(1), Expand, Pad4(10, 10, 10, 10)), content)
 	})
 	firmwareBrowserModal()
 	bootselBrowserModal()
@@ -1032,12 +1019,6 @@ func toolbar(snap MachineState) {
 		if Button(NoIcon, "Board…") {
 			pendingBoardPicker = true
 			RequestNextFrame()
-		}
-		if webHostTools() {
-			if Button(NoIcon, "Build") {
-				buildPanelOpen = !buildPanelOpen
-				RequestNextFrame()
-			}
 		}
 	})
 
@@ -2185,7 +2166,7 @@ const (
 
 // scopePinColumns returns how many fixed-width pin chips fit in width. The
 // grid is explicit because Row+Wrap can overflow when its parent has no
-// resolved width (notably during the first layout pass or with the drawer open).
+// resolved width (notably during the first layout pass).
 func scopePinColumns(width float32) int {
 	if width < scopePinW {
 		width = scopePinW
@@ -2195,9 +2176,6 @@ func scopePinColumns(width float32) int {
 
 func scopePinAvailableWidth() float32 {
 	maxW := float32(viewW) - 40
-	if buildPanelOpen {
-		maxW -= 478
-	}
 	if maxW < scopePinW {
 		maxW = scopePinW
 	}
@@ -3231,11 +3209,6 @@ func main() {
 	runTo := flag.Float64("run", 0, "advance this many seconds of virtual time at startup (live windows keep running)")
 	paused := flag.Bool("paused", false, "load the firmware but start paused (press Run to execute)")
 	watchFlag := flag.Bool("watch", false, "reload and reset when the firmware/flash file changes on disk")
-	buildDrawerFlag := flag.Bool("build-drawer", false, "open the Source/Build drawer at startup")
-	buildDirFlag := flag.String("build-dir", "", "working directory for the Build drawer (default: inferred from the firmware)")
-	buildCmdFlag := flag.String("build-cmd", "", "build command for the Build drawer (default: inferred: tinygo build or cmake --build)")
-	buildTabFlag := flag.String("build-tab", "source", "Build drawer tab at startup: source or build")
-	sourceFlag := flag.String("source", "", "source file to open in the Build drawer")
 	winW := flag.Int("width", 1280, "window width in points")
 	winH := flag.Int("height", 820, "window height in points")
 	zFlag := flag.Float64("scope-zoom", 1, "initial scope time zoom (1, 2, 4, ...)")
@@ -3360,19 +3333,6 @@ func main() {
 			fmt.Fprintln(os.Stderr, "--watch needs a firmware or flash file")
 			os.Exit(2)
 		}
-	}
-	initBuildDrawer(*buildDirFlag, *buildCmdFlag, *sourceFlag)
-	switch strings.ToLower(*buildTabFlag) {
-	case "", "source":
-		buildPanel.tab = 0
-	case "build":
-		buildPanel.tab = 1
-	default:
-		fmt.Fprintf(os.Stderr, "unknown --build-tab %q (source or build)\n", *buildTabFlag)
-		os.Exit(2)
-	}
-	if *buildDrawerFlag {
-		buildPanelOpen = true
 	}
 	if *debugBreak != "" {
 		if _, err := emu.AddBreakpoint(*debugBreak); err != nil {

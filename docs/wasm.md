@@ -37,8 +37,8 @@ Limitations of the demo build:
   keeps its symbols and DWARF; UF2/raw images use the same PC-bucket fallback.
   See [profiler.md](profiler.md) for the Profile tab.
 - **No host devices**: no Ethernet/Wi-Fi controllers, no Bus Pirate or UART TCP
-  bridges, no GDB server, no SD directory backing (the built-in FAT16 card is
-  used) and no Build drawer.
+  bridges, no GDB server and no SD directory backing (the built-in FAT16 card is
+  used).
 - **One thread**: the emulator shares the page's thread and yields to the
   browser every few milliseconds, so the UI stays responsive at the cost of
   throughput.
@@ -106,7 +106,7 @@ them for other hosts.
   Lua W25Q16 on GP17 and the compiled WASM flash on GP21.
 - **Host devices are stripped** before boot by `webPrepareBoard`: SD directory
   backing (the built-in FAT16 image is used), UART/I2C/SPI TCP bridges, the
-  W5500/W6300/CH9120 controllers, the GDB server and the Build drawer. Boards
+  W5500/W6300/CH9120 controllers and the GDB server. Boards
   that need sockets (Ethernet, Wi-Fi, `pico2-bus`) still render, but their
   network devices are absent.
 - **One thread.** The emulator loop shares the page's thread, so it steps in

@@ -140,8 +140,7 @@ func webInstallDrop() {
 }
 
 // webHostTools reports whether host-only tools are available. The browser has
-// no listening sockets (GDB) and no process execution (the Build drawer), so
-// those toolbar buttons are not offered.
+// no listening sockets, so the GDB toolbar button is not offered.
 func webHostTools() bool { return false }
 
 // webBoot reads the demo configuration from the page URL:

@@ -29,8 +29,8 @@ the always-on timer, HSTX DVI output and A/B flash partitions.
 
 [Watch on YouTube](https://youtu.be/k7zoa2F7Xg8) — the third feature tour:
 preemptive RTOS support and Zephyr, interactive board controls and BOOTSEL, the
-card GPIO view, built-in I2C/SPI device presets, live reload and the
-Source/Build drawer, plus the decoder and peripheral fidelity fixes.
+card GPIO view, built-in I2C/SPI device presets and live reload, plus the
+decoder and peripheral fidelity fixes.
 
 ## Update #4
 

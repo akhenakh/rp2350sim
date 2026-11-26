@@ -218,8 +218,7 @@ the tabs accordingly:
 
 The toolbar shows the selected board, a **Board…** button to return to the
 picker, the firmware path field, **Open…** (OS dialog), run/pause and reset.
-It also has a **Build** button for the optional Source/Build drawer; `--watch`
-reloads the firmware when the file changes on disk.
+`--watch` reloads the firmware when the file changes on disk.
 `--tab` selects the initial tab, `--paused` loads without executing,
 `--logic-trigger`/`--logic-pause` arm the analyzer, and `--png out.png --run 0.6
 firmware.elf` renders a headless snapshot. **Cmd+Q** on macOS or **Ctrl+Q**
@@ -300,7 +299,6 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:plugins` | Lua/WASM scripted device examples in the Bus tab |
 | `task ui:plugins:png` | headless render of the Scripted plugins card to `build/ui-plugins.png` |
 | `task plugins:build` | rebuild the bundled Lua device runtime (wasi-sdk + Lua source) |
-| `task ui:build` | live-reload Source/Build drawer for the blinky example |
 | `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
 | `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |
 | `task ui:png` | headless UI render of the LCD tab to `build/ui.png` |

@@ -5,8 +5,7 @@ firmware, including RTOS kernels such as **Zephyr**: a Cortex-M33 interpreter,
 the RP2350 chip peripherals, and models for the boards and external chips
 (ST7789 LCD, W5500/W6300/CH9120 Ethernet, WS2812B, virtual Wi-Fi). A Shirei
 desktop UI adds board selection, live GPIO, a scope, a logic analyzer,
-built-in bus presets, Bus Pirate terminals and a Source/Build drawer with live
-reload.
+built-in bus presets, Bus Pirate terminals and live reload.
 
 ![Board picker](images/picker.png)
 
@@ -52,7 +51,7 @@ The desktop UI also runs in the browser as a
 | [hid.md](hid.md) | USB HID host: keyboard, mouse, media and gamepad reports, HID tab and flags |
 | [plugins.md](plugins.md) | Lua and WASM I2C/SPI/UART device models, ABI, examples and logs |
 | [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
-| [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer |
+| [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets and live reload |
 | [wasm.md](wasm.md) | the same UI compiled to WebAssembly: live demo, build, URL parameters, stripped host devices and browser speed |
 | [debug.md](debug.md) | the Debug tab, symbols, breakpoints, watchpoints, memory and variables |
 | [boards-yaml.md](boards-yaml.md) | complete `boards.yaml` field reference, defaults, validation and examples |

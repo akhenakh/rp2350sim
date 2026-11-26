@@ -879,13 +879,6 @@ tasks:
     cmds:
       - go run . --board pico2-plugins --tab bus --run 0.5 --png '../../{{.BUILD}}/ui-plugins.png' '../../{{.BUILD}}/presets.elf'
 
-  ui:build:
-    desc: Open the Source/Build drawer with live reload for the blinky firmware
-    deps: [firmware:blinky]
-    dir: cmd/simui
-    cmds:
-      - go run . --board pico2 --watch --build-drawer '../../{{.BUILD}}/blinky.elf'
-
   ui:w6300:
     desc: Run the UI with the W6300 example on the POE-ETH board
     deps: [firmware:w6300]

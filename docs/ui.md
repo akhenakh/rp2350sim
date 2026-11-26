@@ -4,8 +4,8 @@
 the headless runner. It starts with a board picker, attaches that board's
 devices, and exposes the live machine through tabs: GPIO, LCD, DVI, sensors,
 Ethernet, LEDs, scope, logic analyzer, audio, MIDI, HID, OTP, built-in bus presets,
-Bus Pirate terminals, the debugger and the firmware console. The optional
-Source/Build drawer adds a single-file editor and a live-reload build loop.
+Bus Pirate terminals, the debugger and the firmware console. Live reload
+(`--watch`) restarts the machine when the firmware file changes on disk.
 
 The UI is a separate Go module (`cmd/simui/`) so GUI dependencies never enter
 the emulator build. Download `rp2350sim-ui` from
@@ -59,10 +59,6 @@ Startup flags:
 | `--bus-connect` | connect the Bus tab terminal to every bridge listener automatically |
 | `--bus-answer KIND=TOKENS` | queue Bus Pirate responses for `i2c` or `spi`; repeatable |
 | `--watch` | reload and reset when the firmware (or `--flash` image) changes on disk |
-| `--build-drawer` | open the Source/Build drawer at startup |
-| `--build-tab source\|build` | initial drawer tab |
-| `--build-dir DIR`, `--build-cmd CMD` | override the inferred build plan |
-| `--source FILE` | source file to open in the drawer |
 
 For headless use, `--run` executes synchronously before the frame is rendered
 (the UI does not step in the background), and the system font scan is awaited
@@ -73,7 +69,7 @@ so labels are present.
 The toolbar shows the CPU/board identity, the firmware path, **Open…** (an
 in-window file browser with path entry, breadcrumbs, sorting and filters for
 `.uf2`/`.elf`/`.bin`), **Load**, **Run**/**Pause**, **Reset**, **GDB**,
-**Board…**, **Build** (Source/Build drawer) and the scope controls. The status
+**Board…** and the scope controls. The status
 line under it reports the image name, virtual time, PC and SP, or `(flash)`
 after a self-update.
 
@@ -521,7 +517,7 @@ exactly like the CLI `=host:port` form. See
 [bus-pirate.md](bus-pirate.md) for the token protocol and fake-device
 examples.
 
-### Live reload and the Source/Build drawer
+### Live reload
 
 `--watch` polls the loaded firmware (or `--flash` image) and restarts the
 machine when it changes on disk. The baseline is captured when the path is
@@ -530,30 +526,10 @@ the output in place is not executed half-finished. Reload and pause restoration
 are atomic, and path/mode changes cannot be overwritten by a stale callback.
 The status line shows `watch <name>` and the number of reloads; a load error
 stays visible until the next successful change. The watcher follows a new path
-when you press **Load** or pick another file; the toolbar **Build** button opens
-the drawer that usually produces that file.
-
-The **Source / Build** drawer is optional and opens from the toolbar or with
-`--build-drawer`. Its **Source** tab edits one file with line numbers, **Open**
-and **Save**; a failed Open leaves the previous document and committed path
-intact. Its **Build** tab runs a shell command in a chosen directory and
-streams stdout/stderr into the log. Empty fields are inferred from the
-firmware path:
-
-- `build/<name>.elf` with `firmware/<name>/go.mod`:
-  `tinygo build -target=pico2 -o '<elf>' .`, source `firmware/<name>/main.go`.
-- `firmware/c/build/<name>.elf`: `cmake --build firmware/c/build`, directory
-  `firmware/c`.
-- Any other path with a `go.mod` or `CMakeLists.txt` is treated the same way.
-
-Override the plan with `--build-dir`, `--build-cmd` and `--source`, or edit the
-fields in the drawer. **Reload firmware** restarts the current image; with
-`--watch` a successful build reloads automatically. The command runs through
-the host shell (`sh -c`, or `cmd /C` on Windows), so treat the drawer as a
-local developer tool.
+when you press **Load** or pick another file.
 
 ```sh
-rp2350sim-ui --board pico2 --watch --build-drawer build/blinky.elf
+rp2350sim-ui --board pico2 --watch build/blinky.elf
 ```
 
 ### Console
