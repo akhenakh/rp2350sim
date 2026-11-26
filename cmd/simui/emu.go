@@ -1556,7 +1556,9 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 		}
 		e.plugins = append(e.plugins, p)
 		e.pluginSlots = append(e.pluginSlots, kind+" "+slot)
-		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, func() {
+		// Plugins are device models, not cycle-level hardware: a 1 ms tick is
+		// enough for serial events and keeps idle fast-forward cheap.
+		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond*1000, func() {
 			p.Tick(c.NowMicros())
 		})
 		return p

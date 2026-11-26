@@ -123,6 +123,6 @@ func loadPlugin(kind string, spec pluginSpec, c *rp2350.Chip, log *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	c.AddPeriodicHook(rp2350.CyclesPerMicrosecond, func() { p.Tick(c.NowMicros()) })
+	c.AddPeriodicHook(rp2350.CyclesPerMicrosecond*1000, func() { p.Tick(c.NowMicros()) })
 	return p, nil
 }

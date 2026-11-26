@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,10 +86,15 @@ func Load(cfg Config) (*Plugin, error) {
 	}
 
 	ctx := context.Background()
-	// The interpreter is the only engine wazero can run in a browser build,
-	// and using it everywhere keeps plugin behavior identical.
-	rconf := wazero.NewRuntimeConfigInterpreter().
-		WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling)
+	// Desktop uses wazero's compiler; the browser can only interpret. The
+	// plugin ABI is the same either way.
+	var rconf wazero.RuntimeConfig
+	if runtime.GOOS == "js" {
+		rconf = wazero.NewRuntimeConfigInterpreter()
+	} else {
+		rconf = wazero.NewRuntimeConfigCompiler()
+	}
+	rconf = rconf.WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling)
 	rt := wazero.NewRuntimeWithConfig(ctx, rconf)
 
 	p := &Plugin{name: cfg.Name, rt: rt, log: cfg.Log}

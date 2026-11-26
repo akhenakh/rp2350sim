@@ -180,6 +180,32 @@ nRF7002-class parts use an SPI host interface; use `spi_select`/`spi_transfer`
 and `gpio_write` for the IRQ line. The examples are deliberately generic—
 implement the protocol subset your firmware and driver actually use.
 
+## Performance
+
+The plugin tick is a **1 ms virtual grid**, not a per-cycle or per-microsecond
+callback. This matters: an early 1 µs tick made the `pico2-plugins` board look
+like a 0.04× machine even though the models were idle. With the 1 ms grid the
+same `presets.elf` run is close to the no-plugin baseline.
+
+Measured on the development host (desktop, wazero compiler; three virtual
+seconds, `presets.elf`):
+
+| setup | wall time |
+|---|---|
+| no plugins | ~0.68 s |
+| five Lua plugins + one C WASM plugin | ~1.1 s |
+| one C WASM SPI plugin | ~0.68 s |
+
+A four-call SPI transaction (select + three bytes) benchmarks at roughly
+9.5 µs in Lua and 6 µs as compiled C WASM. These are host timings, not
+emulated bus rates; the compiler is used on desktop and the interpreter in the
+browser.
+
+The Lua interpreter artifact itself is checked in at
+`internal/deviceplugin/assets/device_lua.wasm` and embedded in the binaries.
+Users never need a Lua or C toolchain; `task plugins:build` is only for
+maintainers changing the shim.
+
 ## Limits
 
 - Plugins are trusted local files. They run in the emulator's process and can
