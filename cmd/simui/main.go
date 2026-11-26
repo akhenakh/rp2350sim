@@ -1039,9 +1039,6 @@ func toolbar(snap MachineState) {
 				RequestNextFrame()
 			}
 		}
-		if Button(NoIcon, "All / Active") {
-			pinView = 1 - pinView
-		}
 	})
 
 	Container(Attrs(Row, CrossMid, Gap(14), Pad4(2, 10, 6, 10)), func() {
@@ -1124,6 +1121,9 @@ func pinsPanel(snap MachineState) {
 			Label("function · direction · level", FontSize(12))
 			Filler(1)
 			Label(fmt.Sprintf("%d pins · %d active", n, countActive(snap)), FontSize(12))
+			if Button(NoIcon, "All / Active") {
+				pinView = 1 - pinView
+			}
 		})
 		pinsCardsBody(snap, n)
 	})
