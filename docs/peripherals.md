@@ -835,8 +835,8 @@ rp2350sim -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm
 ```
 
 The C fixture writes a string to ITM stimulus port 0 without UART or USB
-stdio. ITM logging is also available to the Debug tab through the chip trace
-sink; SWO pin decoding is a separate follow-up.
+stdio. The chip exposes the same events through `Chip.OnTrace` for future UI
+work; SWO pin decoding is a separate follow-up.
 
 ## Board-to-flag map
 
@@ -858,6 +858,11 @@ sink; SWO pin decoding is a separate follow-up.
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` | `task ui:bus` |
 | `pico2-presets` | `-i2c-preset`, `-spi-preset` | — (built-in models) |
 | `pico2-plugins` | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `task ui:plugins`, `task wasm:plugins` |
+| `pico2-onewire` | `-onewire 6` | `task run:onewire` |
+| `pico2-dht` | `-dht 6` | `task run:dht` |
+| `pico2-ultrasonic` | `-ultrasonic 6:7` | `task run:ultrasonic` |
+| `pico2-gps` | `-gps 1` | `task run:gps` |
+| `pico2-can` | `-can 17:20` | `task run:can` |
 | `pico2-analog` | `-logic-pins`, `-logic-uart`, `-logic-i2c`, `-logic-spi` | `task ui:scope`, `task ui:logic` |
 | `pico2-audio` | `-audio-pwm 0 -audio-out PATH` | `task run:audio`, `task ui:audio` |
 | `pico2-midi` | `-usb-midi -midi-monitor` | `task run:midi`, `task ui:midi` |
