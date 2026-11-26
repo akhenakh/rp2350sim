@@ -85,6 +85,7 @@ const (
 	tabBus
 	tabDebug
 	tabHID
+	tabBootsel
 	tabConsole
 )
 
@@ -188,6 +189,8 @@ func RootView() {
 				debugPanel(snap)
 			case tabHID:
 				hidPanel(snap)
+			case tabBootsel:
+				bootselPanel(snap)
 			case tabConsole:
 				consolePanel(snap)
 			default:
@@ -210,6 +213,7 @@ func RootView() {
 		})
 	})
 	firmwareBrowserModal()
+	bootselBrowserModal()
 }
 
 // boardPicker is the startup screen: one card per YAML board definition.
@@ -541,6 +545,8 @@ func setTab(name string) {
 		activeTab = tabDebug
 	case "hid", "usb", "keyboard", "mouse", "gamepad":
 		activeTab = tabHID
+	case "bootsel", "rpi-rp2", "uf2":
+		activeTab = tabBootsel
 	case "console":
 		activeTab = tabConsole
 	}
@@ -586,6 +592,9 @@ func tabsBar(snap MachineState) {
 		}
 		if len(snap.HID) > 0 || activeTab == tabHID {
 			tabButton("HID", tabHID)
+		}
+		if snap.BootselHeld || snap.Firmware == "" || activeTab == tabBootsel {
+			tabButton("BOOTSEL", tabBootsel)
 		}
 		tabButton("Console", tabConsole)
 		Filler(1)
@@ -3177,7 +3186,7 @@ func main() {
 		return nil
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, hid, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, hid, bootsel, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")

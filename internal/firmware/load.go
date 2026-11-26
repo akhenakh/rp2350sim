@@ -107,7 +107,7 @@ func parse(data []byte) (*Image, error) {
 		return loadELF(data)
 	case len(data) >= 8 && binary.LittleEndian.Uint32(data[0:]) == uf2MagicStart0 &&
 		binary.LittleEndian.Uint32(data[4:]) == uf2MagicStart1:
-		return loadUF2(data)
+		return loadUF2(data, true, false)
 	default:
 		if len(data) > firmwareFlashSize {
 			return nil, fmt.Errorf("firmware: raw image size %d exceeds flash size %d", len(data), firmwareFlashSize)
@@ -116,7 +116,19 @@ func parse(data []byte) (*Image, error) {
 	}
 }
 
-func loadUF2(data []byte) (*Image, error) {
+// ParseUF2Loose parses a UF2 image without enforcing the RP2350 family id.
+// BOOTSEL mass-storage accepts any UF2 payload, but every block must still
+// land in flash; absolute metadata, not-main-flash and E10 ignore blocks are
+// skipped exactly as in the strict loader.
+func ParseUF2Loose(name string, data []byte) (*Image, error) {
+	img, err := loadUF2(data, false, true)
+	if err != nil && name != "" {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return img, err
+}
+
+func loadUF2(data []byte, checkFamily, flashOnly bool) (*Image, error) {
 	if len(data)%512 != 0 {
 		return nil, fmt.Errorf("uf2: size %d is not a multiple of 512", len(data))
 	}
@@ -143,7 +155,7 @@ func loadUF2(data []byte) (*Image, error) {
 		if flags&uf2FlagExtension != 0 && binary.LittleEndian.Uint32(blk[32+uf2ExtensionDataOff:]) == uf2ExtensionIgnore {
 			continue
 		}
-		if flags&0x2000 != 0 {
+		if checkFamily && flags&0x2000 != 0 {
 			family := binary.LittleEndian.Uint32(blk[28:])
 			switch family {
 			case uf2FamilyRP2350:
@@ -158,6 +170,9 @@ func loadUF2(data []byte) (*Image, error) {
 		if err := validateSegment(addr, uint64(len(payload))); err != nil {
 			return nil, fmt.Errorf("uf2: %w", err)
 		}
+		if flashOnly && (addr < firmwareFlashBase || uint64(addr)+uint64(len(payload)) > firmwareFlashBase+firmwareFlashSize) {
+			return nil, fmt.Errorf("uf2: payload at %#x is outside flash", addr)
+		}
 		// Merge into the previous segment when contiguous, validating the
 		// combined range so a chain of blocks cannot cross its destination.
 		if n := len(img.Segments); n > 0 {
@@ -165,6 +180,9 @@ func loadUF2(data []byte) (*Image, error) {
 			if uint64(last.Addr)+uint64(len(last.Data)) == uint64(addr) {
 				if err := validateSegment(last.Addr, uint64(len(last.Data))+uint64(len(payload))); err != nil {
 					return nil, fmt.Errorf("uf2: %w", err)
+				}
+				if flashOnly && uint64(last.Addr)+uint64(len(last.Data))+uint64(len(payload)) > firmwareFlashBase+firmwareFlashSize {
+					return nil, fmt.Errorf("uf2: payload at %#x is outside flash", last.Addr)
 				}
 				last.Data = append(last.Data, payload...)
 				continue

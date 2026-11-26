@@ -29,7 +29,7 @@ func TestUF2IgnoreBlock(t *testing.T) {
 	}
 	binary.LittleEndian.PutUint32(meta[32+256:], uf2ExtensionIgnore)
 	data := uf2Block(0x2000, 0x10000000, []byte{1, 2, 3, 4}, uf2FamilyRP2350)
-	img, err := loadUF2(append(meta, data...))
+	img, err := loadUF2(append(meta, data...), true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestUF2IgnoreBlock(t *testing.T) {
 func TestUF2AbsoluteFamily(t *testing.T) {
 	meta := uf2Block(0x2000, 0x10ffff00, make([]byte, 256), uf2FamilyAbsolute)
 	data := uf2Block(0x2000, 0x10000000, []byte{9, 9}, uf2FamilyRP2350)
-	img, err := loadUF2(append(meta, data...))
+	img, err := loadUF2(append(meta, data...), true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestUF2AbsoluteFamily(t *testing.T) {
 func TestUF2RejectsOtherFamilies(t *testing.T) {
 	for _, family := range []uint32{0xE48BFF56, 0xE48BFF5A, 0xE48BFF5B} {
 		data := uf2Block(0x2000, 0x10000000, []byte{1}, family)
-		if _, err := loadUF2(data); err == nil {
+		if _, err := loadUF2(data, true, false); err == nil {
 			t.Fatalf("family %#x was accepted", family)
 		}
 	}
@@ -69,7 +69,7 @@ func TestUF2RejectsOtherFamilies(t *testing.T) {
 // TestUF2NotMainFlash checks the flag is honoured before any address check.
 func TestUF2NotMainFlash(t *testing.T) {
 	blk := uf2Block(0x2000|0x0001, 0x20000000, []byte{1, 2}, uf2FamilyRP2350)
-	img, err := loadUF2(blk)
+	img, err := loadUF2(blk, true, false)
 	if err == nil {
 		t.Fatalf("image with only a not-main-flash block loaded: %+v", img)
 	}
@@ -167,7 +167,7 @@ func TestLoadUF2RejectsInvalidSegments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			blk := uf2Block(0x2000, tt.addr, tt.data, uf2FamilyRP2350)
-			if _, err := loadUF2(blk); err == nil {
+			if _, err := loadUF2(blk, true, false); err == nil {
 				t.Fatal("invalid UF2 segment was accepted")
 			}
 		})

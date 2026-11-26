@@ -736,6 +736,18 @@ tasks:
     cmds:
       - go run . --board pico2-inputs --tab hid --input bootsel=on --run 1 --png '../../{{.BUILD}}/ui-hid.png' '../../{{.BUILD}}/pico-examples/build/dev_hid_composite/dev_hid_composite.elf'
 
+  ui:bootsel:
+    desc: Open the virtual RPI-RP2 BOOTSEL drive (no firmware) in the UI
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab bootsel
+
+  ui:bootsel:png:
+    desc: Render the virtual BOOTSEL drive to build/ui-bootsel.png
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2 --tab bootsel --png '../../{{.BUILD}}/ui-bootsel.png'
+
   ui:debug:
     desc: Open the Debug tab on the C debugger fixture at debug_marker
     deps: [c:build]

@@ -1051,6 +1051,49 @@ func (e *Emu) addUSBEvent(cycle uint64, in bool, data []byte) {
 	e.usbEvents = trimRing(e.usbEvents, 64, 32)
 }
 
+// FlashUF2 parses a UF2 image with the BOOTSEL policy (any family id, flash
+// targets only), erases the flash, programs the image and boots it.
+func (e *Emu) FlashUF2(name string, data []byte) error {
+	img, err := firmware.ParseUF2Loose(name, data)
+	if err != nil {
+		e.mu.Lock()
+		e.errText = err.Error()
+		e.mu.Unlock()
+		return err
+	}
+	if err := img.ValidateBoot(rp2350.FlashBase, rp2350.FlashSize, rp2350.SRAMBase, rp2350.SRAMSize); err != nil {
+		e.mu.Lock()
+		e.errText = err.Error()
+		e.mu.Unlock()
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.img = img
+	e.fwPath = name
+	e.debugInfo = nil
+	e.errText = ""
+	e.resetChip()
+	e.chip.LoadFlashImage(nil)
+	for _, seg := range img.Segments {
+		if err := e.chip.LoadSegment(seg.Addr, seg.Data); err != nil {
+			e.errText = err.Error()
+			return err
+		}
+	}
+	e.applyInputsLocked()
+	e.chip.Boot()
+	e.applyInputsLocked()
+	e.lastBoots = e.chip.BootCount()
+	e.bootCount = e.lastBoots
+	e.flashWrites = 0
+	e.lastChipFW = e.chip.FlashWrites()
+	e.console = e.console[:0]
+	e.consolePos = 0
+	e.running = true
+	return nil
+}
+
 // resetChip builds a fresh machine and attaches the selected board's devices.
 func (e *Emu) resetChip() {
 	c := rp2350.New()
