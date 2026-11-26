@@ -178,6 +178,44 @@ boards:
       cs: 25
       dir: sdcards/touch-lcd2
 
+  - id: touch-lcd2-plugins
+    name: RP2350-Touch-LCD-2 + mocked devices
+    description: ST7789 LCD · Lua I2C env sensor at 0x76 · WASM UART air sensor on UART1
+    scope: [18, 19]
+    logic:
+      uart: { bus: 1, tx: 8, rx: 9, baud: 115200 }
+      i2c: { sda: 12, scl: 13 }
+      spi: { bus: 0, sck: 18, mosi: 19, miso: 4, cs: 17 }
+    lcd:
+      spi: 0
+      cs: 17
+      dc: 16
+      rst: 20
+      width: 320
+      height: 240
+      rotation: 90
+      backlight: 15
+    touch:
+      bus: 0
+      addr: 0x15
+      int: 29
+      rst: 20
+      width: 240
+      height: 320
+      rotation: 90
+    imu:
+      bus: 0
+      addr: 0x6b
+      int: 14
+    battery:
+      pin: 28
+      divider: 3
+      volts: 3.9
+    i2c_plugins:
+      - { bus: 0, addr: 0x76, file: ../../plugins/examples/env-sensor.lua, url: plugins/examples/env-sensor.lua }
+    serial_plugins:
+      - { uart: 1, file: ../../plugins/examples/aq-sensor.wasm, url: plugins/examples/aq-sensor.wasm }
+
   - id: poe-eth
     name: Waveshare RP2350-POE-ETH
     description: W6300 Ethernet on SPI0 (CS GP17) with PoE

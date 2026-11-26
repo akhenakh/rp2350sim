@@ -19,6 +19,7 @@ and reference firmware. In short:
 | `pico2-ws2812` | `-ws2812 0` |
 | `geek` | `-lcd -sd` (or `-sd-dir`) |
 | `touch-lcd2` | `-touch-lcd2` (plus `-touch`, `-sensors`, `-lcd-png`) |
+| `touch-lcd2-plugins` | `-touch-lcd2` plus `-i2c-plugin` / `-uart-plugin` |
 | `pico2-w5500` | `-eth` |
 | `poe-eth` | `-w6300` |
 | `rp2350-eth` | `-ch9120` |

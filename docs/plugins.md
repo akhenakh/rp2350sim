@@ -183,6 +183,46 @@ nRF7002-class parts use an SPI host interface; use `spi_select`/`spi_transfer`
 and `gpio_write` for the IRQ line. The examples are deliberately generic—
 implement the protocol subset your firmware and driver actually use.
 
+## Touch-LCD-2 dashboard: Lua I2C + WASM UART
+
+The `touch-lcd2-plugins` board is the end-to-end example: a TinyGo firmware
+reads a Lua environment sensor on I2C0 and a compiled WASM air-quality sensor
+on UART1, then paints both on the 320×240 ST7789. No device is physically
+attached; the firmware uses ordinary `machine.I2C0` and `machine.UART1` calls.
+
+![Device-plugin dashboard on the Touch-LCD-2](images/pluginlcd.png)
+
+```yaml
+i2c_plugins:
+  - { bus: 0, addr: 0x76, file: plugins/examples/env-sensor.lua }
+serial_plugins:
+  - { uart: 1, file: plugins/examples/aq-sensor.wasm }
+```
+
+- `env-sensor.lua` exposes a register pointer, a chip id at `0x00`, and
+  big-endian temperature/humidity/pressure at `0x01`–`0x06`. Its `tick`
+  updates the values so the dashboard moves.
+- `aq-sensor.wasm` answers `I` with an identity and `R` with
+  `AQ,pm25,co2,temp,hum`; the firmware sends `R` four times a second. The same
+  protocol is implemented in `aq-sensor.lua`, so swapping
+  `file: ...aq-sensor.wasm` for the Lua file needs no firmware change.
+- The firmware is `firmware/pluginlcd`; the board adds the plugin entries to
+  the ordinary Touch-LCD-2 hardware definition.
+
+```sh
+task ui:pluginlcd       # live dashboard on the LCD tab
+task ui:pluginlcd:png   # headless render
+task plugins:wasm:aq    # rebuild aq-sensor.wasm from C (clang)
+```
+
+The headless equivalent:
+
+```sh
+rp2350sim -fw build/pluginlcd.elf -seconds 3 \
+  -i2c-plugin 0:0x76=plugins/examples/env-sensor.lua \
+  -uart-plugin 1=plugins/examples/aq-sensor.wasm
+```
+
 ## Performance
 
 The plugin tick is a **1 ms virtual grid**, not a per-cycle or per-microsecond

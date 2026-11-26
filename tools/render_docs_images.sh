@@ -48,6 +48,7 @@ render pico2-psram board 0.6 psram "$ROOT/firmware/c/build/psram.elf"
 render pico2 otp 0.5 otp "$ROOT/firmware/c/build/otp.elf"
 render pico2 console 1 console "$ROOT/firmware/c/build/usbhello.elf"
 render pico2 profile 0.5 profile "$ROOT/$BUILD/blinky.elf"
+render touch-lcd2-plugins lcd 3 pluginlcd "$ROOT/$BUILD/pluginlcd.elf"
 # The plugin board's file: paths are relative to cmd/simui.
 (cd "$ROOT/cmd/simui" && "$UI" --board pico2-plugins --tab bus --run 0.5 \
 	--width 1280 --height 820 --png "$ROOT/$BUILD/docs-plugins-2x.png" \

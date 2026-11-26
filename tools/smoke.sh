@@ -342,6 +342,12 @@ out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 -quiet \
 	-spi-plugin 0:21=plugins/examples/spi-flash.wasm 2>/dev/null)
 contains "WASM SPI flash plugin" "w25q16 wasm: ef 40 15" "$out"
 
+out=$("$EMU" -fw "$BUILD/pluginlcd.elf" -seconds 2 -quiet \
+	-i2c-plugin 0:0x76=plugins/examples/env-sensor.lua \
+	-uart-plugin 1=plugins/examples/aq-sensor.wasm 2>/dev/null)
+contains "Touch-LCD-2 plugin dashboard" "pluginlcd t=" "$out"
+contains "UART air sensor values" "pm=" "$out"
+
 if (cd cmd/simui && go run . --board pico2-plugins --tab bus --run 0.5 \
 	--png "../../$BUILD/ui-plugins-smoke.png" "../../$BUILD/presets.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-plugins-smoke.png" >>"$BUILD/smoke.log" 2>&1; then

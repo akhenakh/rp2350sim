@@ -92,6 +92,7 @@ tasks:
       - firmware:busmaster
       - firmware:busdevice
       - firmware:presets
+      - firmware:pluginlcd
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -288,6 +289,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/presets.elf -seconds 2 -i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 -i2c-preset 0:ssd1306@0x3c -spi-preset 0:w25q16@17'
 
+  run:pluginlcd:
+    desc: Run the Touch-LCD-2 plugin dashboard headlessly
+    deps: [build, firmware:pluginlcd]
+    cmds:
+      - bash scripts/pluginlcd.sh
+
   firmware:touchlcd:
     desc: Build the RP2350-Touch-LCD-2 example firmware
     dir: firmware/touchlcd
@@ -437,6 +444,19 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/presets.elf .'
+
+  firmware:pluginlcd:
+    desc: Build the plugin dashboard firmware for the RP2350-Touch-LCD-2
+    dir: firmware/pluginlcd
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/pluginlcd.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/pluginlcd.elf .'
 
   firmware:busdevice:
     desc: Build the I2C/SPI TCP bridge device demo
@@ -860,6 +880,15 @@ tasks:
     cmds:
       - go run . --board pico2-presets --tab bus --run 0.05 --png '../../{{.BUILD}}/ui-presets.png' '../../{{.BUILD}}/presets.elf'
 
+  plugins:wasm:aq:
+    desc: Compile the air-quality UART plugin from C to wasm32
+    sources:
+      - plugins/examples/wasm/aq-sensor.c
+    generates:
+      - plugins/examples/aq-sensor.wasm
+    cmds:
+      - clang --target=wasm32 -nostdlib -O2 -fno-builtin -Wall -Wextra -Wl,--no-entry -Wl,--strip-all -o plugins/examples/aq-sensor.wasm plugins/examples/wasm/aq-sensor.c
+
   plugins:build:
     desc: Rebuild the bundled device_lua.wasm (needs wasi-sdk and a Lua 5.4 source tree)
     cmds:
@@ -878,6 +907,20 @@ tasks:
     dir: cmd/simui
     cmds:
       - go run . --board pico2-plugins --tab bus --run 0.5 --png '../../{{.BUILD}}/ui-plugins.png' '../../{{.BUILD}}/presets.elf'
+
+  ui:pluginlcd:
+    desc: Run the Touch-LCD-2 plugin dashboard (Lua I2C + WASM UART)
+    deps: [firmware:pluginlcd]
+    dir: cmd/simui
+    cmds:
+      - go run . --board touch-lcd2-plugins --tab lcd '../../{{.BUILD}}/pluginlcd.elf'
+
+  ui:pluginlcd:png:
+    desc: Render the plugin dashboard LCD tab to build/ui-pluginlcd.png
+    deps: [firmware:pluginlcd]
+    dir: cmd/simui
+    cmds:
+      - go run . --board touch-lcd2-plugins --tab lcd --run 3 --png '../../{{.BUILD}}/ui-pluginlcd.png' '../../{{.BUILD}}/pluginlcd.elf'
 
   ui:w6300:
     desc: Run the UI with the W6300 example on the POE-ETH board
