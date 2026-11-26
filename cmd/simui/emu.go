@@ -1308,6 +1308,16 @@ func (e *Emu) resetChip() {
 		for _, d := range b.Ultrasonic {
 			devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
 		}
+		if g := b.GPS; g != nil {
+			cfg := devices.GPSConfig{
+				Lat: g.Lat, Lon: g.Lon, Altitude: g.Altitude,
+				SpeedKnots: g.SpeedKnots, Course: g.Course,
+				Satellites: g.Satellites, Fix: g.Fix,
+				Rate: time.Duration(g.RateMS) * time.Millisecond,
+			}
+			dev := devices.NewGPS(c, g.UART, cfg)
+			c.AttachUART(g.UART, dev)
+		}
 		pluginSelects := e.attachPlugins(c, b, attachSPI)
 		if len(pluginSelects) > 0 {
 			prev := c.Pins.OnChange

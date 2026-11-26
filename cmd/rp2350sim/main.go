@@ -261,6 +261,8 @@ func main() {
 		ultrasonicSpecs = append(ultrasonicSpecs, v)
 		return nil
 	})
+	var gpsSpec string
+	flag.StringVar(&gpsSpec, "gps", "", "attach an NMEA GPS on UART[:LAT:LON]")
 	flag.Parse()
 	if *listPresets {
 		printBusPresets()
@@ -598,6 +600,10 @@ func main() {
 	}
 	if err := attachWireDevices(c, dhtSpecs, ultrasonicSpecs); err != nil {
 		log.Error("wire device", slog.Any("err", err))
+		exit(2)
+	}
+	if err := attachGPS(c, gpsSpec); err != nil {
+		log.Error("gps", slog.Any("err", err))
 		exit(2)
 	}
 	for _, raw := range oneWireSpecs {

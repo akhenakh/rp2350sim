@@ -39,6 +39,7 @@ type BoardDef struct {
 	OneWire     []OneWireDevice    `yaml:"onewire"`
 	DHT         []DHTDevice        `yaml:"dht"`
 	Ultrasonic  []UltrasonicDevice `yaml:"ultrasonic"`
+	GPS         *GPSDevice         `yaml:"gps"`
 	I2CPlugins  []I2CPluginDef     `yaml:"i2c_plugins"`
 	SPIPlugins  []SPIPluginDef     `yaml:"spi_plugins"`
 	UARTPlugins []UARTPluginDef    `yaml:"serial_plugins"`
@@ -115,6 +116,19 @@ type UltrasonicDevice struct {
 	Trig       int     `yaml:"trig"`
 	Echo       int     `yaml:"echo"`
 	DistanceCM float64 `yaml:"distance_cm"`
+}
+
+// GPSDevice attaches a simulated NMEA source to one UART.
+type GPSDevice struct {
+	UART       int     `yaml:"uart"`
+	Lat        float64 `yaml:"lat"`
+	Lon        float64 `yaml:"lon"`
+	Altitude   float64 `yaml:"altitude"`
+	SpeedKnots float64 `yaml:"speed_knots"`
+	Course     float64 `yaml:"course"`
+	Satellites int     `yaml:"satellites"`
+	Fix        bool    `yaml:"fix"`
+	RateMS     int     `yaml:"rate_ms"`
 }
 
 // I2CPresetDef attaches a built-in I2C device preset. Addr 0 selects the
@@ -660,6 +674,26 @@ func LoadBoards() ([]BoardDef, error) {
 			d.Type = "ds18b20"
 			if d.Temperature == 0 {
 				d.Temperature = 22.5
+			}
+		}
+		if g := b.GPS; g != nil {
+			if g.UART < 0 || g.UART > 1 {
+				return nil, fmt.Errorf("boards: %s: gps uart must be 0 or 1", b.ID)
+			}
+			if g.Lat == 0 && g.Lon == 0 {
+				g.Lat, g.Lon = 45.5017, -73.5673
+			}
+			if g.Satellites == 0 {
+				g.Satellites = 9
+			}
+			if g.RateMS == 0 {
+				g.RateMS = 1000
+			}
+			if g.RateMS < 50 {
+				return nil, fmt.Errorf("boards: %s: gps rate_ms must be >= 50", b.ID)
+			}
+			if err := claimUART(g.UART, "gps"); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
 		}
 		for i := range b.DHT {

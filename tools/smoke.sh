@@ -342,6 +342,8 @@ out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 -quiet \
 	-spi-plugin 0:21=plugins/examples/spi-flash.wasm 2>/dev/null)
 contains "WASM SPI flash plugin" "w25q16 wasm: ef 40 15" "$out"
 
+out=$("$EMU" -fw "$BUILD/gps.elf" -seconds 2 -quiet -gps 1 2>/dev/null)
+contains "NMEA GPS" "gps: fix=1 lat=45.501700 lon=-73.567300" "$out"
 out=$("$EMU" -fw "$BUILD/dht.elf" -seconds 2 -quiet -dht 6:dht22:45:23 2>/dev/null)
 contains "DHT22 sensor" "dht: 45.0 % 23.0 C" "$out"
 out=$("$EMU" -fw "$BUILD/ultrasonic.elf" -seconds 2 -quiet -ultrasonic 6:7:100 2>/dev/null)

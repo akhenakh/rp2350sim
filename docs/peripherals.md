@@ -48,6 +48,7 @@ commands and UI steps; the register-level wiring lives in
 | 1-Wire DS18B20 | `-onewire PIN[:C]` | `onewire`, Board | `onewire` |
 | DHT11/DHT22 | `-dht PIN[:KIND[:HUM[:TEMP]]]` | `dht`, Board | `dht` |
 | HC-SR04 ultrasonic | `-ultrasonic TRIG:ECHO[:CM]` | `ultrasonic`, Board | `ultrasonic` |
+| GPS / NMEA 0183 | `-gps UART[:LAT:LON]` | `gps`, Board and Console | `gps` |
 
 Build the demo firmware once with:
 
@@ -770,6 +771,33 @@ ultrasonic:
 
 Reference firmware: `firmware/dht`, `firmware/ultrasonic`; boards
 `pico2-dht` and `pico2-ultrasonic`; tasks `run:dht` and `run:ultrasonic`.
+
+## GPS and NMEA 0183
+
+The GPS model emits GGA and RMC sentences on a hardware UART receive FIFO,
+with valid NMEA checksums. Position, altitude, speed, course, satellites and
+fix state are configurable; the time advances deterministically.
+
+```sh
+rp2350sim -fw build/gps.elf -seconds 2 -gps 1
+```
+
+```yaml
+gps:
+  uart: 1
+  lat: 45.5017
+  lon: -73.5673
+  altitude: 82
+  speed_knots: 3.2
+  course: 270
+  satellites: 9
+  rate_ms: 1000
+```
+
+Reference firmware: `firmware/gps`; board `pico2-gps`; task `run:gps`. The
+logic analyzer decodes the UART stream, and the Bus/Console show the firmware's
+parsed fix. `ParseNMEA` in `internal/devices` validates checksums and is shared
+with map/UI work.
 
 ## Board-to-flag map
 

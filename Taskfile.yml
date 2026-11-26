@@ -96,6 +96,7 @@ tasks:
       - firmware:onewire
       - firmware:dht
       - firmware:ultrasonic
+      - firmware:gps
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -298,6 +299,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/dht.elf -seconds 2 -dht 6:dht22:45:23'
 
+  run:gps:
+    desc: Run the NMEA GPS example on UART1
+    deps: [build, firmware:gps]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/gps.elf -seconds 2 -gps 1'
+
   run:ultrasonic:
     desc: Run the HC-SR04 example with a 100 cm target
     deps: [build, firmware:ultrasonic]
@@ -474,6 +481,15 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/dht.elf .'
+
+  firmware:gps:
+    desc: Build the NMEA GPS example
+    dir: firmware/gps
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/gps.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/gps.elf .'
 
   firmware:ultrasonic:
     desc: Build the HC-SR04 example

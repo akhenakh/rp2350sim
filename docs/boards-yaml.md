@@ -74,6 +74,7 @@ has no tab.
 | `onewire` | Board | Timed 1-Wire devices (DS18B20) |
 | `dht` | Board | Timed DHT11/DHT22 sensors |
 | `ultrasonic` | Board | Timed HC-SR04 sensors |
+| `gps` | Board / Console | NMEA 0183 source on a UART |
 
 The Board, Scope, Logic, OTP, Debug, Profile and Console tabs always exist.
 
@@ -498,6 +499,32 @@ ultrasonic:
 | `ultrasonic[].trig` | GPIO | required | trigger output |
 | `ultrasonic[].echo` | GPIO | required | echo input |
 | `ultrasonic[].distance_cm` | float | `100` | measured distance |
+
+## `gps`
+
+```yaml
+gps:
+  uart: 1
+  lat: 45.5017
+  lon: -73.5673
+  altitude: 82
+  speed_knots: 3.2
+  course: 270
+  satellites: 9
+  fix: true
+  rate_ms: 1000
+```
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `uart` | 0 \| 1 | required | output UART |
+| `lat`, `lon` | float | `45.5017`, `-73.5673` | position |
+| `altitude` | float | `82` | metres |
+| `speed_knots` | float | `0` | RMC speed |
+| `course` | float | `0` | RMC course |
+| `satellites` | int | `9` | GGA satellite count |
+| `fix` | bool | `true` | GGA/RMC fix state |
+| `rate_ms` | int | `1000` | sentence period, minimum 50 |
 
 ## `i2c_plugins`, `spi_plugins` and `serial_plugins`
 
