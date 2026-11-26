@@ -249,7 +249,8 @@ func (c *Chip) PeekRegister(addr uint32) (uint32, bool) {
 }
 
 // PeekBytes reads a side-effect-free byte range.
-func (c *Chip) PeekBytes(addr uint32, size int) ([]byte, bool) {	if size <= 0 || size > 1<<20 {
+func (c *Chip) PeekBytes(addr uint32, size int) ([]byte, bool) {
+	if size <= 0 || size > 1<<20 {
 		return nil, false
 	}
 	out := make([]byte, size)

@@ -8,7 +8,6 @@ import (
 
 	. "go.hasen.dev/shirei"
 	. "go.hasen.dev/shirei/widgets"
-	shireiwidgets "go.hasen.dev/shirei/widgets"
 )
 
 var (
@@ -88,12 +87,12 @@ func openBootselDialog() {
 	RequestNextFrame()
 }
 
-func bootselBrowserAttrs() shireiwidgets.FileBrowserAttrs {
+func bootselBrowserAttrs() FileBrowserAttrs {
 	start := ""
 	if p := strings.TrimSpace(bootselPath); p != "" {
 		start = filepath.Dir(p)
 	}
-	return shireiwidgets.FileBrowserAttrs{
+	return FileBrowserAttrs{
 		Title: "Flash UF2 (BOOTSEL)",
 		Width: 760,
 		Files: true,
@@ -107,7 +106,7 @@ func bootselBrowserModal() {
 	if !bootselBrowserOpen {
 		return
 	}
-	if !shireiwidgets.FileBrowserModal(&bootselBrowserOpen, &bootselSelection, bootselBrowserAttrs()) {
+	if !FileBrowserModal(&bootselBrowserOpen, &bootselSelection, bootselBrowserAttrs()) {
 		return
 	}
 	path := strings.TrimSpace(bootselSelection)

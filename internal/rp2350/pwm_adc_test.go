@@ -101,10 +101,11 @@ func TestADCTimingAndFIFO(t *testing.T) {
 	for ch := range 4 {
 		c.SetADC(ch, uint16(100*(ch+1)))
 	}
-	// Enable, FIFO, all four channels round-robin, start free-running.
-	c.Write32(adcBase, 1|1|0x1000|0xF<<adcCSRrobin)
+	// Enable, temperature sensor, all four channels round-robin; FCS.EN below
+	// turns on FIFO capture.
+	c.Write32(adcBase, adcCSEn|1<<1|0x1000|0xF<<adcCSRrobin)
 	c.Write32(adcBase+8, 1) // FCS.EN
-	c.Write32(adcBase, 1|1|0x1000|0xF<<adcCSRrobin|adcCSStartOnce)
+	c.Write32(adcBase, adcCSEn|1<<1|0x1000|0xF<<adcCSRrobin|adcCSStartOnce)
 	// One conversion takes 300 system cycles at DIV=0.
 	for range adcConversionCycles - 1 {
 		c.Step()
@@ -117,7 +118,7 @@ func TestADCTimingAndFIFO(t *testing.T) {
 		t.Fatalf("not READY after 300 cycles: %#x", cs)
 	}
 	// Free-run long enough for a full FIFO; it is 8 entries deep.
-	c.Write32(adcBase, 1|1|0x1000|0xF<<adcCSRrobin|adcCSStartMany)
+	c.Write32(adcBase, adcCSEn|1<<1|0x1000|0xF<<adcCSRrobin|adcCSStartMany)
 	c.Run(adcConversionCycles * 10)
 	fcs := c.Read32(adcBase + 8)
 	if lvl := (fcs >> adcFCSLevel) & 0xF; lvl != adcFIFODepth {

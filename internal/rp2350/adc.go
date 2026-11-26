@@ -185,10 +185,7 @@ func (a *adcBlock) start() {
 		return
 	}
 	a.inProgress = true
-	cycles := uint64(float64(adcConversionCycles) * (1 + a.div()))
-	if cycles < 1 {
-		cycles = 1
-	}
+	cycles := max(uint64(float64(adcConversionCycles)*(1+a.div())), 1)
 	a.doneAt = a.chip.Cycles + cycles
 }
 
