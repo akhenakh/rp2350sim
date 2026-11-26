@@ -29,6 +29,13 @@ The desktop UI also runs in the browser as a
   and BOOTSEL declared in `boards.yaml` and scriptable with `--input`.
 - **Debug variables**: every application global and local is shown in a
   scrollable list with its evaluated value.
+- **Profiler and coverage**: an exact instruction/line coverage view, sampled
+  cycles per function, LCOV and JSON export, IRQ latency and stack watermarks
+  in the Profile tab. See the [profiler guide](profiler.md).
+- **USB HID**: descriptor-driven keyboard, mouse, media and gamepad reports in
+  the HID tab, with host-to-device output reports. See [USB HID](hid.md).
+- **Board configuration**: every `boards.yaml` device, input, bridge and
+  validation rule is documented in the [reference](boards-yaml.md).
 - **Distribution**: Homebrew on macOS, AUR on Arch, and release archives with
   verifiable GitHub build provenance.
 
@@ -37,11 +44,14 @@ The desktop UI also runs in the browser as a
 | [install.md](install.md) | install the CLI and desktop UI on macOS, Arch, Linux or Windows |
 | [videos.md](videos.md) | AI-generated video tours of the simulator |
 | [cli.md](cli.md) | every command-line flag, output contract, exit codes, examples |
+| [profiler.md](profiler.md) | Profile tab, exact coverage, LCOV/JSON, IRQ latency and stack watermarks |
 | [peripherals.md](peripherals.md) | each peripheral from both the CLI and the UI, with reference firmware and tasks |
+| [hid.md](hid.md) | USB HID host: keyboard, mouse, media and gamepad reports, HID tab and flags |
 | [bus-pirate.md](bus-pirate.md) | Bus Pirate tokens, built-in presets and recipes for faking I2C/SPI peripherals |
 | [ui.md](ui.md) | the desktop UI: board picker, `boards.yaml`, tabs, scope, logic analyzer, bus presets, live reload and the Source/Build drawer |
 | [wasm.md](wasm.md) | the same UI compiled to WebAssembly: live demo, build, URL parameters, stripped host devices and browser speed |
 | [debug.md](debug.md) | the Debug tab, symbols, breakpoints, watchpoints, memory and variables |
+| [boards-yaml.md](boards-yaml.md) | complete `boards.yaml` field reference, defaults, validation and examples |
 | [boards.md](boards.md) | supported boards, wiring, peripherals and current limitations |
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |
 | [tinygo.md](tinygo.md) | installing, building with TinyGo, drop-in Taskfile/Makefile targets, dev loop |

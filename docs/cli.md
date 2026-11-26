@@ -530,7 +530,8 @@ rp2350sim -fw build/blinky.elf -seconds 1 \
   buckets. Stack low-water marks and latency are sampled with the PC, so they
   are approximations; instruction coverage is exact.
 - Profiling uses virtual time only: the same firmware and run length produce
-  the same report.
+  the same report. See [profiler.md](profiler.md) for the data model, LCOV
+  semantics and the browser fallback.
 
 ### Logic analyzer capture
 

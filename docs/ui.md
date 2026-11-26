@@ -99,7 +99,8 @@ the pacing and runs as fast as the host allows (the ratio is still shown);
 
 ## `boards.yaml`
 
-A board declares the devices it has. Every key is optional; the UI creates a
+The complete field reference, defaults, validation and a full custom board are
+in [boards-yaml.md](boards-yaml.md). A board declares the devices it has. Every key is optional; the UI creates a
 tab only when the device exists. A board may carry several devices on one SPI
 controller as long as each uses a different chip select; duplicate I2C
 addresses and duplicate `bus`/`cs` pairs are rejected when the board loads.
@@ -409,7 +410,8 @@ changes flush Note-Off/All-Notes-Off to the old transport before switching.
 
 ### HID
 
-Shown once the firmware enumerates a USB HID interface (keyboard, mouse,
+See [hid.md](hid.md) for the USB HID model, headless flags and report
+descriptor handling. Shown once the firmware enumerates a USB HID interface (keyboard, mouse,
 gamepad or a composite). The monitor lists decoded reports newest first with the
 virtual cycle, kind, readable text and raw bytes. The header names the
 interfaces, their report kinds and interrupt endpoints.
@@ -467,7 +469,8 @@ fixture tests.
 
 ### Profile
 
-**Profile** records a PC sample every 2048 cycles (about 14 us) and, while it
+See [profiler.md](profiler.md) for the full recording model, LCOV semantics and
+headless flags. **Profile** records a PC sample every 2048 cycles (about 14 us) and, while it
 runs, exact instruction coverage. **Start** discards the previous run;
 **Stop** freezes the report until the next start. `--tab profile` and
 `--profile` start it before the warm-up, and `task ui:profile` /

@@ -1069,7 +1069,7 @@ tasks:
       - test -f site/themes/hugo-geekdoc/theme.toml || (curl -fsSL https://github.com/thegeeklab/hugo-geekdoc/releases/download/v5.0.0/hugo-geekdoc.tar.gz | tar -xz -C site/themes/hugo-geekdoc --strip-components=1)
 
   docs:images:
-    desc: Regenerate every guide screenshot (Board, inputs, LCD, sensors, tabs, DVI, MIDI, audio, scope, logic, OTA)
+    desc: Regenerate every guide screenshot (Board, inputs, LCD, sensors, tabs, DVI, MIDI, audio, scope, profile, HID, logic, OTA)
     deps:
       - firmware:audio
       - firmware:midi

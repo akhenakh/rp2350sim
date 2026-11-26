@@ -606,6 +606,8 @@ a generic output-report hex field for gamepad feedback. The firmware is the USB
 device; the emulator is the host, so the monitor shows device-to-host reports and
 the controls send host-to-device output reports.
 
+Full page: [USB HID](hid.md).
+
 Reference firmware: `hid` (TinyGo keyboard + mouse), `hidgamepad` (TinyGo
 joystick). Tasks: `task run:hid`, `task run:hidgamepad`,
 `task ui:hid`, `task ui:hidgamepad`, and `task ui:hid:composite` for pico-sdk's

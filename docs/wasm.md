@@ -35,6 +35,7 @@ Limitations of the demo build:
   DWARF, so its Debug tab shows registers and memory, and the Profile tab falls
   back to 256-byte PC buckets. A picked/dropped ELF is parsed in memory and
   keeps its symbols and DWARF; UF2/raw images use the same PC-bucket fallback.
+  See [profiler.md](profiler.md) for the Profile tab.
 - **No host devices**: no Ethernet/Wi-Fi controllers, no Bus Pirate or UART TCP
   bridges, no GDB server, no SD directory backing (the built-in FAT16 card is
   used) and no Build drawer.
