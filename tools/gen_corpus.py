@@ -154,6 +154,7 @@ SNIPPETS = [
 ("mls","mls r0, r1, r2, r3"),
 ("umull","umull r0, r1, r2, r3"),
 ("umlal","umlal r0, r1, r2, r3"),
+("umaal","umaal r0, r1, r2, r3"),
 ("smull","smull r0, r1, r2, r3"),
 ("smlal","smlal r0, r1, r2, r3"),
 ("bfi","bfi r0, r1, #4, #8"),

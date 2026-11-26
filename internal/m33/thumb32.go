@@ -1034,12 +1034,21 @@ func (c *CPU) exec32MulDiv(hw1, hw2 uint16) {
 		lo, hi := umull(c.R[rn], c.R[rm])
 		c.R[ra] = lo
 		c.R[rd] = hi
-	case 0xFBE0: // UMLAL
+	case 0xFBE0: // UMLAL / UMAAL
 		lo, hi := umull(c.R[rn], c.R[rm])
-		r := uint64(c.R[rd])<<32 | uint64(c.R[ra])
-		r += uint64(lo) | uint64(hi)<<32
-		c.R[ra] = uint32(r)
-		c.R[rd] = uint32(r >> 32)
+		switch hw2 & 0x00F0 {
+		case 0x0000: // UMLAL: RdHi:RdLo += Rn*Rm
+			r := uint64(c.R[rd])<<32 | uint64(c.R[ra])
+			r += uint64(lo) | uint64(hi)<<32
+			c.R[ra] = uint32(r)
+			c.R[rd] = uint32(r >> 32)
+		case 0x0060: // UMAAL: RdLo = low(Rn*Rm + RdLo + RdHi), RdHi = high + carry
+			r := uint64(lo) + uint64(c.R[ra]) + uint64(c.R[rd])
+			c.R[ra] = uint32(r)
+			c.R[rd] = hi + uint32(r>>32)
+		default:
+			c.Halt("unimplemented long multiply variant")
+		}
 	case 0xFB80: // SMULL
 		r := int64(int32(c.R[rn])) * int64(int32(c.R[rm]))
 		c.R[ra] = uint32(r)

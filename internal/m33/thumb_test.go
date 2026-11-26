@@ -147,6 +147,52 @@ func TestMulDiv(t *testing.T) {
 	}
 }
 
+// TestLongMultiplyAccumulate distinguishes UMLAL from UMAAL. They share the
+// 0xFBE0 opcode group and differ in hw2[7:4]; UMAAL adds both accumulator
+// words to the low word and keeps the product's high word plus carry, while
+// UMLAL accumulates as a 64-bit hi:lo pair. Compiler-rt's __aeabi_dmul relies
+// on the difference.
+func TestLongMultiplyAccumulate(t *testing.T) {
+	run := func(hw1, hw2 uint16, set map[int]uint32) *CPU {
+		t.Helper()
+		bus := newTestBus()
+		bus.Write16(0, hw1)
+		bus.Write16(2, hw2)
+		bus.Write16(4, 0xBF00)
+		c := New(bus)
+		c.R[15] = 0
+		for r, v := range set {
+			c.R[r] = v
+		}
+		c.Step()
+		return c
+	}
+	operands := map[int]uint32{
+		1: 0x001b1f02,
+		3: 0x00184fb0,
+		4: 0xd6bf94d5,
+		7: 0x218def41,
+	}
+
+	// umlal r3, r7, r4, r1
+	c := run(0xFBE4, 0x3701, operands)
+	if c.R[3] != 0x9314445a || c.R[7] != 0x21a4af78 {
+		t.Fatalf("umlal = %08x:%08x, want 21a4af78:9314445a", c.R[7], c.R[3])
+	}
+
+	// umaal r3, r7, r4, r1
+	c = run(0xFBE4, 0x3761, operands)
+	if c.R[3] != 0xb4a2339b || c.R[7] != 0x0016c037 {
+		t.Fatalf("umaal = %08x:%08x, want 0016c037:b4a2339b", c.R[7], c.R[3])
+	}
+
+	// umaal with a carry out of the low word: 0xffffffff + 1 + 1.
+	c = run(0xFBE4, 0x3761, map[int]uint32{1: 1, 3: 1, 4: 0xffffffff, 7: 1})
+	if c.R[3] != 1 || c.R[7] != 1 {
+		t.Fatalf("umaal carry = %08x:%08x, want 00000001:00000001", c.R[7], c.R[3])
+	}
+}
+
 func TestFlags(t *testing.T) {
 	// cmp r0, r1 (16-bit ALU CMP: 0x4288 family)
 	c := run16(t, 0x4288) // cmp r0, r1
