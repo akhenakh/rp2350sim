@@ -17,7 +17,8 @@ radio as a file.
 
 ## Quick start
 
-The built-in `pico2-plugins` board loads three Lua examples:
+The built-in `pico2-plugins` board loads the Lua examples and a compiled WASM
+flash:
 
 ```sh
 task ui:plugins

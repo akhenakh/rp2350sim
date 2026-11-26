@@ -261,10 +261,12 @@ boards:
 
   - id: pico2-plugins
     name: RP2350 + scripted devices
-    description: Lua BME280 on I2C0, Lua W25Q16 on SPI0 CS GP17, UART modem on UART1
+    description: Lua BME280/MPU6050/SSD1306 on I2C0, Lua/WASM SPI flash, UART modem
     scope: [0, 1]
     i2c_plugins:
       - { bus: 0, addr: 0x76, file: ../../plugins/examples/bme280.lua, url: plugins/examples/bme280.lua }
+      - { bus: 0, addr: 0x68, file: ../../plugins/examples/mpu6050.lua, url: plugins/examples/mpu6050.lua }
+      - { bus: 0, addr: 0x3c, file: ../../plugins/examples/ssd1306.lua, url: plugins/examples/ssd1306.lua }
     spi_plugins:
       - { bus: 0, cs: 17, file: ../../plugins/examples/w25q16.lua, url: plugins/examples/w25q16.lua }
       - { bus: 0, cs: 18, file: ../../plugins/examples/spi-flash.wasm, url: plugins/examples/spi-flash.wasm }

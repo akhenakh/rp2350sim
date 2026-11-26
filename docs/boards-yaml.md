@@ -571,6 +571,7 @@ boards:
       - { bus: 0, preset: bme280, addr: 0x76 }
     i2c_plugins:
       - { bus: 0, addr: 0x77, file: plugins/examples/bme280.lua }
+      - { bus: 0, addr: 0x68, file: plugins/examples/mpu6050.lua }
     ws2812:
       pin: 4
 

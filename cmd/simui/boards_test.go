@@ -444,7 +444,7 @@ func TestEmbeddedPluginBoard(t *testing.T) {
 	if b == nil {
 		t.Fatal("pico2-plugins board is missing")
 	}
-	if len(b.I2CPlugins) != 1 || len(b.SPIPlugins) != 2 || len(b.UARTPlugins) != 1 {
+	if len(b.I2CPlugins) != 3 || len(b.SPIPlugins) != 2 || len(b.UARTPlugins) != 1 {
 		t.Fatalf("plugins = %d/%d/%d", len(b.I2CPlugins), len(b.SPIPlugins), len(b.UARTPlugins))
 	}
 	if b.I2CPlugins[0].Addr != 0x76 || b.SPIPlugins[0].CS != 17 {

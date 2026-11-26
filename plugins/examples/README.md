@@ -3,6 +3,8 @@
 These files are loaded by `pico2-plugins` and by the task examples.
 
 - `bme280.lua` — a small register-pointer I2C sensor with chip id `0x60`.
+- `mpu6050.lua` — WHO_AM_I `0x68` and a register pointer.
+- `ssd1306.lua` — an I2C command/data acceptor for the display-on probe.
 - `w25q16.lua` — SPI NOR JEDEC ID (`EF 40 15`) and status probe.
 - `uart-modem.lua` — an AT-style serial companion; `print`/`uart_send` show
   the request/response shape for an nRF5340-style mock.
