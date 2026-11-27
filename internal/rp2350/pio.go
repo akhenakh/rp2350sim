@@ -704,7 +704,17 @@ func (s *pioSM) advanceClock(cycles uint64) {
 }
 
 func (s *pioSM) tick() {
-	if !s.clockTick() || !s.enabled {
+	if !s.clockTick() {
+		return
+	}
+	if !s.enabled {
+		// An instruction written to SMx_INSTR executes even while the state
+		// machine is halted. A forced OUT that needs a refill first stalls for
+		// a cycle; if the halt is never lifted the EXEC latch is left pending
+		// and piolib's SetX/SetY (TxPut + forced OUT,32) would lose the value.
+		if s.stalled && s.stallSource == pioSourceForced {
+			s.resumeStalled()
+		}
 		return
 	}
 	s.applySticky()
@@ -714,17 +724,7 @@ func (s *pioSM) tick() {
 		return
 	}
 	if s.stalled {
-		if !isPIOOut(s.stallInstr) && !isPIOPull(s.stallInstr) {
-			s.autoPullBetween()
-		}
-		if !s.resumeStall() {
-			return
-		}
-		source, instr := s.stallSource, s.stallInstr
-		s.stalled = false
-		s.stallKind = pioStallNone
-		s.execStalled = false
-		s.finishInstruction(instr, source)
+		s.resumeStalled()
 		return
 	}
 
@@ -736,6 +736,25 @@ func (s *pioSM) tick() {
 		s.execPending = false
 	}
 	s.attemptInstruction(instr, source)
+}
+
+// resumeStalled retries the instruction that stalled on the previous cycle and
+// completes it once the resource it waits for is available.
+func (s *pioSM) resumeStalled() {
+	if !isPIOOut(s.stallInstr) && !isPIOPull(s.stallInstr) {
+		s.autoPullBetween()
+	}
+	if !s.resumeStall() {
+		return
+	}
+	source, instr := s.stallSource, s.stallInstr
+	s.stalled = false
+	s.stallKind = pioStallNone
+	s.execStalled = false
+	// Side-set belongs to the instruction, not the resource wait: a resumed
+	// OUT/JMP still drives its side-set pins in the cycle it completes.
+	s.applySide(instr)
+	s.finishInstruction(instr, source)
 }
 
 func (s *pioSM) attemptInstruction(instr uint16, source uint8) {
@@ -822,10 +841,9 @@ func (s *pioSM) resumeStall() bool {
 		s.outCount = 0
 		return true
 	case pioStallOutRefill:
-		if s.txN == 0 {
-			s.p.fdebug |= 1 << uint(24+s.idx) // TXSTALL
-			return false
-		}
+		// The refill happens on the first resume and the shift completes on
+		// the next one, when the TX FIFO is already empty again. Let execOut
+		// decide between shifting and stalling.
 		return s.execOut(s.stallInstr)
 	case pioStallInPush:
 		if s.rxFull() {

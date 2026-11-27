@@ -306,6 +306,56 @@ func TestPIOForcedInstructionStallAndReadback(t *testing.T) {
 	}
 }
 
+// piolib sets X/Y with TxPut followed by a forced OUT,32 while the state
+// machine is halted. The refill stalls for one cycle; it must still complete
+// before the next forced instruction overwrites the EXEC latch.
+func TestPIOForcedOutRefillWhileDisabled(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	s := &p.sm[0]
+	c.Write32(pioBase0+0xC8, 3<<16)
+	s.shiftctrl = 1 << 17 // autopull
+	s.outCount = 32
+	c.Write32(pioBase0+0x10, 0x1f)   // TxPut(0x1f)
+	c.Write32(pioBase0+0xD8, 0x6020) // out x, 32
+	tickPIO(p, 6)
+	if s.x != 0x1f {
+		t.Fatalf("forced OUT while disabled: x=%#x, want 0x1f", s.x)
+	}
+	if s.stalled || s.outCount != 32 {
+		t.Fatalf("forced OUT did not complete: stalled=%v outCount=%d", s.stalled, s.outCount)
+	}
+}
+
+// An autopull OUT that finds the TX FIFO empty stalls; once a word arrives the
+// next cycle refills the OSR, and the one after that performs the shift.
+func TestPIOOutRefillResumesAfterPush(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	s := &p.sm[0]
+	c.Pins.Func[0] = pioFuncSel(0)
+	c.Pins.OE |= 1 << 0
+	c.Write32(pioBase0+0xDC, 1<<20) // OUT_COUNT=1, OUT_BASE=GP0
+	s.shiftctrl = 1 << 17           // autopull
+	s.osr = 0
+	s.outCount = 32
+	p.mem[0] = 0x6001 // out pins, 1
+	p.mem[1] = 0x0001 // jmp 1
+	c.Write32(pioBase0, 1)
+	p.tick()
+	if !s.stalled || s.pc != 0 {
+		t.Fatalf("empty-FIFO OUT did not stall: stalled=%v pc=%d", s.stalled, s.pc)
+	}
+	c.Write32(pioBase0+0x10, 0x80000000)
+	tickPIO(p, 3)
+	if s.stalled {
+		t.Fatal("OUT stayed stalled after the TX FIFO was refilled")
+	}
+	if !c.Pins.Level(0) {
+		t.Fatal("resumed OUT did not drive the high bit")
+	}
+}
+
 func TestPIOInputCountMasksPins(t *testing.T) {
 	c := newPIOConformanceChip()
 	p := c.pio[0]
