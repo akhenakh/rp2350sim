@@ -209,13 +209,15 @@ type WifiDevice struct {
 	TCPCS int `yaml:"tcpcs"`
 
 	// CYW43439 gSPI wiring.
-	RegOn int    `yaml:"reg_on"`
-	Data  int    `yaml:"data"`
-	CS    int    `yaml:"cs"`
-	CLK   int    `yaml:"clk"`
-	MAC   string `yaml:"mac"`
-	SSID  string `yaml:"ssid"`
-	Pass  string `yaml:"password"`
+	RegOn int               `yaml:"reg_on"`
+	Data  int               `yaml:"data"`
+	CS    int               `yaml:"cs"`
+	CLK   int               `yaml:"clk"`
+	MAC   string            `yaml:"mac"`
+	SSID  string            `yaml:"ssid"`
+	Pass  string            `yaml:"password"`
+	Hosts map[string]string `yaml:"hosts"`
+	NoNet bool              `yaml:"no_net"`
 }
 
 func parseMAC(s string) ([6]byte, error) {

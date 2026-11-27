@@ -229,6 +229,22 @@ kill "$chhost" 2>/dev/null || true
 contains "CH9120 TCP echo" "echo: hello ch9120" "$out"
 contains "CH9120 network advertised" "tcp/2000 established" "$out"
 
+# --- CYW43439 gSPI data path: DHCP, ARP and TCP NAT -------------------------
+if port_busy 9000; then
+	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
+	exit 1
+fi
+"$BUILD/ethhost" >"$BUILD/ethhost-cyw.log" 2>&1 &
+cywhost=$!
+sleep 0.5
+out=$("$EMU" -fw "$BUILD/pico2wnet.elf" -cyw43439 -cyw43439-host app.lan=10.0.2.2 -seconds 10 2>&1)
+kill "$cywhost" 2>/dev/null || true
+log=$(cat "$BUILD/ethhost-cyw.log")
+contains "CYW43439 DHCP lease" "pico2wnet: dhcp addr 10.0.2.15" "$out"
+contains "CYW43439 DNS" "pico2wnet: dns app.lan 10.0.2.2" "$out"
+contains "CYW43439 TCP NAT echo" "pico2wnet: echo: hello from pico2w" "$out"
+contains "CYW43439 host echo" "echoed 18 bytes" "$log"
+
 # --- virtual Wi-Fi netdev --------------------------------------------------
 "$BUILD/ethhost" >"$BUILD/ethhost-wifi.log" 2>&1 &
 wifihost=$!

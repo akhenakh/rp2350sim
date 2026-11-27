@@ -1,6 +1,6 @@
 module github.com/akhenakh/rp2350sim/cmd/simui
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/akhenakh/rp2350sim v0.0.0
@@ -19,13 +19,17 @@ require (
 	github.com/go-simd/floats v0.40.0 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/google/btree v1.1.2 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	go.hasen.dev/generic v0.1.8 // indirect
 	go.hasen.dev/udplib v0.1.0 // indirect
+	golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc // indirect
 	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
+	gvisor.dev/gvisor v0.0.0-20261126195700-26a23e1b54ab // indirect
 )
 
 replace github.com/akhenakh/rp2350sim => ../../

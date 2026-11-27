@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
@@ -37,8 +38,51 @@ type Config struct {
 	// currently advisory; the association always succeeds.
 	SSID     string
 	Password string
+	// Network configures the virtual AP's IPv4 network and NAT. Nil uses the
+	// defaults (10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3).
+	Network *NetConfig
 	// Logger receives bring-up and unknown-IOCTL diagnostics.
 	Logger *slog.Logger
+}
+
+// NetConfig is the L3 network behind the virtual AP.
+type NetConfig struct {
+	GuestIP   [4]byte
+	GatewayIP [4]byte
+	DNSIP     [4]byte
+	Prefix    int
+	APMAC     [6]byte
+	// Hosts maps a DNS name to an address (IPv4 or IPv6 literal). Names not in
+	// the map are resolved by the host resolver.
+	Hosts map[string]string
+	// Disable turns off the gVisor data path (radio control only).
+	Disable bool
+}
+
+func (n *NetConfig) defaults() {
+	if n.GuestIP == ([4]byte{}) {
+		n.GuestIP = [4]byte{10, 0, 2, 15}
+	}
+	if n.GatewayIP == ([4]byte{}) {
+		n.GatewayIP = [4]byte{10, 0, 2, 2}
+	}
+	if n.DNSIP == ([4]byte{}) {
+		n.DNSIP = [4]byte{10, 0, 2, 3}
+	}
+	if n.Prefix == 0 {
+		n.Prefix = 24
+	}
+	if n.APMAC == ([6]byte{}) {
+		n.APMAC = [6]byte{0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee}
+	}
+}
+
+// dataPath is the host-side network behind the radio (gVisor on desktop, a
+// no-op stub in the browser build).
+type dataPath interface {
+	handleFrame([]byte)
+	tick(micros uint64)
+	close()
 }
 
 type bus interface {
@@ -108,6 +152,9 @@ type Device struct {
 	linkUp     bool
 	ssid       string
 	fwBytes    int
+	hostNet    dataPath
+	dataSeq    uint8
+	mu         sync.Mutex
 }
 
 // eventSpec is one async SDPCM event to queue after the current control
@@ -179,6 +226,7 @@ const (
 	wlcSetVar      = 263
 	wlcSetSSID     = 26
 	channelControl = 0
+	maxQueue       = 64 // F2 packets waiting for the guest
 )
 
 func swap16(v uint32) uint32 { return v>>16 | v<<16 }
@@ -197,7 +245,28 @@ func Attach(c *rp2350.Chip, cfg Config) *Device {
 	})
 	d.reset()
 	d.enabledFromPins()
+	if cfg.Network == nil {
+		cfg.Network = &NetConfig{}
+	}
+	cfg.Network.defaults()
+	d.cfg.Network = cfg.Network
+	if !cfg.Network.Disable {
+		if dp, err := newDataPath(d); err != nil {
+			d.log.Error("cyw43439 network", slog.Any("err", err))
+		} else {
+			d.hostNet = dp
+			// gVisor timers run on virtual time; the hook also drains packets
+			// the host stack produces between guest transactions.
+			c.AddPeriodicHook(100*rp2350.CyclesPerMicrosecond, d.tickNetwork)
+		}
+	}
 	return d
+}
+
+func (d *Device) tickNetwork() {
+	if d.hostNet != nil && d.chip != nil {
+		d.hostNet.tick(d.chip.NowMicros())
+	}
 }
 
 func newDevice(b bus, cfg Config) *Device {
@@ -236,6 +305,7 @@ func (d *Device) reset() {
 	d.linkUp = false
 	d.ssid = ""
 	d.fwBytes = 0
+	d.dataSeq = 0
 	d.version++
 	d.bus.drive(true)
 }
@@ -469,12 +539,14 @@ func (d *Device) readResponse() []byte {
 }
 
 func (d *Device) statusWord() uint32 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	var s uint32
 	if d.firmwareUp {
 		s |= statusF2Ready
 	}
 	if len(d.queue) > 0 {
-		s |= statusF2Available | (uint32(len(d.queue[0])) << statusF2LenShift)
+		s |= statusF2Available | ((uint32(len(d.queue[0])) & 0x7ff) << statusF2LenShift)
 	}
 	return s
 }
@@ -605,7 +677,9 @@ func (d *Device) coreWrite(core int, off, v uint32) {
 	case coreResetCtrl:
 		d.cores[core].resetctl = uint8(v)
 		if core == 0 && v&coreAIRCReset == 0 && d.cores[0].ioctrl&coreSICFClock != 0 {
+			d.mu.Lock()
 			d.firmwareUp = true
+			d.mu.Unlock()
 			// The running firmware brings the HT clock up by itself; the
 			// driver waits for SBSDIO_HT_AVAIL before it explicitly requests
 			// it later in the init sequence.
@@ -630,6 +704,10 @@ func (d *Device) wlanWrite(packet []byte) {
 		return
 	}
 	channel := packet[5] & 0xf
+	if channel == 2 {
+		d.handleDataFrame(packet, hdrLen, size)
+		return
+	}
 	if channel != channelControl {
 		return
 	}
@@ -655,6 +733,49 @@ func (d *Device) wlanWrite(packet []byte) {
 
 func (d *Device) scheduleEvents(events ...eventSpec) {
 	d.scheduled = append(d.scheduled, events...)
+}
+
+// handleDataFrame strips the BDC header from an SDPCM data packet and hands
+// the Ethernet frame to the host data path.
+func (d *Device) handleDataFrame(packet []byte, hdrLen, size int) {
+	if d.hostNet == nil || hdrLen+4 > size {
+		return
+	}
+	off := hdrLen + 4 + 4*int(packet[hdrLen+3])
+	if off > size {
+		return
+	}
+	d.hostNet.handleFrame(packet[off:size])
+}
+func (d *Device) queueDataFrame(frame []byte) {
+	const bdcLen = 4
+	if d.hostNet == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.linkUp {
+		return
+	}
+	if len(d.queue) >= maxQueue {
+		if d.debug {
+			d.log.Debug("cyw43439 data drop", slog.Int("queued", len(d.queue)))
+		}
+		return
+	}
+	total := sdpcmHeaderLen + bdcLen + len(frame)
+	pkt := make([]byte, total)
+	binary.LittleEndian.PutUint16(pkt, uint16(total))
+	binary.LittleEndian.PutUint16(pkt[2:], ^uint16(total))
+	pkt[4] = d.dataSeq
+	d.dataSeq++
+	pkt[5] = 2 // DATA channel
+	pkt[7] = sdpcmHeaderLen
+	pkt[9] = d.dataSeq + 8
+	pkt[sdpcmHeaderLen] = 2 << 4 // BDC version
+	copy(pkt[sdpcmHeaderLen+bdcLen:], frame)
+	d.queue = append(d.queue, pkt)
+	d.version++
 }
 
 // queueEvent builds one SDPCM async-event packet: BDC header, the 0x886c
@@ -693,8 +814,10 @@ func (d *Device) queueEvent(ev eventSpec) {
 	binary.BigEndian.PutUint32(pkt[msgOff+12:], ev.reason)
 	copy(pkt[msgOff+24:], d.cfg.MAC[:]) // address
 	copy(pkt[msgOff+30:], "wl0")
+	d.mu.Lock()
 	d.queue = append(d.queue, pkt)
 	d.version++
+	d.mu.Unlock()
 }
 
 func (d *Device) queueResponse(seq uint8, cmd uint32, kind uint16, id uint16, payload []byte) {
@@ -711,12 +834,19 @@ func (d *Device) queueResponse(seq uint8, cmd uint32, kind uint16, id uint16, pa
 	binary.LittleEndian.PutUint16(pkt[sdpcmHeaderLen+8:], kind)
 	binary.LittleEndian.PutUint16(pkt[sdpcmHeaderLen+10:], id)
 	copy(pkt[sdpcmHeaderLen+cdcHeaderLen:], payload)
+	d.mu.Lock()
 	d.queue = append(d.queue, pkt)
 	d.version++
+	d.mu.Unlock()
 }
 
 func (d *Device) wlanRead(length int) []byte {
-	if length <= 0 || len(d.queue) == 0 {
+	if length <= 0 {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.queue) == 0 {
 		return nil
 	}
 	pkt := d.queue[0]
@@ -763,25 +893,29 @@ func splitIovar(payload []byte) (string, []byte) {
 // joinRequest records the SSID and queues the association events. The payload
 // starts with the SSID length, followed by the SSID bytes.
 func (d *Device) joinRequest(payload []byte) {
+	ssid := d.ssid
 	if len(payload) >= 4 {
-		n := int(binary.LittleEndian.Uint32(payload))
-		if n > 32 {
-			n = 32
-		}
+		n := min(int(binary.LittleEndian.Uint32(payload)), 32)
 		if len(payload) >= 4+n {
-			d.ssid = string(payload[4 : 4+n])
+			ssid = string(payload[4 : 4+n])
 		}
 	}
-	d.log.Debug("cyw43439 join", slog.String("ssid", d.ssid))
-	if d.cfg.SSID != "" && d.ssid != d.cfg.SSID {
+	d.log.Debug("cyw43439 join", slog.String("ssid", ssid))
+	if d.cfg.SSID != "" && ssid != d.cfg.SSID {
 		d.log.Debug("cyw43439 join rejected", slog.String("want", d.cfg.SSID))
+		d.mu.Lock()
+		d.ssid = ssid
 		d.linkUp = false
 		d.version++
+		d.mu.Unlock()
 		d.scheduleEvents(eventSpec{typ: evSETSSID, status: 3}) // no matching network
 		return
 	}
+	d.mu.Lock()
+	d.ssid = ssid
 	d.linkUp = true
 	d.version++
+	d.mu.Unlock()
 	d.scheduleEvents(
 		eventSpec{typ: evSETSSID, status: 0},
 		eventSpec{typ: evAUTH, status: 0},
@@ -810,8 +944,10 @@ func (d *Device) setIovar(name string, value []byte, reqLen int) {
 			mask := binary.LittleEndian.Uint32(value)
 			val := binary.LittleEndian.Uint32(value[4:])
 			if mask&1 != 0 {
+				d.mu.Lock()
 				d.led = val&1 != 0
 				d.version++
+				d.mu.Unlock()
 			}
 		}
 	case "bsscfg:ssid":
@@ -826,20 +962,40 @@ func (d *Device) setIovar(name string, value []byte, reqLen int) {
 // ---- host-facing state ----
 
 // LED reports WL_GPIO0, the Pico W's on-board LED.
-func (d *Device) LED() bool { return d.led }
+func (d *Device) LED() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.led
+}
 
 // FirmwareUp reports whether the driver has downloaded firmware and released
 // the WLAN core.
-func (d *Device) FirmwareUp() bool { return d.firmwareUp }
+func (d *Device) FirmwareUp() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.firmwareUp
+}
 
 // LinkUp reports whether a join completed.
-func (d *Device) LinkUp() bool { return d.linkUp }
+func (d *Device) LinkUp() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.linkUp
+}
 
 // SSID reports the network the station joined.
-func (d *Device) SSID() string { return d.ssid }
+func (d *Device) SSID() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.ssid
+}
 
 // Version changes whenever the visible state changes.
-func (d *Device) Version() uint64 { return d.version }
+func (d *Device) Version() uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.version
+}
 
 // Close releases the pin drive.
 func (d *Device) Close() { d.bus.release() }

@@ -216,6 +216,7 @@ func main() {
 		cywMAC       = flag.String("cyw43439-mac", "02:11:22:33:44:55", "CYW43439 station MAC address")
 		cywSSID      = flag.String("cyw43439-ssid", "", "CYW43439 virtual AP SSID (empty accepts any)")
 		cywPass      = flag.String("cyw43439-password", "", "CYW43439 virtual AP passphrase")
+		cywNoNet     = flag.Bool("cyw43439-no-net", false, "disable the CYW43439 DHCP/DNS/NAT data path")
 		bleAddr      = flag.String("ble-addr", "C0:DE:12:34:56:78", "advertised BLE peer address")
 		bleHostWake  = flag.Int("ble-host-wake", 24, "CYW43 HOST_WAKE GPIO")
 		bleSeed      = flag.Int64("ble-seed", 42, "BLE controller PRNG seed")
@@ -283,6 +284,15 @@ func main() {
 	var ultrasonicSpecs []string
 	flag.Func("ultrasonic", "attach an HC-SR04 on TRIG:ECHO[:CM] (repeatable)", func(v string) error {
 		ultrasonicSpecs = append(ultrasonicSpecs, v)
+		return nil
+	})
+	cywHosts := map[string]string{}
+	flag.Func("cyw43439-host", "CYW43439 DNS host entry NAME=IP (repeatable)", func(v string) error {
+		name, ip, ok := strings.Cut(v, "=")
+		if !ok || name == "" || net.ParseIP(ip) == nil {
+			return fmt.Errorf("want NAME=IP, got %q", v)
+		}
+		cywHosts[name] = ip
 		return nil
 	})
 	var gpsSpec string
@@ -544,6 +554,7 @@ func main() {
 			MAC:      macArr,
 			SSID:     *cywSSID,
 			Password: *cywPass,
+			Network:  &cyw43439.NetConfig{Hosts: cywHosts, Disable: *cywNoNet},
 		})
 	}
 	if *bootsel {

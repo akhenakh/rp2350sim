@@ -172,6 +172,8 @@ every UI board to its flags and demo firmware. The flags are:
 | `-cyw43439-ssid NAME` | virtual AP SSID; empty accepts any network |
 | `-cyw43439-password PASS` | virtual AP passphrase |
 | `-cyw43439-mac ADDR` | station MAC (default `02:11:22:33:44:55`) |
+| `-cyw43439-host NAME=IP` | DNS entry for the virtual AP (repeatable) |
+| `-cyw43439-no-net` | disable the DHCP/DNS/NAT data path |
 | `-ble` | virtual CYW43 BLE controller (Pico W HCI transport; see [ble.md](ble.md)) |
 | `-ble-addr ADDR` | advertised BLE peer address (default `C0:DE:12:34:56:78`) |
 | `-ble-host-wake GPIO` | CYW43 HOST_WAKE pin (default 24) |

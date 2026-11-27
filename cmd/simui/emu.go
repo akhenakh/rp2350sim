@@ -1407,6 +1407,7 @@ func (e *Emu) resetChip() {
 					MAC:      mac,
 					SSID:     w.SSID,
 					Password: w.Pass,
+					Network:  &cyw43439.NetConfig{Hosts: w.Hosts, Disable: w.NoNet},
 				})
 			} else {
 				ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)

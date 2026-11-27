@@ -195,16 +195,23 @@ What works today:
   SET_SSID/AUTH/JOIN/PSK_SUP event sequence, so the driver's `Join` completes
   and `IsLinkUp` reports true. The virtual AP accepts any SSID unless the board
   config names one (`ssid`, `password`).
+- The data path is a real L2 interface behind the gSPI transport. The guest
+  gets `10.0.2.15/24` over DHCP; gateway `10.0.2.2` maps to the host loopback
+  and DNS `10.0.2.3` answers from the board `hosts` map or the host resolver.
+  ARP, ICMP, TCP and UDP are NATed through a gVisor netstack; NTP is answered
+  locally. `-cyw43439-host NAME=IP` adds a DNS entry on the CLI.
 - `firmware/pico2w` runs the bring-up, joins `rp2350sim` and toggles the LED;
-  `task run:pico2w` executes it, and the `pico2w-cyw` UI board shows the radio
-  and link state in the Wi-Fi tab.
+  `firmware/pico2wnet` uses the lneto stack to get DHCP, resolve `app.lan` and
+  echo through a host TCP server. `task run:pico2w` / `task run:pico2wnet`
+  execute them, and the `pico2w-cyw` UI board shows the radio and link state
+  in the Wi-Fi tab.
 
-The Ethernet data path (DHCP/DNS/NAT/TCP/UDP) is the next slice. The legacy
-`pico2w` board still uses the CH9120 serial netdev for TinyGo `net` socket
-offload; Bluetooth stays on the separate `-ble` virtual controller.
+The legacy `pico2w` board still uses the CH9120 serial netdev for TinyGo `net`
+socket offload; Bluetooth stays on the separate `-ble` virtual controller.
 
-CLI: `-cyw43439` with `-cyw43439-{reg-on,data,cs,clk,mac,ssid,password}`
-overriding the Pico W wiring.
+CLI: `-cyw43439` with
+`-cyw43439-{reg-on,data,cs,clk,mac,ssid,password,host,no-net}` overriding the
+Pico W wiring and defaults.
 
 ## Breadboard W5500
 
@@ -424,4 +431,5 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/ch9120` | CH9120 TCP client |
 | `firmware/wifi` | virtual Wi-Fi through `netdev` |
 | `firmware/pico2w` | CYW43439 gSPI bring-up (`soypat/cyw43439`) |
+| `firmware/pico2wnet` | CYW43439 DHCP, DNS and TCP NAT (lneto stack) |
 | `firmware/c/*` | Pico SDK C examples (see [c.md](c.md)) |

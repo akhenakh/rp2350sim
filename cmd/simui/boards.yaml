@@ -395,6 +395,8 @@ boards:
       mac: 02:11:22:33:44:55
       ssid: rp2350sim
       password: password
+      hosts:
+        app.lan: 10.0.2.2
 
   - id: pico2-analog
     name: RP2350 + analog + protocols
