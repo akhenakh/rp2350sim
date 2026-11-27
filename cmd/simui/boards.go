@@ -1084,6 +1084,12 @@ func LoadBoards() ([]BoardDef, error) {
 				addDevicePin("ethernet cs", d.CS)
 			}
 		}
+		if w := b.Wifi; w != nil && w.Kind == "cyw43439" {
+			addDevicePin("wifi reg_on", w.RegOn)
+			addDevicePin("wifi data", w.Data)
+			addDevicePin("wifi cs", w.CS)
+			addDevicePin("wifi clk", w.CLK)
+		}
 		if d := b.WS2812; d != nil {
 			if d.Pin < 0 {
 				return nil, fmt.Errorf("boards: %s: ws2812 needs a pin", b.ID)

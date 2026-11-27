@@ -401,6 +401,7 @@ boards:
   - id: pico2w-lcd
     name: Raspberry Pi Pico 2 W + ST7789 clock
     description: CYW43439 Wi-Fi clock · DHCP + NTP from pool.ntp.org · 320×240 ST7789 on SPI0
+    scope: [24, 25, 29]
     wifi:
       kind: cyw43439
       reg_on: 23

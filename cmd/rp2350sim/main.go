@@ -1543,7 +1543,7 @@ func main() {
 			}
 			debugMu.Unlock()
 			runCycles -= done
-			netLog.report(w5500, w6300, ch9120)
+			netLog.report(w5500, w6300, ch9120, cyw)
 			if boots != lastBoot {
 				lastBoot = boots
 				log.Info("reset",
@@ -1595,7 +1595,7 @@ func main() {
 			if midiBr != nil {
 				midiBr.tick()
 			}
-			netLog.report(w5500, w6300, ch9120)
+			netLog.report(w5500, w6300, ch9120, cyw)
 			if b := c.BootCount(); b != lastBoot {
 				lastBoot = b
 				log.Info("reset",
@@ -1621,7 +1621,7 @@ func main() {
 		}
 		<-gdbDone
 	}
-	netLog.report(w5500, w6300, ch9120)
+	netLog.report(w5500, w6300, ch9120, cyw)
 	saveFlash()
 	logicPath := ""
 	logicSamples := 0
@@ -1850,7 +1850,7 @@ func main() {
 			ExpectMissing:  missing,
 			TimedOut:       timedOut,
 			ExitCode:       exitCode,
-			Network:        netLog.infos(w5500, w6300, ch9120),
+			Network:        netLog.infos(w5500, w6300, ch9120, cyw),
 			FlashPath:      flashPath,
 			LogicPath:      logicPath,
 			Boots:          c.BootCount(),

@@ -342,6 +342,10 @@ func releaseBoardResources() {
 	panicMIDI()
 	hidLED = 0
 	hidSendHex = ""
+	logicSaveMsg = ""
+	logicSaveErr = false
+	cywSaveMsg = ""
+	cywSaveErr = false
 	for _, term := range busTerms {
 		term.Close()
 	}
@@ -3525,7 +3529,7 @@ func uartClear(data []byte) string {
 	return b.String()
 }
 
-func (l uartLogLine) String(base uint64) string {
+func (l uartLogLine) String() string {
 	dir := "TX"
 	if l.in {
 		dir = "RX"
@@ -3538,7 +3542,7 @@ func (l uartLogLine) String(base uint64) string {
 		fmt.Fprintf(&hex, "%02x", b)
 	}
 	return fmt.Sprintf("%9.3fms UART%d %s  \"%s\" | %s",
-		float64(l.cycle-base)/150e3, l.bus, dir, uartClear(l.data), hex.String())
+		float64(l.cycle)/150e3, l.bus, dir, uartClear(l.data), hex.String())
 }
 
 func uartPanel(snap MachineState) {
@@ -3591,9 +3595,8 @@ func uartPanel(snap MachineState) {
 				if len(lines) > uartMaxLines {
 					lines = lines[len(lines)-uartMaxLines:]
 				}
-				base := events[0].Cycle
 				for _, line := range lines {
-					Label(line.String(base), Fonts(Monospace...), FontSize(10),
+					Label(line.String(), Fonts(Monospace...), FontSize(10),
 						TextColor(220, 6, 68, 1))
 				}
 				if uartFollow {
@@ -3607,14 +3610,13 @@ func uartBytesText(events []UARTEvent) string {
 	if len(events) == 0 {
 		return ""
 	}
-	base := events[0].Cycle
 	lines := groupUART(events)
 	if len(lines) > uartMaxLines {
 		lines = lines[len(lines)-uartMaxLines:]
 	}
 	var b strings.Builder
 	for _, line := range lines {
-		b.WriteString(line.String(base))
+		b.WriteString(line.String())
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -3792,7 +3794,7 @@ func main() {
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
 	otpPath := flag.String("otp", "", "seed OTP rows from this JSON file, overriding the board's otp.file")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, profile, hid, ble, bootsel, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, gps, scope, logic, audio, midi, otp, bus, plugins, uart, can, debug, profile, trace, hid, ble, bootsel, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	fpsFlag := flag.Int("fps", 0, "UI rebuild rate in frames per second (0 follows the active tab)")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")

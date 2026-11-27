@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/devices/cyw43439"
 )
 
 // networkReporter logs the guest identity and host endpoints whenever the
@@ -15,7 +16,7 @@ type networkReporter struct {
 	last string
 }
 
-func (r *networkReporter) infos(w5500 *devices.W5500, w6300 *devices.W6300, ch *devices.CH9120) []devices.NetworkInfo {
+func (r *networkReporter) infos(w5500 *devices.W5500, w6300 *devices.W6300, ch *devices.CH9120, cyw *cyw43439.Device) []devices.NetworkInfo {
 	var out []devices.NetworkInfo
 	if w5500 != nil {
 		out = append(out, w5500.NetworkInfo())
@@ -28,13 +29,16 @@ func (r *networkReporter) infos(w5500 *devices.W5500, w6300 *devices.W6300, ch *
 			out = append(out, info)
 		}
 	}
+	if cyw != nil {
+		out = append(out, cyw.NetworkInfo())
+	}
 	return out
 }
 
 // report emits one line per change. The summary is stable so repeated polls
 // at chunk boundaries stay quiet.
-func (r *networkReporter) report(w5500 *devices.W5500, w6300 *devices.W6300, ch *devices.CH9120) {
-	infos := r.infos(w5500, w6300, ch)
+func (r *networkReporter) report(w5500 *devices.W5500, w6300 *devices.W6300, ch *devices.CH9120, cyw *cyw43439.Device) {
+	infos := r.infos(w5500, w6300, ch, cyw)
 	if len(infos) == 0 {
 		return
 	}

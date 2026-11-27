@@ -638,3 +638,15 @@ func TestBoardsOTPPersistMayNotExist(t *testing.T) {
 		t.Fatalf("otp = %+v", o)
 	}
 }
+
+// The CYW43439's four gSPI pins must be reserved like any other device pin.
+func TestBoardsRejectCYWPinConflict(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: clash
+    wifi: { kind: cyw43439, reg_on: 23, data: 24, cs: 25, clk: 29, mac: 02:11:22:33:44:55 }
+    lcd: { spi: 0, cs: 25, dc: 16, rst: 20, width: 240, height: 320 }
+`)
+	if _, err := LoadBoards(); err == nil {
+		t.Fatal("LCD chip select reused the CYW43439 CS pin")
+	}
+}
