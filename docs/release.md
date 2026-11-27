@@ -63,6 +63,20 @@ Working notes for changes after v0.4 go here.
   including byte and halfword ITM accesses. The Trace tab groups ITM writes
   into lines, and `-itm` prints them headlessly. The GPS, CAN and Trace tabs
   have `ui:gps`, `ui:can` and `ui:trace` tasks.
+- Plugin hardening: desktop calls have a 50 ms deadline (500 ms during init),
+  a 64 MiB memory cap, a shared wazero compilation cache and deterministic
+  Lua clock/time. Lua exposes no `os`/`io`/`debug`, config encoding rejects
+  non-finite/cyclic values, and the WASM fixtures use a real static allocator.
+  UART plugins own a UART; I2C/SPI plugins cannot inject serial bytes. Board
+  plugin pins and the new device pins are validated against package bounds and
+  shared GPIOs.
+- ITM/DWT registers are per-core, CYCCNT supports write-to-reset and
+  CTRL.CYCCNTENA, exact ITM write widths are preserved, and trace LAR/LSR
+  accesses are no-ops. DHT22 negatives use sign-magnitude, DHT11 and HC-SR04
+  timings are bounded, MCP2515 READ/RX STATUS and interrupt deassert are
+  corrected, and extended CAN IDs are covered. Device models reset with the
+  chip through a reset hook. GPS has explicit fix/no-fix and standards-shaped
+  `ddmm.mmmm`/`dddmm.mmmm` output.
 
 ## v0.4 highlights
 

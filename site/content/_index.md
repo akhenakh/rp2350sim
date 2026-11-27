@@ -11,9 +11,11 @@ It provides a CLI tool and a user interface to run, mock periphericals, debug rp
 - Cortex-M33 interpreter checked against QEMU instruction by instruction
 - TinyGo and stock Pico SDK C firmware
 - GPIO, UART, SPI, I2C, PWM, ADC, PIO, DMA, USB CDC, OTP and QSPI PSRAM
+- Scripted Lua/WASM I2C, SPI and UART devices; 1-Wire, DHT, HC-SR04, NMEA GPS
+  and MCP2515 CAN
 - ST7789, touch, IMU, microSD, W5500/W6300/CH9120, WS2812B and virtual Wi-Fi
-- Desktop board picker, scope, logic analyzer, Bus Pirate terminals and a
-  DWARF debugger
+- ITM/DWT trace, desktop board picker, scope, logic analyzer, Bus Pirate
+  terminals and a DWARF debugger
 
 ![Logic tab](./docs/images/logic.png)
 

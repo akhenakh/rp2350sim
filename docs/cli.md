@@ -501,6 +501,7 @@ rp2350sim -fw build/busmaster.elf -seconds 5 \
 | `-ultrasonic TRIG:ECHO[:CM]` | attach an HC-SR04 (repeatable) |
 | `-gps UART[:LAT:LON]` | attach an NMEA GPS source |
 | `-can CS[:INT[:PEER_ID]]` | attach an MCP2515 and a CAN peer |
+| `-can-bus 0\|1` | SPI controller for `-can` (default 0) |
 | `-list-presets` | print the built-in device registry |
 | `-bus-timeout D` | I2C/SPI bridge request deadline (default 1s) |
 | `-bus-wait D` | first-client wait for an I2C/SPI bridge (default 2s) |

@@ -98,6 +98,12 @@ Useful flags:
 | `-i2c-plugin 0:0x76=dev.lua` | attach a Lua/WASM I2C device file (repeatable) |
 | `-spi-plugin 0:17=dev.wasm` | attach a Lua/WASM SPI device file (repeatable) |
 | `-uart-plugin 1=dev.lua` | attach a Lua/WASM serial companion (repeatable) |
+| `-onewire PIN[:TEMP]` | attach a DS18B20 (repeatable) |
+| `-dht PIN[:KIND[:HUM[:TEMP]]]` | attach a DHT11/22 (repeatable) |
+| `-ultrasonic TRIG:ECHO[:CM]` | attach an HC-SR04 (repeatable) |
+| `-gps UART[:LAT:LON]` | attach an NMEA GPS source |
+| `-can CS[:INT[:PEER_ID]]`, `-can-bus 0\|1` | attach an MCP2515 and a CAN peer |
+| `-itm` | print Cortex-M33 ITM stimulus writes |
 | `-continue-after-halt` | keep PIO/PWM/DMA running after a core halts (firmware that returns from `main`) |
 | `-input TEXT` | send bytes to USB CDC and UART0 after boot |
 | `-bootsel` | hold BOOTSEL/QSPI CS low at boot and during the run |
