@@ -15,7 +15,7 @@ type NMEASentence struct {
 	Fix        bool
 	Satellites int
 	Altitude   float64
-	SpeedKnots float64
+	SpeedMPS   float64
 	Course     float64
 }
 
@@ -76,7 +76,8 @@ func ParseNMEA(line string) (NMEASentence, error) {
 		if err != nil {
 			return s, err
 		}
-		s.SpeedKnots, _ = strconv.ParseFloat(f[7], 64)
+		knots, _ := strconv.ParseFloat(f[7], 64)
+		s.SpeedMPS = knots * 0.514444
 		s.Course, _ = strconv.ParseFloat(f[8], 64)
 	default:
 		return s, fmt.Errorf("nmea: unsupported %q", f[0])

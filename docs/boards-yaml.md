@@ -530,7 +530,7 @@ gps:
   lat: 45.5017
   lon: -73.5673
   altitude: 82
-  speed_knots: 3.2
+  speed_mps: 3.2
   course: 270
   satellites: 9
   fix: true
@@ -542,7 +542,7 @@ gps:
 | `uart` | 0 \| 1 | required | output UART |
 | `lat`, `lon` | float | `45.5017`, `-73.5673` | position |
 | `altitude` | float | `82` | metres |
-| `speed_knots` | float | `0` | RMC speed |
+| `speed_mps` | float | `0` | speed over ground in m/s; non-zero moves the position along `course` each sentence interval |
 | `course` | float | `0` | RMC course |
 | `satellites` | int | `9` | GGA satellite count |
 | `fix` | bool | `true` | GGA/RMC fix state |

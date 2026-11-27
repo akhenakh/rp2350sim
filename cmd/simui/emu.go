@@ -1386,7 +1386,7 @@ func (e *Emu) resetChip() {
 			g := b.GPS
 			dev := devices.NewGPS(c, g.UART, devices.GPSConfig{
 				Lat: g.Lat, Lon: g.Lon, Altitude: g.Altitude,
-				SpeedKnots: g.SpeedKnots, Course: g.Course,
+				SpeedMPS: g.SpeedMPS, Course: g.Course,
 				Satellites: g.Satellites,
 				Fix:        g.Fix != nil && *g.Fix, FixSet: g.Fix != nil,
 				Rate: time.Duration(g.RateMS) * time.Millisecond,

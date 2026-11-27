@@ -22,7 +22,7 @@
 #   onewire: [{ pin, type: ds18b20, temperature }]
 #   dht: [{ pin, kind: dht11|dht22, humidity, temperature }]
 #   ultrasonic: [{ trig, echo, distance_cm }]
-#   gps: { uart, lat, lon, altitude, speed_knots, course, satellites, fix, rate_ms }
+#   gps: { uart, lat, lon, altitude, speed_mps, course, satellites, fix, rate_ms }
 #   can: { bus, cs, int, peer_id, reply_id }
 #   i2c_presets: [{ bus, preset, addr }]   addr 0 = preset default
 #   spi_presets: [{ bus, cs, preset }]
@@ -87,7 +87,7 @@ boards:
       lat: 45.5017
       lon: -73.5673
       altitude: 82
-      speed_knots: 3.2
+      speed_mps: 0
       course: 270
       satellites: 9
     logic:
@@ -277,7 +277,7 @@ boards:
       lat: 45.5017
       lon: -73.5673
       altitude: 82
-      speed_knots: 3.2
+      speed_mps: 0
       course: 270
       satellites: 9
     can:

@@ -31,7 +31,7 @@ func TestGPSEmits(t *testing.T) {
 	c.Write32(0x4007802c, 1<<4) // UART1 FIFO enable
 	NewGPS(c, 1, GPSConfig{
 		Lat: 45.5017, Lon: -73.5673, Altitude: 82,
-		SpeedKnots: 3.2, Course: 270, Satellites: 9, Rate: time.Second,
+		SpeedMPS: 3.2, Course: 270, Satellites: 9, Rate: time.Second,
 	})
 	c.Run(1_500_000 * uint64(rp2350.CyclesPerMicrosecond))
 	var b strings.Builder
@@ -70,7 +70,7 @@ func TestGPSGoldenSentences(t *testing.T) {
 	c.Write32(0x4007802c, 1<<4)
 	NewGPS(c, 1, GPSConfig{
 		Lat: 45.5017, Lon: -73.5673, Altitude: 82,
-		SpeedKnots: 3.2, Course: 270, Satellites: 9,
+		Course: 270, Satellites: 9,
 		Rate: time.Second, FixSet: true, Fix: true,
 	})
 	c.Run(1_100_000 * uint64(rp2350.CyclesPerMicrosecond))
@@ -92,6 +92,26 @@ func TestGPSGoldenSentences(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], ",A,") {
 		t.Fatalf("RMC status = %q", lines[1])
+	}
+}
+
+func TestGPSMovesAtSpeed(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	c.Write32(0x4007802c, 1<<4)
+	g := NewGPS(c, 1, GPSConfig{
+		Lat: 45.5017, Lon: -73.5673, Altitude: 82,
+		SpeedMPS: 10, Course: 90, Satellites: 9,
+		Rate: time.Second, FixSet: true, Fix: true,
+	})
+	c.Run(1_100_000 * uint64(rp2350.CyclesPerMicrosecond))
+	info := g.Info()
+	if info.Lon <= -73.5673 {
+		t.Fatalf("eastward movement did not move longitude: %f", info.Lon)
+	}
+	if info.Lat < 45.5016 || info.Lat > 45.5018 {
+		t.Fatalf("eastward movement changed latitude: %f", info.Lat)
 	}
 }
 

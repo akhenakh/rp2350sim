@@ -799,7 +799,7 @@ gps:
   lat: 45.5017
   lon: -73.5673
   altitude: 82
-  speed_knots: 3.2
+  speed_mps: 3.2
   course: 270
   satellites: 9
   rate_ms: 1000

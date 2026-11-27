@@ -126,7 +126,7 @@ type GPSDevice struct {
 	Lat        float64 `yaml:"lat"`
 	Lon        float64 `yaml:"lon"`
 	Altitude   float64 `yaml:"altitude"`
-	SpeedKnots float64 `yaml:"speed_knots"`
+	SpeedMPS   float64 `yaml:"speed_mps"`
 	Course     float64 `yaml:"course"`
 	Satellites int     `yaml:"satellites"`
 	Fix        *bool   `yaml:"fix"`

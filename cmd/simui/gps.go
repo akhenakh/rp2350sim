@@ -25,7 +25,7 @@ func applyGPSField(field, text string, info *devices.GPSInfo) {
 		gpsEditErr = "number expected"
 		return
 	}
-	lat, lon, alt, speed, course := info.Lat, info.Lon, info.Altitude, info.SpeedKnots, info.Course
+	lat, lon, alt, speed, course := info.Lat, info.Lon, info.Altitude, info.SpeedMPS, info.Course
 	switch field {
 	case "lat":
 		lat = v
@@ -55,7 +55,7 @@ func gpsFieldValue(field string, info *devices.GPSInfo) string {
 	case "alt":
 		return fmt.Sprintf("%.1f", info.Altitude)
 	case "speed":
-		return fmt.Sprintf("%.2f", info.SpeedKnots)
+		return fmt.Sprintf("%.2f", info.SpeedMPS)
 	case "course":
 		return fmt.Sprintf("%.1f", info.Course)
 	}
@@ -127,7 +127,7 @@ func gpsPanel() {
 			gpsEditableCard("Longitude", "lon", fmt.Sprintf("%.6f", info.Lon), info)
 			statCard("Satellites", fmt.Sprintf("%d", info.Satellites))
 			gpsEditableCard("Altitude", "alt", fmt.Sprintf("%.1f m", info.Altitude), info)
-			gpsEditableCard("Speed", "speed", fmt.Sprintf("%.2f kn", info.SpeedKnots), info)
+			gpsEditableCard("Speed", "speed", fmt.Sprintf("%.2f kn", info.SpeedMPS), info)
 			gpsEditableCard("Course", "course", fmt.Sprintf("%.1f°", info.Course), info)
 		})
 		Container(Attrs(Grow(1), Expand, Gap(6), Pad(12), Corners(8),

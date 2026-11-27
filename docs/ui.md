@@ -130,7 +130,7 @@ reserved BOOTSEL id.
 | `spi_presets` | list of `{bus, cs, preset}` (built-in target) | Bus |
 | `i2c_plugins` / `spi_plugins` | list of `{bus, addr or cs, file, url, config}` (Lua/WASM target) | Bus |
 | `serial_plugins` | list of `{uart, file, url, config}` (Lua/WASM serial target) | Console |
-| `gps` | `uart`, `lat`, `lon`, `altitude`, `speed_knots`, `course`, `satellites`, `fix`, `rate_ms` | GPS |
+| `gps` | `uart`, `lat`, `lon`, `altitude`, `speed_mps`, `course`, `satellites`, `fix`, `rate_ms` | GPS |
 | `can` | `bus`, `cs`, `int`, `peer_id`, `reply_id` | CAN |
 | `ble` | `addr`, `host_wake`, `seed` | BLE |
 
@@ -504,7 +504,9 @@ The GPS tab shows the attached NMEA 0183 source: fix state, latitude,
 longitude, satellites, altitude, speed and course, plus the **NMEA log** with
 the recent GGA/RMC sentences (**Copy** exports them). Double-click latitude,
 longitude, altitude, speed or course to edit it; the value applies live, Enter
-commits and Escape restores the previous value. The sentences also
+commits and Escape restores the previous value. Speed is in metres per second;
+a non-zero speed moves the simulated position along the course at every
+sentence interval. The sentences also
 arrive on the configured UART receive FIFO, so the Logic tab or a firmware
 parser sees exactly the same stream. `task ui:gps` opens it on `pico2-gps` with
 `firmware/gps`; `ui:gps:png` renders it.

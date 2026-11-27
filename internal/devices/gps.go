@@ -2,6 +2,7 @@ package devices
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -11,7 +12,7 @@ import (
 type GPSConfig struct {
 	Lat, Lon   float64
 	Altitude   float64
-	SpeedKnots float64
+	SpeedMPS   float64
 	Course     float64
 	Satellites int
 	Fix        bool
@@ -36,7 +37,7 @@ type GPSInfo struct {
 	UART       int
 	Lat, Lon   float64
 	Altitude   float64
-	SpeedKnots float64
+	SpeedMPS   float64
 	Course     float64
 	Satellites int
 	Fix        bool
@@ -49,7 +50,7 @@ type GPSInfo struct {
 func (g *GPS) Info() GPSInfo {
 	return GPSInfo{
 		UART: g.uart, Lat: g.cfg.Lat, Lon: g.cfg.Lon,
-		Altitude: g.cfg.Altitude, SpeedKnots: g.cfg.SpeedKnots,
+		Altitude: g.cfg.Altitude, SpeedMPS: g.cfg.SpeedMPS,
 		Course: g.cfg.Course, Satellites: g.cfg.Satellites, Fix: g.cfg.Fix,
 		Sentences: g.sentences, Last: g.last, History: append([]string(nil), g.history...),
 	}
@@ -81,7 +82,7 @@ func NewGPS(c *rp2350.Chip, uart int, cfg GPSConfig) *GPS {
 
 // SetConfig replaces the simulated position and motion values. The next
 // sentence uses them; the already emitted history is left untouched.
-func (g *GPS) SetConfig(lat, lon, altitude, speedKnots, course float64) error {
+func (g *GPS) SetConfig(lat, lon, altitude, speedMPS, course float64) error {
 	if lat < -90 || lat > 90 {
 		return fmt.Errorf("latitude must be between -90 and 90")
 	}
@@ -91,14 +92,14 @@ func (g *GPS) SetConfig(lat, lon, altitude, speedKnots, course float64) error {
 	if altitude < -1000 || altitude > 10000 {
 		return fmt.Errorf("altitude must be between -1000 and 10000 m")
 	}
-	if speedKnots < 0 || speedKnots > 1000 {
-		return fmt.Errorf("speed must be between 0 and 1000 kn")
+	if speedMPS < 0 || speedMPS > 1000 {
+		return fmt.Errorf("speed must be between 0 and 1000 m/s")
 	}
 	if course < 0 || course >= 360 {
 		return fmt.Errorf("course must be between 0 and 360")
 	}
 	g.cfg.Lat, g.cfg.Lon = lat, lon
-	g.cfg.Altitude, g.cfg.SpeedKnots, g.cfg.Course = altitude, speedKnots, course
+	g.cfg.Altitude, g.cfg.SpeedMPS, g.cfg.Course = altitude, speedMPS, course
 	return nil
 }
 
@@ -114,11 +115,36 @@ func (g *GPS) Reset() {
 	g.history = nil
 }
 
+// moveMeters uses the great-circle destination formula. A non-zero speed
+// moves the simulated receiver every sentence interval along the course.
+func (g *GPS) advance(seconds float64) {
+	if !g.cfg.Fix || g.cfg.SpeedMPS <= 0 || seconds <= 0 {
+		return
+	}
+	const earthRadius = 6371000.0
+	d := g.cfg.SpeedMPS * seconds / earthRadius
+	lat1 := g.cfg.Lat * math.Pi / 180
+	lon1 := g.cfg.Lon * math.Pi / 180
+	brng := g.cfg.Course * math.Pi / 180
+	lat2 := math.Asin(math.Sin(lat1)*math.Cos(d) + math.Cos(lat1)*math.Sin(d)*math.Cos(brng))
+	lon2 := lon1 + math.Atan2(math.Sin(brng)*math.Sin(d)*math.Cos(lat1),
+		math.Cos(d)-math.Sin(lat1)*math.Sin(lat2))
+	lon := lon2 * 180 / math.Pi
+	for lon < -180 {
+		lon += 360
+	}
+	for lon > 180 {
+		lon -= 360
+	}
+	g.cfg.Lat, g.cfg.Lon = lat2*180/math.Pi, lon
+}
+
 func (g *GPS) tick() {
 	if g.c.Cycles < g.next {
 		return
 	}
 	g.next = g.c.Cycles + uint64(g.cfg.Rate/time.Microsecond)*uint64(rp2350.CyclesPerMicrosecond)
+	g.advance(g.cfg.Rate.Seconds())
 	g.seconds++
 	t := fmt.Sprintf("%02d%02d%02d.00", (g.seconds/3600)%24, (g.seconds/60)%60, g.seconds%60)
 	lat := formatNMEACoord(g.cfg.Lat, 'N', 'S', 2)
@@ -129,9 +155,11 @@ func (g *GPS) tick() {
 	}
 	gga := fmt.Sprintf("GPGGA,%s,%s,%s,%d,%02d,0.9,%.1f,M,0.0,M,,",
 		t, lat, lon, fix, g.cfg.Satellites, g.cfg.Altitude)
+	// RMC carries speed over ground in knots; the editable value is m/s.
+	knots := g.cfg.SpeedMPS * 1.9438444924406
 	rmc := fmt.Sprintf("GPRMC,%s,%s,%s,%s,%.2f,%.1f,010125,,,A",
 		t, map[bool]string{true: "A", false: "V"}[g.cfg.Fix], lat, lon,
-		g.cfg.SpeedKnots, g.cfg.Course)
+		knots, g.cfg.Course)
 	for _, body := range []string{gga, rmc} {
 		line := nmeaLine(body)
 		g.sentences++
