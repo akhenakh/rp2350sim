@@ -145,6 +145,9 @@ func RootView() {
 		returnToBoardPicker()
 	}
 
+	// The logic sampler runs at 2 MHz; only pay for it while its tab is on
+	// screen. A trigger armed from the UI or the command line overrides this.
+	emu.SetLogicTabActive(activeTab == tabLogic)
 	if emu.Booted() {
 		updateTouchInput()
 	}
@@ -3390,6 +3393,9 @@ func main() {
 	}
 	touchDemo = *touchDemoFlag
 	setTab(*tabName)
+	// A headless warm-up runs before the first frame, so apply the capture
+	// demand now instead of waiting for RootView.
+	emu.SetLogicTabActive(activeTab == tabLogic)
 	if *profileFlag || activeTab == tabProfile {
 		emu.SetProfiling(true)
 	}

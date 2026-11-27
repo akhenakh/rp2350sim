@@ -360,10 +360,12 @@ spectrum view for headless renders. `task ui:scope:fft` and
 
 The scope and logic traces sample on a fixed virtual-time grid (1 MHz and
 2 MHz) through periodic hooks, so they do not stop an idle core from being
-fast-forwarded. A live window paces virtual time to real time (see the toolbar
-note above), so the `virtual` counter tracks wall time unless the interpreter
-cannot keep up, in which case it turns red; `--turbo` runs flat out. The Debug
-tab pauses the chip.
+fast-forwarded. The logic sampler runs only while the Logic tab is visible or a
+trigger is armed; switching away pauses it, and opening the tab again starts a
+fresh window. A live window paces virtual time to real
+time (see the toolbar note above), so the `virtual` counter tracks wall time
+unless the interpreter cannot keep up, in which case it turns red; `--turbo`
+runs flat out. The Debug tab pauses the chip.
 
 ![Scope tab](images/scope.png)
 

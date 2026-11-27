@@ -379,7 +379,8 @@ The `bootsel` id is reserved when it is not the BOOTSEL kind.
 
 Hints for the Logic tab decoders. Pins are observed, not claimed by a device;
 they must still be inside the selected package. `miso` and `cs` are optional for
-SPI.
+SPI. The 2 MHz sampler runs while the Logic tab is open or a trigger is armed,
+so a board can declare the hints without slowing the other tabs.
 
 ```yaml
 logic:

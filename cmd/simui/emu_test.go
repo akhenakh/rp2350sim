@@ -131,6 +131,47 @@ func newTestEmu() *Emu {
 	return e
 }
 
+func TestLogicCaptureDemand(t *testing.T) {
+	e := newTestEmu()
+	miso, cs := 4, 17
+	b := &BoardDef{
+		ID: "logic-demand",
+		Logic: &LogicDevice{
+			UART: &UARTDevice{Bus: 1, TX: 8, RX: 9, Baud: 115200},
+			I2C:  &I2CDevice{SDA: 12, SCL: 13},
+			SPI:  &SPIDevice{Bus: 0, SCK: 18, MOSI: 19, MISO: &miso, CS: &cs},
+		},
+	}
+	e.SetBoard(b)
+	e.mu.Lock()
+	hook, active := e.logicHook, e.logicActive
+	e.mu.Unlock()
+	if hook == nil {
+		t.Fatal("logic board did not create a sampler")
+	}
+	if active || hook.Active() {
+		t.Fatal("logic sampler runs while the Logic tab is closed")
+	}
+
+	e.SetLogicTabActive(true)
+	if !hook.Active() {
+		t.Fatal("logic sampler did not start with the Logic tab")
+	}
+	e.SetLogicTabActive(false)
+	if hook.Active() {
+		t.Fatal("logic sampler kept running after the tab closed")
+	}
+
+	e.SetLogicTrigger(LogicTrigger{Kind: "uart"})
+	if !hook.Active() {
+		t.Fatal("armed trigger did not start the sampler")
+	}
+	e.SetLogicTrigger(LogicTrigger{})
+	if hook.Active() {
+		t.Fatal("disarmed trigger left the sampler running")
+	}
+}
+
 func writeFlashELF(t *testing.T) string {
 	t.Helper()
 	const headerSize = 52

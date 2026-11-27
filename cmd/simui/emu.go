@@ -211,14 +211,20 @@ type Emu struct {
 	canBus  *devices.CANBus
 	canDev  *devices.MCP2515
 
-	scopePins  []int
-	scope      *devices.Trace
-	logic      *devices.Trace
-	signals    []*devices.SignalSource
-	usbEvents  []USBEvent
-	uartEvents []UARTEvent
-	spiEvents  []SPIEvent
-	i2cEvents  []I2CEvent
+	scopePins []int
+	scope     *devices.Trace
+	logic     *devices.Trace
+	// logicHook is the analyzer's interval sampler. It is paused unless the
+	// Logic tab is visible or a trigger is armed, so a board with a logic:
+	// block does not pay for capture while another tab is open.
+	logicHook   *rp2350.PeriodicHook
+	logicTab    bool
+	logicActive bool
+	signals     []*devices.SignalSource
+	usbEvents   []USBEvent
+	uartEvents  []UARTEvent
+	spiEvents   []SPIEvent
+	i2cEvents   []I2CEvent
 
 	midiKind    string
 	midiUART    int
@@ -682,6 +688,7 @@ func (e *Emu) SetLogicTrigger(t LogicTrigger) {
 	defer e.mu.Unlock()
 	e.trigger = t
 	e.frozen = frozenLogic{}
+	e.applyLogicCaptureLocked()
 }
 
 // RearmLogic clears a frozen capture and waits for the next trigger event.
@@ -689,6 +696,43 @@ func (e *Emu) RearmLogic() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.frozen = frozenLogic{}
+	e.applyLogicCaptureLocked()
+}
+
+// SetLogicTabActive tells the emulator whether the Logic tab is on screen.
+// Capture runs while it is, or from boot when a trigger is armed; otherwise
+// the 2 MHz sampler is paused and does not bound the idle fast-forward.
+func (e *Emu) SetLogicTabActive(active bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.logicTab == active {
+		return
+	}
+	e.logicTab = active
+	e.applyLogicCaptureLocked()
+}
+
+func (e *Emu) logicCaptureWantedLocked() bool {
+	return !e.frozen.triggered && (e.logicTab || e.trigger.Kind != "")
+}
+
+// applyLogicCaptureLocked pauses or resumes the analyzer sampler. Reactivating
+// starts a fresh window; the previous ring may predate the pause.
+func (e *Emu) applyLogicCaptureLocked() {
+	want := e.logicCaptureWantedLocked()
+	if e.logic == nil || e.logicHook == nil {
+		e.logicActive = false
+		return
+	}
+	if want == e.logicActive {
+		return
+	}
+	e.logicActive = want
+	if want {
+		e.logic.Reset()
+		e.logic.Tick()
+	}
+	e.logicHook.SetActive(want)
 }
 
 // LogicTriggered reports whether a capture is frozen and what caused it.
@@ -723,6 +767,8 @@ func (e *Emu) checkTriggerLocked(kind, info string) {
 	if e.trigger.Pause {
 		e.running = false
 	}
+	// The capture is frozen; no further samples are needed until rearm.
+	e.applyLogicCaptureLocked()
 }
 
 // SetScopePins changes the scope channels without resetting the machine.
@@ -1161,6 +1207,8 @@ func (e *Emu) resetChip() {
 	e.hangText = ""
 	e.scope = nil
 	e.logic = nil
+	e.logicHook = nil
+	e.logicActive = false
 	e.signals = e.signals[:0]
 	e.closePlugins()
 	logEth := e.ethLog.logger()
@@ -1402,8 +1450,11 @@ func (e *Emu) resetChip() {
 
 		if pins := b.LogicPins(); len(pins) > 0 {
 			e.logic = devices.NewTrace(c, pins, devices.LogicInterval, devices.LogicDepth)
+			e.logic.Digital = true
 			e.logic.Tick()
-			c.AddPeriodicHook(e.logic.Interval, e.logic.Tick)
+			e.logicHook = c.AddPeriodicHook(e.logic.Interval, e.logic.Tick)
+			e.logicActive = true
+			e.applyLogicCaptureLocked()
 		}
 		c.OnI2C = func(bus int, cycles uint64, kind string, addr uint8, data byte, ack bool) {
 			e.addI2C(bus, cycles, kind, addr, data, ack)
