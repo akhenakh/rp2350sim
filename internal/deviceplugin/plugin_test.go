@@ -3,6 +3,7 @@ package deviceplugin
 import (
 	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -123,6 +124,9 @@ func TestLuaConfigRejectsBadValues(t *testing.T) {
 }
 
 func TestPluginExecutionTimeout(t *testing.T) {
+	if runtime.GOOS == "js" {
+		t.Skip("the browser engine cannot preempt a synchronous call")
+	}
 	p, err := Load(Config{
 		Name: "spin",
 		Lang: Lua,
