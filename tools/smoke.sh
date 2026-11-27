@@ -650,6 +650,14 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			out=$("$EMU" -fw "$EX/rand/rand.elf" -seconds 3 -quiet \
 				-expect "All done" -stop-on-expect 2>&1)
 			contains "pico-examples TRNG rand" "All done" "$out"
+			out=$("$EMU" -fw "$EX/clocks_hello_48MHz/hello_48MHz.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples clocks 48MHz" "Hello, 48MHz" "$out"
+			out=$("$EMU" -fw "$EX/dma_control_blocks/dma_control_blocks.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples DMA control blocks" "DMA finished." "$out"
+			out=$("$EMU" -fw "$EX/dma_sniff_crc/sniff_crc.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples DMA sniff CRC" "CRC32 check is good" "$out"
+			out=$("$EMU" -fw "$EX/binary_info_hello/hello_anything.elf" -seconds 1 -quiet 2>&1)
+			contains "pico-examples binary info" "Hello, world!" "$out"
 			out=$("$EMU" -fw "$EX/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf" -seconds 0.5 -quiet \
 				-dvi-png "$BUILD/dvi-smoke.png" 2>&1)
 			if "$BUILD/pngcheck" -w 640 -h 480 -colors 100 "$BUILD/dvi-smoke.png" >>"$SMOKE_LOG" 2>&1; then
@@ -691,6 +699,22 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			# dcp_dot consume the wrong elements and print 28.
 			out=$("$EMU" -fw "$EX/hello_dcp/hello_dcp.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples DCP" "(1,2,3).(4,5,6)=32" "$out"
+			out=$("$EMU" -fw "$EX/system_boot_info/boot_info.elf" -seconds 1 -quiet 2>&1)
+			contains "pico-examples boot info" "boot_type: 0" "$out"
+			contains "pico-examples boot info normal" "normal" "$out"
+			out=$("$EMU" -fw "$EX/system_narrow_io_write/narrow_io_write.elf" -seconds 1 -quiet 2>&1)
+			contains "pico-examples narrow IO write" "Should be 0xdeadbeef: 0xdeadbeef" "$out"
+			contains "pico-examples narrow IO alias" "Should be 0x3c3c3c3c: 0x3c3c3c3c" "$out"
+			out=$("$EMU" -fw "$EX/system_unique_board_id/unique_board_id.elf" -seconds 1 -quiet 2>&1)
+			contains "pico-examples unique board id" "Unique identifier:" "$out"
+			out=$("$EMU" -fw "$EX/adc_onboard_temperature/onboard_temperature.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples onboard temperature" "Onboard temperature = 20.12 C" "$out"
+			out=$("$EMU" -fw "$EX/adc_read_vsys/read_vsys.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples read vsys" "temp 20.1 DegC" "$out"
+			out=$("$EMU" -fw "$EX/adc_dma_capture/adc_dma_capture.elf" -seconds 3 -quiet 2>&1)
+			contains "pico-examples ADC DMA capture" "Capture finished" "$out"
+			out=$("$EMU" -fw "$EX/flash_program/flash_program.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples flash program" "Programming successful!" "$out"
 			fi
 
 			if in_group pex || in_group pex3; then
@@ -707,6 +731,17 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			contains "pico-examples timer repeat" "Repeat at " "$out"
 			contains "pico-examples timer cancel" "cancelled... 1" "$out"
 			contains "pico-examples timer done" "Done" "$out"
+			out=$("$EMU" -fw "$EX/timer_lowlevel/timer_lowlevel.elf" -seconds 3 -quiet \
+				-hang-cycles 0 -expect "Alarm IRQ fired" -stop-on-expect 2>&1)
+			contains "pico-examples timer low-level alarm" "Alarm IRQ fired" "$out"
+			out=$("$EMU" -fw "$EX/timer_periodic_sampler/periodic_sampler.elf" -seconds 3 -quiet 2>&1)
+			contains "pico-examples periodic sampler" "Done" "$out"
+			out=$("$EMU" -fw "$EX/multicore_doorbell/multicore_doorbell.elf" -seconds 3 -quiet 2>&1)
+			contains "pico-examples multicore doorbell" "Final doorbell irq count" "$out"
+			out=$("$EMU" -fw "$EX/multicore_runner/multicore_runner.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples multicore runner" "Factorial 10 is 3628800" "$out"
+			out=$("$EMU" -fw "$EX/multicore_runner_queue/multicore_runner_queue.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples multicore runner queue" "Hello, multicore_runner using queues!" "$out"
 
 			# GPIO/PIO/PWM programs: measure the pin, not just the console.
 			if "$EMU" -fw "$EX/blink/blink.elf" -seconds 1.2 -quiet \
@@ -769,6 +804,8 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			else
 				bad "pico-examples I2C scan devices" "$out"
 			fi
+			out=$("$EMU" -fw "$EX/usb_dev_lowlevel/dev_lowlevel.elf" -seconds 5 -quiet 2>&1)
+			contains "pico-examples USB low-level device" "Device Enumerated" "$out"
 			fi
 		else
 			bad "pico-examples build" "$(tail -20 "$SMOKE_LOG")"
