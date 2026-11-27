@@ -1185,7 +1185,9 @@ func trimRing[T any](s []T, max, keep int) []T {
 
 func (e *Emu) addUART(bus int, cycle uint64, in bool, b byte) {
 	e.uartEvents = append(e.uartEvents, UARTEvent{Bus: bus, Cycle: cycle, In: in, Data: b})
-	e.uartEvents = trimRing(e.uartEvents, 512, 256)
+	// Keep a deep history for the UART tab; the logic analyzer only looks at a
+	// handful of recent TX bytes, but the raw log is meant to be scrolled back.
+	e.uartEvents = trimRing(e.uartEvents, 16384, 8192)
 	if !in && e.triggerArmed("uart") {
 		e.checkTriggerLocked("uart", fmt.Sprintf("UART TX 0x%02x", b))
 	}

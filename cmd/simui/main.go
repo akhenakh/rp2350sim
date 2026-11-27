@@ -52,6 +52,7 @@ var (
 	logicSaveErr       bool
 	cywSaveMsg         string
 	cywSaveErr         bool
+	uartFollow         = true
 	busTerms           = map[string]*BusTerminal{}
 	busTermErrs        = map[string]string{}
 	busInput           string
@@ -3464,7 +3465,10 @@ func pluginTotalLines(plugins []PluginInfo) int {
 // show.
 // uartLineBytes is the maximum number of bytes grouped into one log line. A
 // newline also ends the line, so firmware output stays line-oriented.
-const uartLineBytes = 64
+const (
+	uartLineBytes = 64
+	uartMaxLines  = 1000
+)
 
 type uartLogLine struct {
 	cycle uint64
@@ -3555,6 +3559,14 @@ func uartPanel(snap MachineState) {
 			Filler(1)
 			Label(fmt.Sprintf("UART0 TX %d · RX %d   UART1 TX %d · RX %d",
 				tx[0], rx[0], tx[1], rx[1]), FontSize(11), TextColor(140, 45, 65, 1))
+			follow := "Follow"
+			if uartFollow {
+				follow = "Following"
+			}
+			if Button(NoIcon, follow) {
+				uartFollow = !uartFollow
+				RequestNextFrame()
+			}
 			if len(events) > 0 && Button(NoIcon, "Copy") {
 				RequestTextCopy(uartBytesText(events))
 			}
@@ -3566,6 +3578,9 @@ func uartPanel(snap MachineState) {
 		ContainerWithKey("uart-log",
 			Attrs(Grow(1), Expand, Clip, Viewport, Gap(1), Pad2(4, 6),
 				Background(220, 12, 8, 1), Corners(4), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+				if IsHovered() && (GetFrameInput().Scroll[0] != 0 || GetFrameInput().Scroll[1] != 0) {
+					uartFollow = false
+				}
 				ScrollOnInput()
 				ScrollBars()
 				if len(events) == 0 {
@@ -3573,13 +3588,16 @@ func uartPanel(snap MachineState) {
 					return
 				}
 				lines := groupUART(events)
-				if len(lines) > 512 {
-					lines = lines[len(lines)-512:]
+				if len(lines) > uartMaxLines {
+					lines = lines[len(lines)-uartMaxLines:]
 				}
 				base := events[0].Cycle
 				for _, line := range lines {
 					Label(line.String(base), Fonts(Monospace...), FontSize(10),
 						TextColor(220, 6, 68, 1))
+				}
+				if uartFollow {
+					SetScrollOffset(Vec2{0, 1e6})
 				}
 			})
 	})
@@ -3590,8 +3608,12 @@ func uartBytesText(events []UARTEvent) string {
 		return ""
 	}
 	base := events[0].Cycle
+	lines := groupUART(events)
+	if len(lines) > uartMaxLines {
+		lines = lines[len(lines)-uartMaxLines:]
+	}
 	var b strings.Builder
-	for _, line := range groupUART(events) {
+	for _, line := range lines {
 		b.WriteString(line.String(base))
 		b.WriteByte('\n')
 	}
