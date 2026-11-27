@@ -16,37 +16,58 @@ const (
 	itmTER  = 0xE0000E00
 	itmTPR  = 0xE0000E40
 	itmTCR  = 0xE0000E80
+	itmLAR  = 0xE0000FB0
+	itmLSR  = 0xE0000FB4
 	dwtBase = 0xE0001000
 	dwtCTRL = 0xE0001000
 	dwtCYCC = 0xE0001004
 	dwtPCSR = 0xE000101C
+	dwtLAR  = 0xE0001FB0
+	dwtLSR  = 0xE0001FB4
 )
 
-// traceRead32 services ITM/DWT registers. ok is false for other addresses.
-func (c *Chip) traceRead32(addr uint32) (uint32, bool) {
+func traceCore(core int) int {
+	if core < 0 || core > 1 {
+		return 0
+	}
+	return core
+}
+
+// traceRead32Core services the core-local ITM/DWT registers.
+func (c *Chip) traceRead32Core(coreArg int, addr uint32) (uint32, bool) {
+	core := traceCore(coreArg)
 	switch {
 	case addr >= itmBase && addr < itmBase+0x80:
 		return 1, true // stimulus FIFO is always ready
 	case addr == itmTER:
-		return c.itmTER, true
+		return c.itmTER[core], true
 	case addr == itmTPR:
-		return c.itmTPR, true
+		return c.itmTPR[core], true
 	case addr == itmTCR:
-		return c.itmTCR, true
+		return c.itmTCR[core], true
+	case addr == itmLAR || addr == dwtLAR:
+		return 0, true // no lock gate on the emulated trace blocks
+	case addr == itmLSR || addr == dwtLSR:
+		return 0, true // unlocked
 	case addr == dwtCTRL:
-		return c.dwtCTRL, true
+		return c.dwtCTRL[core], true
 	case addr == dwtCYCC:
-		return uint32(c.Cycles), true
+		if !c.dwtCYCRun[core] {
+			return c.dwtCYCVal[core], true
+		}
+		return uint32(c.Cycles - c.dwtCYCBase[core]), true
 	case addr == dwtPCSR:
+		if core == 1 {
+			return c.CPU1.R[15], true
+		}
 		return c.CPU0.R[15], true
 	}
 	return 0, false
 }
 
-// traceReadN reads a byte or halfword from the trace registers by extracting
-// the selected lanes from the containing word.
+// traceReadN reads a byte or halfword from the trace registers.
 func (c *Chip) traceReadN(addr uint32, size int) (uint32, bool) {
-	v, ok := c.traceRead32(addr &^ 3)
+	v, ok := c.traceRead32Core(c.core, addr&^3)
 	if !ok {
 		return 0, false
 	}
@@ -59,63 +80,90 @@ func (c *Chip) traceReadN(addr uint32, size int) (uint32, bool) {
 }
 
 // traceWriteN writes a byte or halfword. Stimulus ports accept narrow writes;
-// the data is shifted into the containing word, and the word writer emits the
-// non-zero lanes. Other ITM/DWT registers get a read-modify-write.
+// each accessed byte is emitted to the word's port. Other ITM/DWT registers
+// get a read-modify-write.
 func (c *Chip) traceWriteN(addr uint32, v uint32, size int) bool {
 	if addr >= itmBase && addr < itmBase+0x80 {
-		c.traceWrite32(addr&^3, v<<((addr&3)*8))
+		port := int((addr - itmBase) / 4)
+		for i := range size {
+			c.emitITM(c.core, port, byte(v>>(8*i)))
+		}
 		return true
 	}
 	aligned := addr &^ 3
 	switch aligned {
-	case itmTER, itmTPR, itmTCR, dwtCTRL:
-		old, _ := c.traceRead32(aligned)
+	case itmTER, itmTPR, itmTCR, dwtCTRL, itmLAR, dwtLAR:
+		old, _ := c.traceRead32Core(c.core, aligned)
 		shift := (addr & 3) * 8
 		mask := uint32(0xFF) << shift
 		if size == 2 {
 			mask = 0xFFFF << shift
 		}
-		c.traceWrite32(aligned, old&^mask|(v<<shift)&mask)
+		c.traceWrite32Core(c.core, aligned, old&^mask|(v<<shift)&mask)
 		return true
 	}
 	return false
 }
 
-// traceWrite32 services ITM/DWT writes. ok is false for other addresses.
-func (c *Chip) traceWrite32(addr, v uint32) bool {
+// traceWrite32Core services the core-local ITM/DWT registers.
+func (c *Chip) traceWrite32Core(coreArg int, addr, v uint32) bool {
+	core := traceCore(coreArg)
 	switch {
 	case addr >= itmBase && addr < itmBase+0x80:
 		port := int((addr - itmBase) / 4)
-		if c.itmTCR&1 != 0 && c.itmTER&(1<<uint(port)) != 0 {
-			for shift := 0; shift < 32; shift += 8 {
-				b := byte(v >> uint(shift))
-				if b != 0 {
-					c.emitTrace(TraceEvent{Kind: "itm", Port: port, Data: uint32(b), Text: string([]byte{b}), PC: c.CPU0.R[15]})
-				}
-			}
+		for i := range 4 {
+			c.emitITM(core, port, byte(v>>(8*i)))
 		}
 		return true
 	case addr == itmTER:
-		c.itmTER = v
+		c.itmTER[core] = v
 		return true
 	case addr == itmTPR:
-		c.itmTPR = v
+		c.itmTPR[core] = v
 		return true
 	case addr == itmTCR:
-		c.itmTCR = v
+		c.itmTCR[core] = v
+		return true
+	case addr == itmLAR || addr == dwtLAR:
+		return true
+	case addr == itmLSR || addr == dwtLSR:
 		return true
 	case addr == dwtCTRL:
-		c.dwtCTRL = v
+		old := c.dwtCTRL[core]
+		enable := v&1 != 0
+		if old&1 != 0 && !enable {
+			c.dwtCYCVal[core] = uint32(c.Cycles - c.dwtCYCBase[core])
+		} else if old&1 == 0 && enable {
+			c.dwtCYCBase[core] = c.Cycles - uint64(c.dwtCYCVal[core])
+		}
+		c.dwtCTRL[core] = v
+		c.dwtCYCRun[core] = enable
 		return true
 	case addr == dwtCYCC:
+		c.dwtCYCBase[core] = c.Cycles
+		c.dwtCYCVal[core] = 0
 		return true
 	}
 	return false
 }
 
-func (c *Chip) emitTrace(ev TraceEvent) {
+func (c *Chip) emitITM(core, port int, b byte) {
+	if c.itmTCR[core]&1 == 0 || c.itmTER[core]&(1<<uint(port)) == 0 {
+		return
+	}
+	ev := TraceEvent{
+		Kind: "itm", Port: port, Data: uint32(b), Text: string([]byte{b}),
+		PC: c.CPU0.R[15],
+	}
+	if core == 1 {
+		ev.PC = c.CPU1.R[15]
+	}
+	c.emitTraceAt(core, ev)
+}
+
+func (c *Chip) emitTraceAt(core int, ev TraceEvent) {
 	ev.Cycle = c.Cycles
-	ev.Core = c.core
+	ev.Core = core
 	if c.OnTrace != nil {
 		c.OnTrace(ev)
 	}

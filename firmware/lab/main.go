@@ -1,5 +1,5 @@
 // lab is the RP2350-Touch-LCD-2 dashboard for the timed devices: a DS18B20 on
-// 1-Wire, a DHT22, an HC-SR04, an NMEA GPS on UART1 and an MCP2515 on SPI1.
+// 1-Wire, a DHT22, an HC-SR04, an NMEA GPS on UART1 and an MCP2515 on SPI0.
 // Each sensor is optional: a missing device leaves its row at n/a, so the same
 // image runs on every lab board variant. ITM stimulus lines feed the Trace tab.
 package main
@@ -107,7 +107,7 @@ func itm(s string) {
 	for i := 0; i < len(s); i++ {
 		for *unsafePointer(itmStim0) == 0 {
 		}
-		*unsafePointer(itmStim0) = uint32(s[i])
+		*(*uint8)(unsafe.Pointer(uintptr(itmStim0))) = s[i]
 	}
 }
 

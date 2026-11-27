@@ -2,7 +2,7 @@
 // no UART or USB stdio is involved.
 #include "pico/stdlib.h"
 
-#define ITM_STIM0 (*(volatile unsigned int *)0xE0000000)
+#define ITM_STIM0 (*(volatile unsigned char *)0xE0000000)
 #define ITM_TER   (*(volatile unsigned int *)0xE0000E00)
 #define ITM_TCR   (*(volatile unsigned int *)0xE0000E80)
 

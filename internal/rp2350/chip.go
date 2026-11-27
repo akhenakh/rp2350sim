@@ -192,9 +192,13 @@ type Chip struct {
 	// OnUART0 and OnUART1 receive console bytes written by firmware.
 	OnUART0 func(b byte)
 	OnUART1 func(b byte)
-	// ITM/DWT trace state and sink.
-	itmTER, itmTPR, itmTCR, dwtCTRL uint32
+	// ITM/DWT trace state and sink. The registers are core-local.
+	itmTER, itmTPR, itmTCR, dwtCTRL [2]uint32
+	dwtCYCBase                      [2]uint64
+	dwtCYCVal                       [2]uint32
+	dwtCYCRun                       [2]bool
 	OnTrace                         func(TraceEvent)
+	resetHooks                      []func()
 	// OnUSBMIDI receives USB-MIDI event packets (4 bytes per event) sent by
 	// firmware on the MIDI IN endpoint.
 	OnUSBMIDI func(b []byte)
@@ -1093,6 +1097,13 @@ func (c *Chip) Reset() {
 	c.Pins.reset()
 	c.io.reset()
 	c.sio.reset()
+	c.itmTER = [2]uint32{}
+	c.itmTPR = [2]uint32{}
+	c.itmTCR = [2]uint32{}
+	c.dwtCTRL = [2]uint32{}
+	c.dwtCYCBase = [2]uint64{}
+	c.dwtCYCVal = [2]uint32{}
+	c.dwtCYCRun = [2]bool{}
 	// Every register block returns to its architectural reset state. The
 	// hooks restore values that are not zero (PIO/PWM/QMI/OTP/BOOTRAM) and
 	// clear the state those registers drive.
@@ -1107,6 +1118,9 @@ func (c *Chip) Reset() {
 	c.resetPSRAM()
 	c.invalidateCodeAll()
 	c.profileOnReset()
+	for _, fn := range c.resetHooks {
+		fn()
+	}
 }
 
 // resetCore performs the core-local reset requested by SYSRESETREQ. It must not
@@ -1167,6 +1181,15 @@ func (c *Chip) applyReset() {
 }
 
 // Boot vectors core 0 at the image in flash.
+// AddResetHook registers a callback invoked after Chip.Reset has restored
+// the chip and pin state. Device models use it to discard a transaction that
+// straddled a watchdog or firmware reset.
+func (c *Chip) AddResetHook(fn func()) {
+	if fn != nil {
+		c.resetHooks = append(c.resetHooks, fn)
+	}
+}
+
 func (c *Chip) Boot() {
 	// Record the button state before Reset (which preserves it) so the UI can
 	// report a BOOTSEL-held boot, as the bootrom would sample it.
@@ -1450,7 +1473,7 @@ func (c *Chip) Read16(addr uint32) uint16 {
 }
 
 func (c *Chip) Read32(addr uint32) uint32 {
-	if v, ok := c.traceRead32(addr); ok {
+	if v, ok := c.traceRead32Core(c.core, addr); ok {
 		return v
 	}
 	if addr >= SRAMBase && addr < SRAMBase+SRAMSize-3 {
@@ -1585,7 +1608,7 @@ func (c *Chip) Write16(addr uint32, v uint16) {
 }
 
 func (c *Chip) Write32(addr uint32, v uint32) {
-	if c.traceWrite32(addr, v) {
+	if c.traceWrite32Core(c.core, addr, v) {
 		return
 	}
 	if c.OnWrite != nil {
