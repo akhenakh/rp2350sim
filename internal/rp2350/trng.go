@@ -258,6 +258,9 @@ func (s *shaBlock) reset() {
 	s.err = false
 	s.bswap = true
 	s.dmaSize = 2
+	// Keep the writable control fields in the register file so the +0x2000/
+	// +0x3000 atomic aliases (hw_set_bits/hw_clear_bits) preserve them.
+	s.block.regs[0] = 1<<12 | 2<<8
 }
 
 func (s *shaBlock) start() {
@@ -319,6 +322,11 @@ func (s *shaBlock) write(c *Chip, off, v uint32) {
 		}
 		s.bswap = v&(1<<12) != 0
 		s.dmaSize = (v >> 8) & 3
+		writable := s.dmaSize << 8
+		if s.bswap {
+			writable |= 1 << 12
+		}
+		s.block.regs[0] = writable
 	case 4: // WDATA
 		s.writeWord(c, v)
 	}

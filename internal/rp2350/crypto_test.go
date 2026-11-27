@@ -346,3 +346,46 @@ func TestTRNGInterruptAndClearAlias(t *testing.T) {
 		t.Fatal("SW reset left IRQ 39 pending")
 	}
 }
+
+// TestSHA256CSRAliases walks the SDK helper path: sha256_start() is
+// hw_set_bits(csr, START) and sha256_set_bswap() uses the same aliases. The
+// generic read-modify-write used to read zero from the register file and clear
+// BSWAP/DMA_SIZE on every start.
+func TestSHA256CSRAliases(t *testing.T) {
+	c := New()
+	csr := c.Read32(shaBase)
+	if csr&(1<<12) == 0 || (csr>>8)&3 != 2 {
+		t.Fatalf("reset CSR = %#x, want BSWAP and DMA_SIZE=2", csr)
+	}
+
+	c.Write32(shaBase+0x3000, 1<<12) // clear BSWAP through the CLR alias
+	csr = c.Read32(shaBase)
+	if csr&(1<<12) != 0 {
+		t.Fatalf("CLR alias left BSWAP set: %#x", csr)
+	}
+	if (csr>>8)&3 != 2 {
+		t.Fatalf("CLR alias changed DMA_SIZE: %#x", csr)
+	}
+	c.Write32(shaBase+0x2000, 1<<12) // set BSWAP back through SET
+
+	// Start through the SET alias with the reset default BSWAP=1.
+	c.Write32(shaBase+0x2000, 1)
+	csr = c.Read32(shaBase)
+	if csr&(1<<12) == 0 || (csr>>8)&3 != 2 {
+		t.Fatalf("START alias clobbered CSR: %#x", csr)
+	}
+
+	msg := []byte("abc")
+	padded := append([]byte(nil), msg...)
+	padded = append(padded, 0x80)
+	for len(padded)%64 != 56 {
+		padded = append(padded, 0)
+	}
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(msg))*8)
+	padded = append(padded, size[:]...)
+	writeSHAData(t, c, padded, []int{4})
+	c.Cycles += shaDigestCycles
+	c.sha.tick(c)
+	checkSHASum(t, c, sha256.Sum256(msg))
+}
