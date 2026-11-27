@@ -243,6 +243,7 @@ type Emu struct {
 	// at most every few virtual milliseconds and frozen once stopped.
 	plugins     []*deviceplugin.Plugin
 	pluginSlots []string
+	pluginLangs []string
 	pluginErrs  []string
 
 	traceMu     sync.Mutex
@@ -1533,7 +1534,10 @@ func (e *Emu) resetChip() {
 
 // PluginInfo is the UI view of one loaded Lua/WASM device model.
 type PluginInfo struct {
+	// Index is the loaded plugin's position, or -1 for a load error.
+	Index int
 	Name  string
+	Lang  string
 	Kind  string
 	Slot  string
 	Logs  []string
@@ -1546,9 +1550,12 @@ func (e *Emu) Plugins() []PluginInfo {
 	defer e.mu.Unlock()
 	out := make([]PluginInfo, 0, len(e.plugins)+len(e.pluginErrs))
 	for i, p := range e.plugins {
-		info := PluginInfo{Name: p.Name(), Logs: p.Logs()}
+		info := PluginInfo{Index: i, Name: p.Name(), Logs: p.Logs()}
 		if i < len(e.pluginSlots) {
 			info.Kind, info.Slot = pluginKindSlot(e.pluginSlots[i])
+		}
+		if i < len(e.pluginLangs) {
+			info.Lang = e.pluginLangs[i]
 		}
 		if err := p.Err(); err != nil {
 			info.Error = err.Error()
@@ -1556,9 +1563,18 @@ func (e *Emu) Plugins() []PluginInfo {
 		out = append(out, info)
 	}
 	for _, msg := range e.pluginErrs {
-		out = append(out, PluginInfo{Name: "plugin", Error: msg})
+		out = append(out, PluginInfo{Index: -1, Name: "plugin", Error: msg})
 	}
 	return out
+}
+
+// ClearPluginLogs drops one loaded plugin's buffered output.
+func (e *Emu) ClearPluginLogs(index int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if index >= 0 && index < len(e.plugins) {
+		e.plugins[index].ClearLogs()
+	}
 }
 
 func pluginKindSlot(slot string) (kind, name string) {
@@ -1572,6 +1588,7 @@ func (e *Emu) closePlugins() {
 	}
 	e.plugins = e.plugins[:0]
 	e.pluginSlots = e.pluginSlots[:0]
+	e.pluginLangs = e.pluginLangs[:0]
 	e.pluginErrs = e.pluginErrs[:0]
 }
 
@@ -1653,6 +1670,11 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 		}
 		e.plugins = append(e.plugins, p)
 		e.pluginSlots = append(e.pluginSlots, kind+" "+slot)
+		langName := "Lua"
+		if lang == deviceplugin.WASM {
+			langName = "WASM"
+		}
+		e.pluginLangs = append(e.pluginLangs, langName)
 		// Plugins are device models, not cycle-level hardware: a 1 ms tick is
 		// enough for serial events and keeps idle fast-forward cheap.
 		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond*1000, func() {

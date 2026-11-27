@@ -70,6 +70,10 @@ return {
 	if len(p.Logs()) != 1 {
 		t.Fatalf("plugin logs = %v", p.Logs())
 	}
+	p.ClearLogs()
+	if got := p.Logs(); len(got) != 0 {
+		t.Fatalf("logs after clear = %v", got)
+	}
 }
 
 func TestWASMSpiPlugin(t *testing.T) {

@@ -51,6 +51,7 @@ var (
 	busTermErrs        = map[string]string{}
 	busInput           string
 	busSel             int
+	busPluginSel       int
 	busAutoConnect     bool
 	busAnswers         = map[string]string{}
 	touchDemo          bool
@@ -317,6 +318,7 @@ func releaseBoardResources() {
 	busTermErrs = map[string]string{}
 	busInput = ""
 	busSel = 0
+	busPluginSel = 0
 }
 
 func returnToBoardPicker() {
@@ -2988,34 +2990,79 @@ func busLabel(info BusBridgeInfo) string {
 
 func busPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+		plugins := emu.Plugins()
+		infos := emu.BusBridges()
+		var parts []string
+		if len(plugins) > 0 {
+			parts = append(parts, "scripted plugins")
+		}
+		if selectedBoard != nil && (len(selectedBoard.I2CPresets) > 0 || len(selectedBoard.SPIPresets) > 0) {
+			parts = append(parts, "built-in presets")
+		}
+		if len(infos) > 0 {
+			parts = append(parts, "Bus Pirate terminals")
+		}
+		subtitle := strings.Join(parts, " · ")
+		if subtitle == "" {
+			subtitle = "no devices"
+		}
 		Container(Attrs(Row, CrossMid, Gap(10)), func() {
 			Label("I2C / SPI devices", FontSize(16), FontWeight(700))
-			Label("built-in presets · Bus Pirate tokens", FontSize(12))
+			Label(subtitle, FontSize(12))
 			Filler(1)
 			if len(snap.Buses) > 0 {
 				Label(fmt.Sprintf("%d line(s)", len(snap.Buses)), FontSize(11), TextColor(140, 45, 65, 1))
 			}
 		})
-		plugins := emu.Plugins()
 		if len(plugins) > 0 {
-			Container(Attrs(Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
+			if busPluginSel >= len(plugins) || busPluginSel < 0 {
+				busPluginSel = 0
+			}
+			Container(Attrs(Grow(1), Expand, Gap(6), Pad(8), Corners(6), Background(220, 10, 18, 1),
 				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
-				Label("Scripted plugins", FontSize(12), FontWeight(700))
-				for _, p := range plugins {
-					state := "loaded"
-					if p.Error != "" {
-						state = "error: " + p.Error
+				Container(Attrs(Row, CrossMid, Gap(8)), func() {
+					Label("Scripted plugins", FontSize(12), FontWeight(700))
+					Filler(1)
+					Label(fmt.Sprintf("%d device(s)", len(plugins)), FontSize(11),
+						TextColor(220, 6, 65, 1))
+				})
+				Container(Attrs(Row, Gap(6), Wrap), func() {
+					for i, p := range plugins {
+						if Button(NoIcon, pluginLabel(p, i)) {
+							busPluginSel = i
+							RequestNextFrame()
+						}
 					}
-					Label(fmt.Sprintf("%s %s · %s · %s", strings.ToUpper(p.Kind), p.Slot, p.Name, state),
-						FontSize(11), Fonts(Monospace...), TextColor(140, 45, 68, 1))
-					logs := p.Logs
-					if len(logs) > 8 {
-						logs = logs[len(logs)-8:]
+				})
+				p := plugins[busPluginSel]
+				Container(Attrs(Row, CrossMid, Gap(8)), func() {
+					Label(pluginTitle(p), FontSize(11), FontWeight(600), Fonts(Monospace...),
+						TextColor(140, 45, 68, 1))
+					Filler(1)
+					if p.Index >= 0 && Button(NoIcon, "Clear") {
+						emu.ClearPluginLogs(p.Index)
+						RequestNextFrame()
 					}
-					for _, line := range logs {
-						Label("  "+line, FontSize(10), Fonts(Monospace...), TextColor(220, 6, 68, 1))
+					if Button(NoIcon, "Copy") {
+						RequestTextCopy(pluginLogText(p))
 					}
+				})
+				if p.Error != "" {
+					Label("error: "+p.Error, FontSize(10), TextColor(0, 65, 55, 1))
 				}
+				ContainerWithKey(fmt.Sprintf("plugin-log-%d", p.Index),
+					Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
+						Background(220, 12, 8, 1), Corners(4)), func() {
+						ScrollOnInput()
+						ScrollBars()
+						if len(p.Logs) == 0 {
+							Label("no output yet", FontSize(11), TextColor(220, 6, 62, 1))
+							return
+						}
+						for _, line := range p.Logs {
+							Label(line, Fonts(Monospace...), FontSize(10), TextColor(220, 6, 68, 1))
+						}
+					})
 			})
 		}
 		if selectedBoard != nil && (len(selectedBoard.I2CPresets) > 0 || len(selectedBoard.SPIPresets) > 0) {
@@ -3036,7 +3083,6 @@ func busPanel(snap MachineState) {
 					FontSize(11), TextColor(220, 6, 62, 1))
 			})
 		}
-		infos := emu.BusBridges()
 		if len(infos) == 0 {
 			if selectedBoard == nil || (len(selectedBoard.I2CPresets) == 0 &&
 				len(selectedBoard.SPIPresets) == 0 && len(plugins) == 0) {
@@ -3135,6 +3181,61 @@ func busPanel(snap MachineState) {
 		Label("Type ACK, NAK or hex bytes; spaces queue one response per request (e.g. 0xEF 0x40 0x18).", FontSize(11), TextColor(140, 45, 65, 1))
 		Label("If only HELLO appears, the firmware is not asking yet: queue the answers, then press Reset in the toolbar.", FontSize(11), TextColor(140, 45, 65, 1))
 	})
+}
+
+// pluginLabel is the compact selector label for one scripted device.
+func pluginLabel(p PluginInfo, pos int) string {
+	if p.Index < 0 {
+		return fmt.Sprintf("ERROR %d", pos+1)
+	}
+	var parts []string
+	if p.Lang != "" {
+		parts = append(parts, p.Lang)
+	}
+	if p.Kind != "" {
+		parts = append(parts, strings.ToUpper(p.Kind))
+	}
+	if p.Slot != "" {
+		parts = append(parts, p.Slot)
+	}
+	if len(parts) == 0 {
+		return "plugin"
+	}
+	return strings.Join(parts, " ")
+}
+
+// pluginTitle describes the selected device in the console header.
+func pluginTitle(p PluginInfo) string {
+	if p.Index < 0 {
+		return "Plugin load error"
+	}
+	title := pluginLabel(p, 0)
+	if p.Name != "" && !strings.EqualFold(p.Name, strings.ToLower(p.Kind)+" plugin") {
+		title += " · " + p.Name
+	}
+	if p.Error != "" {
+		title += " · error"
+	} else {
+		title += " · loaded"
+	}
+	return title
+}
+
+// pluginLogText is the plain-text export for the Copy button.
+func pluginLogText(p PluginInfo) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "rp2350sim plugin %s\n", pluginTitle(p))
+	if p.Error != "" {
+		fmt.Fprintf(&b, "error: %s\n", p.Error)
+	}
+	for _, line := range p.Logs {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if len(p.Logs) == 0 {
+		b.WriteString("(no output)\n")
+	}
+	return b.String()
 }
 
 func consolePanel(snap MachineState) {

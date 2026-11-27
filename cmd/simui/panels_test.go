@@ -137,6 +137,40 @@ func TestDebugVariablesTextEmpty(t *testing.T) {
 	}
 }
 
+func TestPluginLogText(t *testing.T) {
+	p := PluginInfo{
+		Index: 0, Name: "nrf-sniffer", Lang: "WASM", Kind: "uart", Slot: "1",
+		Logs: []string{"ready", "frame 0xAB"},
+	}
+	if got := pluginLabel(p, 0); got != "WASM UART 1" {
+		t.Fatalf("plugin label = %q", got)
+	}
+	if got := pluginTitle(p); !strings.Contains(got, "nrf-sniffer") || !strings.Contains(got, "loaded") {
+		t.Fatalf("plugin title = %q", got)
+	}
+	got := pluginLogText(p)
+	for _, want := range []string{
+		"rp2350sim plugin", "WASM UART 1", "nrf-sniffer", "ready", "frame 0xAB",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("plugin text missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPluginLogTextEmptyAndError(t *testing.T) {
+	empty := pluginLogText(PluginInfo{Index: 1, Lang: "Lua", Kind: "i2c", Slot: "0x76"})
+	if !strings.Contains(empty, "(no output)") {
+		t.Fatalf("empty plugin text = %q", empty)
+	}
+	failed := pluginLogText(PluginInfo{Index: -1, Name: "plugin", Error: "bad source"})
+	for _, want := range []string{"Plugin load error", "error: bad source"} {
+		if !strings.Contains(failed, want) {
+			t.Fatalf("error plugin text missing %q:\n%s", want, failed)
+		}
+	}
+}
+
 func TestCANText(t *testing.T) {
 	info := devices.MCP2515Info{CANSTAT: 0, CANCTRL: 0, CANINTF: 0x05, EFLG: 0}
 	frames := []devices.CANFrame{

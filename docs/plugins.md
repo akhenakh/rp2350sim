@@ -165,10 +165,11 @@ alongside the Lua models.
 ## Watching plugin output
 
 Plugin `print()` (and WASM `host_log`) lines appear in the **Bus** tab's
-Scripted plugins card, with the instance, slot and load state. The CLI writes
-the same lines as `plugin` `slog` records, so `-quiet` still leaves warnings
-and errors visible. This is the first place to look when a script fails to
-parse or a constructor throws.
+Scripted plugins card. Pick a device from its Lua/WASM slot buttons to open that
+device's scrollable console; **Clear** drops its buffer and **Copy** exports it.
+The CLI writes the same lines as `plugin` `slog` records, so `-quiet` still
+leaves warnings and errors visible. This is the first place to look when a
+script fails to parse or a constructor throws.
 
 ## Serial companions
 

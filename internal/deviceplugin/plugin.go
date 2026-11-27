@@ -137,6 +137,14 @@ func (p *Plugin) Logs() []string {
 	return append([]string(nil), p.logs...)
 }
 
+// ClearLogs drops the buffered plugin output. Subsequent log lines start a
+// new buffer; the plugin itself keeps running.
+func (p *Plugin) ClearLogs() {
+	p.mu.Lock()
+	p.logs = p.logs[:0]
+	p.mu.Unlock()
+}
+
 func (p *Plugin) addLog(line string) {
 	p.mu.Lock()
 	p.logs = append(p.logs, line)

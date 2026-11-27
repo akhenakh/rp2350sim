@@ -533,9 +533,10 @@ The I2C/SPI tab lists the board's built-in presets (`i2c_presets` /
 `spi_presets`), scripted device files (`i2c_plugins`, `spi_plugins`,
 `serial_plugins`) and TCP bridges. A preset or plugin is attached directly to
 the emulated controller, so firmware sees a real BME280, SSD1306, MPU6050 or
-W25Q16 without an external script. The Scripted plugins card names each model,
-its slot and load state, and shows the last `print`/`host_log` lines. See
-[device plugins](plugins.md).
+W25Q16 without an external script. The Scripted plugins card lists each model
+with its language (Lua or WASM), slot and load state; select one to open its
+own scrollable `print`/`host_log` console, with **Clear** and **Copy** buttons.
+See [device plugins](plugins.md).
 
 ![Scripted plugins](images/plugins.png)
 
