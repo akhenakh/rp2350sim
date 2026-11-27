@@ -73,7 +73,7 @@ func TestGPSGoldenSentences(t *testing.T) {
 		Course: 270, Satellites: 9,
 		Rate: time.Second, FixSet: true, Fix: true,
 	})
-	c.Run(1_100_000 * uint64(rp2350.CyclesPerMicrosecond))
+	c.Run(1_600_000 * uint64(rp2350.CyclesPerMicrosecond))
 	var b strings.Builder
 	for c.Read32(0x40078018)&(1<<4) == 0 {
 		b.WriteByte(byte(c.Read32(0x40078000)))
@@ -142,7 +142,7 @@ func TestGPSNoFix(t *testing.T) {
 	c.CPU1.Parked = true
 	c.Write32(0x4007802c, 1<<4)
 	NewGPS(c, 1, GPSConfig{Lat: 45.5017, Lon: -73.5673, Rate: time.Second, FixSet: true})
-	c.Run(1_100_000 * uint64(rp2350.CyclesPerMicrosecond))
+	c.Run(1_600_000 * uint64(rp2350.CyclesPerMicrosecond))
 	var b strings.Builder
 	for c.Read32(0x40078018)&(1<<4) == 0 {
 		b.WriteByte(byte(c.Read32(0x40078000)))

@@ -30,6 +30,10 @@ type GPS struct {
 	last      string
 	history   []string
 	sentences int
+	// RMC is sent half an interval after GGA so the two sentences never
+	// arrive as one >128-byte burst, which overflows TinyGo's UART ring.
+	rmcAt   uint64
+	rmcBody string
 }
 
 // GPSInfo is a snapshot for the GPS tab.
@@ -156,6 +160,8 @@ func (g *GPS) Reset() {
 	g.sentences = 0
 	g.last = ""
 	g.history = nil
+	g.rmcAt = 0
+	g.rmcBody = ""
 }
 
 // moveMeters uses the great-circle destination formula. A non-zero speed
@@ -183,6 +189,10 @@ func (g *GPS) advance(seconds float64) {
 }
 
 func (g *GPS) tick() {
+	if g.rmcBody != "" && g.c.Cycles >= g.rmcAt {
+		g.sendLine(g.rmcBody)
+		g.rmcBody = ""
+	}
 	if g.c.Cycles < g.next {
 		return
 	}
@@ -200,19 +210,25 @@ func (g *GPS) tick() {
 		t, lat, lon, fix, g.cfg.Satellites, g.cfg.Altitude)
 	// RMC carries speed over ground in knots; the editable value is m/s.
 	rmcSpeed := g.cfg.SpeedMPS * 1.9438444924406
-	rmc := fmt.Sprintf("GPRMC,%s,%s,%s,%s,%.2f,%.1f,010125,,,A",
+	g.rmcBody = fmt.Sprintf("GPRMC,%s,%s,%s,%s,%.2f,%.1f,010125,,,A",
 		t, map[bool]string{true: "A", false: "V"}[g.cfg.Fix], lat, lon,
 		rmcSpeed, g.cfg.Course)
-	for _, body := range []string{gga, rmc} {
-		line := nmeaLine(body)
-		g.sentences++
-		g.last = line
-		g.history = append(g.history, line)
-		if len(g.history) > 200 {
-			g.history = g.history[len(g.history)-200:]
-		}
-		g.c.SendUART(g.uart, []byte(line))
+	g.rmcAt = g.c.Cycles + uint64(g.cfg.Rate/time.Microsecond)*uint64(rp2350.CyclesPerMicrosecond)/2
+	if g.rmcAt <= g.c.Cycles {
+		g.rmcAt = g.c.Cycles + 1
 	}
+	g.sendLine(gga)
+}
+
+func (g *GPS) sendLine(body string) {
+	line := nmeaLine(body)
+	g.sentences++
+	g.last = line
+	g.history = append(g.history, line)
+	if len(g.history) > 200 {
+		g.history = g.history[len(g.history)-200:]
+	}
+	g.c.SendUART(g.uart, []byte(line))
 }
 
 func nmeaLine(body string) string {
