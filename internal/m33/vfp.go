@@ -52,6 +52,11 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 		c.vfpLoadStore(hw1, hw2)
 		return
 	}
+	if hw1&0xFF00 == 0xFE00 {
+		// ARMv8 round-to-integral forms in the FE space: VRINTA/N/P/M.
+		c.vfpRound(hw1, hw2)
+		return
+	}
 	if hw1&0xFF00 != 0xEE00 {
 		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
 		return
@@ -149,9 +154,52 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 		c.S[sd&31] = c.vfpToInt32(c.vfpS(sm)) // VCVT.S32.F32 (truncate)
 	case a == 0xEE80 && b == 0x0AC0 && op == 0xC:
 		c.S[sd&31] = c.vfpToUint32(c.vfpS(sm)) // VCVT.U32.F32
+	case a == 0xEE80 && b == 0x0AC0 && op == 6:
+		c.vfpSetRound(sd, sm, func(f float64) float64 { return math.Trunc(f) }) // VRINTZ
+	case a == 0xEE80 && b == 0x0A40 && op == 6:
+		c.vfpSetRound(sd, sm, math.RoundToEven) // VRINTR (default rounding mode)
+	case a == 0xEE80 && b == 0x0A40 && op == 7:
+		c.vfpSetRound(sd, sm, math.RoundToEven) // VRINTX (exact current mode)
 	default:
 		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
 	}
+}
+
+// vfpRound handles the ARMv8 VRINTA/N/P/M forms, which live in the FE
+// instruction space rather than the EE data-processing space.
+func (c *CPU) vfpRound(hw1, hw2 uint16) {
+	if hw1&0x00B0 != 0x00B0 {
+		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
+		return
+	}
+	sd := int((hw2>>11)&0x1E) | int((hw1>>6)&1)
+	sm := int((hw2&0xF)<<1) | int((hw2>>5)&1)
+	var round func(float64) float64
+	switch hw1 & 0xF {
+	case 8: // VRINTA: nearest, ties away from zero
+		round = math.Round
+	case 9: // VRINTN: nearest, ties to even
+		round = math.RoundToEven
+	case 10: // VRINTP: toward +Inf
+		round = math.Ceil
+	case 11: // VRINTM: toward -Inf
+		round = math.Floor
+	default:
+		c.Halt(fmt.Sprintf("unimplemented VFP instruction (%04x %04x)", hw1, hw2))
+		return
+	}
+	c.vfpSetRound(sd, sm, round)
+}
+
+// vfpSetRound applies a round-to-integral operation and reports an inexact
+// result when the value actually changed.
+func (c *CPU) vfpSetRound(sd, sm int, round func(float64) float64) {
+	f := float64(c.vfpS(sm))
+	r := round(f)
+	if !math.IsNaN(f) && r != f {
+		c.FPSCR |= fpscrIXC
+	}
+	c.vfpSetS(sd, float32(r))
 }
 
 func vfpSignalingNaN(f float32) bool {

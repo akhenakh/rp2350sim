@@ -263,3 +263,46 @@ func TestVFPVMOVDoubleStillWorks(t *testing.T) {
 		t.Fatalf("vmov read = %#x %#x", cpu.R[2], cpu.R[3])
 	}
 }
+
+// TestVFPRoundToIntegral covers the ARMv8 VRINT forms emitted by floorf,
+// ceilf and friends (read_vsys uses vrintm.f32).
+func TestVFPRoundToIntegral(t *testing.T) {
+	cases := []struct {
+		name string
+		hw1  uint16
+		want float32
+	}{
+		{"vrintn 2.5", 0xFEB9, 2},   // ties to even
+		{"vrintn 3.5", 0xFEB9, 4},   // ties to even
+		{"vrinta -2.5", 0xFEB8, -3}, // ties away from zero
+		{"vrintp -1.2", 0xFEBA, -1},
+		{"vrintm -1.2", 0xFEBB, -2},
+		{"vrintz", 0xEEB6, 1},
+	}
+	for _, tc := range cases {
+		cpu := New(newTestBus())
+		in := float32(-1.2)
+		switch tc.name {
+		case "vrintn 2.5":
+			in = 2.5
+		case "vrintn 3.5":
+			in = 3.5
+		case "vrinta -2.5":
+			in = -2.5
+		case "vrintz":
+			in = 1.9
+		}
+		cpu.S[1] = math.Float32bits(in)
+		hw2 := uint16(0x0A60)
+		if tc.name == "vrintz" {
+			hw2 = 0x0AE0
+		}
+		cpu.exec32Coproc(tc.hw1, hw2)
+		if cpu.Halted {
+			t.Fatalf("%s halted: %s", tc.name, cpu.HaltReason)
+		}
+		if got := math.Float32frombits(cpu.S[0]); got != tc.want {
+			t.Errorf("%s(%v) = %v, want %v", tc.name, in, got, tc.want)
+		}
+	}
+}
