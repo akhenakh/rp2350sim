@@ -541,10 +541,13 @@ it on `firmware/c/itmdemo`; `ui:trace:png` renders it.
 
 ### Bus
 
-The I2C/SPI tab is available on every board. It is empty when the board has no
-scripted, preset or TCP-bridged target, which keeps the tab in a stable
-position for boards such as `pico2-lcd-lab`. It lists the board's built-in
-presets (`i2c_presets` /
+The I2C/SPI tab is available on every board. Its **Board devices** card lists
+everything the board model attaches directly — LCD, touch, IMU, SD, CAN,
+1-Wire, DHT, ultrasonic, GPS, Ethernet, Wi-Fi, WS2812 and BLE — with the bus,
+chip select or GPIO it uses. When the board has no scripted, preset or
+TCP-bridged target, the tab still keeps a stable position and explains that
+those timed devices are modelled outside the I2C/SPI target registry. It lists
+the board's built-in presets (`i2c_presets` /
 `spi_presets`), scripted device files (`i2c_plugins`, `spi_plugins`,
 `serial_plugins`) and TCP bridges. A preset or plugin is attached directly to
 the emulated controller, so firmware sees a real BME280, SSD1306, MPU6050 or

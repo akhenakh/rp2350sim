@@ -2995,11 +2995,85 @@ func busLabel(info BusBridgeInfo) string {
 	return fmt.Sprintf("SPI%d CS%d", info.Bus, info.CS)
 }
 
+type boardBusDevice struct {
+	name  string
+	where string
+}
+
+// boardDevices lists the devices the board model attaches directly. The Bus
+// tab shows them even when the board has no scripted or preset targets, which
+// is the case for the sensor lab: its components are timed wire devices and
+// an MCP2515, not I2C/SPI plugin slots.
+func boardDevices(b *BoardDef) []boardBusDevice {
+	if b == nil {
+		return nil
+	}
+	var out []boardBusDevice
+	add := func(name, where string) {
+		out = append(out, boardBusDevice{name: name, where: where})
+	}
+	if d := b.LCD; d != nil {
+		add("ST7789 LCD", fmt.Sprintf("SPI%d CS%d", d.SPI, d.CS))
+	}
+	if d := b.Touch; d != nil {
+		add("CST816D touch", fmt.Sprintf("I2C%d 0x%02x", d.Bus, d.Addr))
+	}
+	if d := b.IMU; d != nil {
+		add("QMI8658 IMU", fmt.Sprintf("I2C%d 0x%02x", d.Bus, d.Addr))
+	}
+	if d := b.SD; d != nil {
+		add("microSD", fmt.Sprintf("SPI%d CS%d", d.SPI, d.CS))
+	}
+	if d := b.CAN; d != nil {
+		add("MCP2515 CAN", fmt.Sprintf("SPI%d CS%d", d.Bus, d.CS))
+	}
+	for _, d := range b.OneWire {
+		kind := d.Type
+		if kind == "" {
+			kind = "ds18b20"
+		}
+		add(strings.ToUpper(kind), fmt.Sprintf("1-Wire GP%d", d.Pin))
+	}
+	for _, d := range b.DHT {
+		add(strings.ToUpper(d.Kind), fmt.Sprintf("GP%d", d.Pin))
+	}
+	for _, d := range b.Ultrasonic {
+		add("HC-SR04", fmt.Sprintf("TRIG GP%d · ECHO GP%d", d.Trig, d.Echo))
+	}
+	if d := b.GPS; d != nil {
+		add("NMEA GPS", fmt.Sprintf("UART%d", d.UART))
+	}
+	if d := b.Ethernet; d != nil {
+		where := fmt.Sprintf("SPI%d CS%d", d.SPI, d.CS)
+		if d.Kind == "ch9120" {
+			where = fmt.Sprintf("UART%d", d.UART)
+		}
+		add(strings.ToUpper(d.Kind), where)
+	}
+	if d := b.Wifi; d != nil {
+		add("CH9120 Wi-Fi", fmt.Sprintf("UART%d", d.UART))
+	}
+	if d := b.WS2812; d != nil {
+		add("WS2812B", fmt.Sprintf("GP%d", d.Pin))
+	}
+	if d := b.PSRAM; d != nil {
+		add("PSRAM", fmt.Sprintf("QMI CS%d", d.CS))
+	}
+	if d := b.BLE; d != nil {
+		add("CYW43 BLE", "HCI · virtual controller")
+	}
+	return out
+}
+
 func busPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
 		plugins := emu.Plugins()
 		infos := emu.BusBridges()
+		boardDevs := boardDevices(selectedBoard)
 		var parts []string
+		if len(boardDevs) > 0 {
+			parts = append(parts, "board devices")
+		}
 		if len(plugins) > 0 {
 			parts = append(parts, "scripted plugins")
 		}
@@ -3014,13 +3088,30 @@ func busPanel(snap MachineState) {
 			subtitle = "no devices"
 		}
 		Container(Attrs(Row, CrossMid, Gap(10)), func() {
-			Label("I2C / SPI devices", FontSize(16), FontWeight(700))
+			Label("Devices and buses", FontSize(16), FontWeight(700))
 			Label(subtitle, FontSize(12))
 			Filler(1)
 			if len(snap.Buses) > 0 {
 				Label(fmt.Sprintf("%d line(s)", len(snap.Buses)), FontSize(11), TextColor(140, 45, 65, 1))
 			}
 		})
+		if len(boardDevs) > 0 {
+			Container(Attrs(Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
+				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
+				Label("Board devices", FontSize(12), FontWeight(700))
+				Container(Attrs(Gap(2)), func() {
+					for _, d := range boardDevs {
+						Container(Attrs(Row, Expand, CrossMid, Gap(8)), func() {
+							Label(d.name, FontSize(11), FontWeight(600))
+							Filler(1)
+							Label(d.where, FontSize(11), Fonts(Monospace...), TextColor(140, 45, 68, 1))
+						})
+					}
+				})
+				Label("Attached by the board model; the device tabs show their live state.",
+					FontSize(11), TextColor(220, 6, 62, 1))
+			})
+		}
 		if len(plugins) > 0 {
 			if busPluginSel >= len(plugins) || busPluginSel < 0 {
 				busPluginSel = 0
@@ -3093,7 +3184,11 @@ func busPanel(snap MachineState) {
 		if len(infos) == 0 {
 			if selectedBoard == nil || (len(selectedBoard.I2CPresets) == 0 &&
 				len(selectedBoard.SPIPresets) == 0 && len(plugins) == 0) {
-				Label("This board has no i2c_tcp, spi_tcp, preset or plugin entries.", FontSize(13))
+				if len(boardDevs) == 0 {
+					Label("No I2C/SPI targets or board devices on this board.", FontSize(13))
+				} else {
+					Label("No scripted I2C/SPI targets; board devices are listed above.", FontSize(13))
+				}
 			}
 			return
 		}
