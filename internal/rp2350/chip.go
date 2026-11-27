@@ -226,14 +226,18 @@ type Chip struct {
 	symbolHooks map[uint32]SymbolHook
 
 	// Flash programming counters and reset bookkeeping for OTA self-updates.
-	flashWrites        uint64
-	boots              uint64
-	resetReason        string
-	bootEntry          uint32
-	bootSP             uint32
-	pendingReset       bool
-	pendingResetAt     uint64
-	pendingResetReason string
+	flashWrites         uint64
+	boots               uint64
+	resetReason         string
+	bootType            uint8 // SYS_INFO_BOOT_INFO boot_type
+	rebootParams        [2]uint32
+	pendingBootType     uint8
+	pendingRebootParams [2]uint32
+	bootEntry           uint32
+	bootSP              uint32
+	pendingReset        bool
+	pendingResetAt      uint64
+	pendingResetReason  string
 
 	// Hang detection: a tight PC loop that stops making progress, optionally
 	// polling one MMIO register. Zero disables it.
@@ -1251,6 +1255,10 @@ func (c *Chip) applyReset() {
 	c.pendingReset = false
 	c.Boot()
 	c.resetReason = reason
+	c.bootType = c.pendingBootType
+	c.rebootParams = c.pendingRebootParams
+	c.pendingBootType = 0
+	c.pendingRebootParams = [2]uint32{}
 	if c.wd != nil {
 		// The reason register reports the cause of this boot, not a stale one
 		// from an earlier watchdog reset.

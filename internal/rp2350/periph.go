@@ -166,12 +166,16 @@ func newTicks(c *Chip) *regBlock {
 
 // ---- SYSINFO ----
 
+// sysInfoChipID is the RP2350 A3 chip id. The bootrom's SYS_INFO_CHIP_INFO
+// selector reports the same value.
+const sysInfoChipID = 0x3000_4927
+
 func newSysInfo(c *Chip) *regBlock {
 	b := newRegBlock(0x40000000, 0x100)
 	b.readFn = func(c *Chip, off uint32) (uint32, bool) {
 		switch off {
 		case 0x00: // CHIP_ID: revision A3, part RP4, manufacturer 0x926
-			return 0x3000_4927, true
+			return sysInfoChipID, true
 		case 0x04: // PACKAGE_SEL: 1 = QFN60 (RP2350A), 0 = QFN80 (RP2350B)
 			return c.packageSel, true
 		case 0x08: // PLATFORM: ASIC, not FPGA/SIM

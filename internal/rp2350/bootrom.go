@@ -30,7 +30,13 @@ const (
 	bootromFuncTableData     = 0x7c00
 	bootromMagic             = 0x0002754d // 'M', 'u', 0x02
 	bootromVersion           = 3
+	sysInfoChipInfo          = 0x0001
+	sysInfoCritical          = 0x0002
+	sysInfoCPUInfo           = 0x0004
+	sysInfoFlashDevInfo      = 0x0008
 	sysInfoBootRandom        = 0x0010
+	sysInfoNonce             = 0x0020
+	sysInfoBootInfo          = 0x0040
 	bootromOK                = 0
 	bootromErrNotPermitted   = ^uint32(3)  // -4
 	bootromErrInvalidArg     = ^uint32(4)  // -5
@@ -278,16 +284,64 @@ func (b *bootROM) stubReverse(c *Chip, cpu *m33.CPU) {
 
 func (b *bootROM) stubGetSysInfo(c *Chip, cpu *m33.CPU) {
 	out, size, kind := cpu.R[0], cpu.R[1], cpu.R[2]
-	if kind == sysInfoBootRandom && size >= 5 {
-		// Word 0 reports the supported selector mask, followed by four words.
-		c.Write32(out, sysInfoBootRandom)
-		seed := uint32(c.Cycles) ^ 0x9e3779b9
-		for i := range uint32(4) {
-			seed = seed*1664525 + 1013904223
-			c.Write32(out+4+4*i, seed)
+	// Each answer starts with the selector word, matching the bootrom ABI.
+	write := func(words ...uint32) {
+		for i, w := range words {
+			c.Write32(out+4*uint32(i), w)
 		}
-		cpu.R[0] = 5
-		return
+		cpu.R[0] = uint32(len(words))
+	}
+	switch kind {
+	case sysInfoChipInfo: // package, device id, wafer id
+		if size >= 4 {
+			write(kind, uint32(c.packageSel), sysInfoChipID, 0)
+			return
+		}
+	case sysInfoCritical:
+		if size >= 2 {
+			write(kind, 0)
+			return
+		}
+	case sysInfoCPUInfo: // cpu_type (ARM) | supported bitmap << 8
+		if size >= 2 {
+			write(kind, 0x0000_0100)
+			return
+		}
+	case sysInfoFlashDevInfo:
+		if size >= 2 {
+			write(kind, uint32(c.Read16(bootramBase+bootramFlashDevinfo)))
+			return
+		}
+	case sysInfoBootRandom:
+		if size >= 5 {
+			seed := uint32(c.Cycles) ^ 0x9e3779b9
+			words := []uint32{kind}
+			for range 4 {
+				seed = seed*1664525 + 1013904223
+				words = append(words, seed)
+			}
+			write(words...)
+			return
+		}
+	case sysInfoNonce:
+		if size >= 3 {
+			seed := uint32(c.Cycles) ^ sysInfoChipID
+			w0 := seed*1664525 + 1013904223
+			write(kind, w0, w0*1664525+1013904223)
+			return
+		}
+	case sysInfoBootInfo:
+		if size >= 5 {
+			_, partition := c.Partition()
+			bootWord := uint32(0xFF) | uint32(c.bootType)<<8 // diagnostic index -1
+			if partition >= 0 {
+				bootWord |= uint32(partition) << 16
+			} else {
+				bootWord |= 0xFF << 16
+			}
+			write(kind, bootWord, 0, c.rebootParams[0], c.rebootParams[1])
+			return
+		}
 	}
 	cpu.R[0] = 0
 }
@@ -314,6 +368,8 @@ func (b *bootROM) stubReboot(c *Chip, cpu *m33.CPU) {
 				slog.String("flags", fmtHex(flags)))
 		}
 	}
+	c.pendingBootType = uint8(kind)
+	c.pendingRebootParams = [2]uint32{p0, cpu.R[3]}
 	c.Logger.Debug("bootrom reboot", slog.Uint64("delay_ms", uint64(delayMS)))
 	c.requestReset("bootrom", uint64(delayMS)*cyclesPerMillisecond)
 	cpu.R[0] = bootromOK

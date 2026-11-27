@@ -227,3 +227,63 @@ func TestBootROMRebootNoReturnParksUntilReset(t *testing.T) {
 		t.Fatalf("caller was not released by reset: boots=%d parked=%v", c.BootCount(), cpu.Parked)
 	}
 }
+
+func TestBootROMGetSysInfoSelectors(t *testing.T) {
+	c := New()
+	const out = SRAMBase + 0x200
+	cpu := c.CPU0
+	call := func(kind, size uint32) uint32 {
+		cpu.R[0], cpu.R[1], cpu.R[2] = out, size, kind
+		c.rom.stubGetSysInfo(c, cpu)
+		return cpu.R[0]
+	}
+
+	if got := call(sysInfoChipInfo, 4); got != 4 {
+		t.Fatalf("CHIP_INFO returned %d", got)
+	}
+	if c.Read32(out) != sysInfoChipInfo ||
+		c.Read32(out+4) != uint32(c.packageSel) ||
+		c.Read32(out+8) != sysInfoChipID {
+		t.Fatalf("CHIP_INFO = %#x %#x %#x", c.Read32(out), c.Read32(out+4), c.Read32(out+8))
+	}
+
+	if got := call(sysInfoCPUInfo, 2); got != 2 || c.Read32(out+4) != 0x0100 {
+		t.Fatalf("CPU_INFO words=%d value=%#x", got, c.Read32(out+4))
+	}
+
+	devinfo := uint32(c.Read16(bootramBase + bootramFlashDevinfo))
+	if got := call(sysInfoFlashDevInfo, 2); got != 2 || c.Read32(out+4) != devinfo {
+		t.Fatalf("FLASH_DEV_INFO words=%d value=%#x", got, c.Read32(out+4))
+	}
+
+	c.bootType = 4
+	c.rebootParams = [2]uint32{0x12345678, 0x9ABCDEF0}
+	if got := call(sysInfoBootInfo, 5); got != 5 {
+		t.Fatalf("BOOT_INFO returned %d", got)
+	}
+	if bw := c.Read32(out + 4); (bw>>8)&0xFF != 4 || (bw>>16)&0xFF != 0xFF {
+		t.Fatalf("BOOT_INFO boot word = %#x", bw)
+	}
+	if c.Read32(out+12) != 0x12345678 || c.Read32(out+16) != 0x9ABCDEF0 {
+		t.Fatalf("BOOT_INFO params = %#x %#x", c.Read32(out+12), c.Read32(out+16))
+	}
+
+	if got := call(sysInfoBootInfo, 4); got != 0 {
+		t.Fatalf("short BOOT_INFO buffer returned %d", got)
+	}
+}
+
+// TestBootROMRebootRecordsType checks that a flash-update reboot carries its
+// type and parameters into the next boot's SYS_INFO_BOOT_INFO.
+func TestBootROMRebootRecordsType(t *testing.T) {
+	c := New()
+	cpu := c.CPU0
+	cpu.R[0], cpu.R[1], cpu.R[2], cpu.R[3] = 4, 0, 0x10000000, 0
+	c.rom.stubReboot(c, cpu)
+	if c.pendingBootType != 4 {
+		t.Fatalf("pending boot type = %d", c.pendingBootType)
+	}
+	if c.pendingRebootParams[0] != 0x10000000 {
+		t.Fatalf("reboot params = %#x", c.pendingRebootParams)
+	}
+}
