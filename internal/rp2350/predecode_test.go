@@ -26,6 +26,31 @@ func TestPredecodeSelfModifyingSRAM(t *testing.T) {
 	}
 }
 
+// TestPredecodeDebuggerPoke patches flash through the debugger path after it
+// has been executed; the predecode cache must be invalidated like any other
+// flash write.
+func TestPredecodeDebuggerPoke(t *testing.T) {
+	c := New()
+	c.CPU1.Parked = true
+	if err := c.LoadSegment(FlashBase, []byte{0x03, 0x20, 0xFE, 0xE7}); err != nil {
+		t.Fatal(err)
+	}
+	c.CPU0.R[15] = FlashBase
+	c.Step()
+	if c.CPU0.R[0] != 3 {
+		t.Fatalf("r0 = %d, want 3", c.CPU0.R[0])
+	}
+
+	if !c.PokeFlash(FlashBase, 0x04) { // movs r0, #4
+		t.Fatal("PokeFlash rejected the XIP address")
+	}
+	c.CPU0.R[15] = FlashBase
+	c.Step()
+	if c.CPU0.R[0] != 4 {
+		t.Fatalf("r0 = %d after debugger poke, want 4 (stale predecode entry)", c.CPU0.R[0])
+	}
+}
+
 // TestPredecodeFlashUpdate loads code, runs it, then reloads flash with new
 // code at the same address. A generation bump must invalidate both cores.
 func TestPredecodeFlashUpdate(t *testing.T) {

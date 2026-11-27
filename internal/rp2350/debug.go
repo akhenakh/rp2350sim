@@ -226,6 +226,9 @@ func (c *Chip) PokeFlash(addr uint32, v byte) bool {
 		return false
 	}
 	c.Flash[off] = v
+	// The debugger can patch already-executed code, so drop the shared
+	// predecode cache just like a firmware flash program does.
+	c.invalidateCodeAll()
 	return true
 }
 
