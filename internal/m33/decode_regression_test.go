@@ -182,3 +182,22 @@ func TestPKHBT(t *testing.T) {
 		t.Fatalf("pkhtb = %#x, want 0x11113333", cpu.R[1])
 	}
 }
+
+// TestLDMDB checks the decrement-before load multiple, which compilers use
+// for stack-style restores that are not a push/pop pair.
+func TestLDMDB(t *testing.T) {
+	bus := newExecBus()
+	put16(t, bus, 0x20000000, 0xE930, 0x000E) // ldmdb r0!, {r1-r3}
+	bus.Write32(0x20001000, 0x11)
+	bus.Write32(0x20001004, 0x22)
+	bus.Write32(0x20001008, 0x33)
+	cpu := New(bus)
+	cpu.R[0] = 0x2000100C
+	stepAt(t, cpu, 0x20000000)
+	if cpu.R[1] != 0x11 || cpu.R[2] != 0x22 || cpu.R[3] != 0x33 {
+		t.Fatalf("loaded %#x %#x %#x", cpu.R[1], cpu.R[2], cpu.R[3])
+	}
+	if cpu.R[0] != 0x20001000 {
+		t.Fatalf("writeback r0 = %#x", cpu.R[0])
+	}
+}

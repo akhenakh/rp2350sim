@@ -163,6 +163,38 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 			c.branchTo(pcVal)
 		}
 
+	case hw1&0xFFD0 == 0xE910: // LDMDB
+		rn := uint32(hw1 & 0xF)
+		list := uint32(hw2)
+		wback := hw1&0x0020 != 0
+		if rn == 15 || hw2&0x8000 != 0 {
+			c.Halt("invalid LDMDB")
+			return
+		}
+		n := popcount(list)
+		base := c.R[rn] - uint32(n)*4
+		addr := base
+		var pcVal uint32
+		havePC := false
+		for i := range 16 {
+			if list&(1<<i) != 0 {
+				v := c.Bus.Read32(addr)
+				addr += 4
+				if i == 15 {
+					pcVal = v
+					havePC = true
+					continue
+				}
+				c.R[i] = v
+			}
+		}
+		if wback && list&(1<<rn) == 0 {
+			c.R[rn] = base
+		}
+		if havePC {
+			c.branchTo(pcVal)
+		}
+
 	case hw1&0xFFF0 == 0xE840: // STREX (word)
 		rn := uint32(hw1 & 0xF)
 		rd := uint32(hw2 >> 8 & 0xF)
