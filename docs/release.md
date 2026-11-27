@@ -131,6 +131,13 @@ Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end. See the
   `APSR.GE` is modelled. The double coprocessor keeps its result in X and
   models the engaged flag, so the SDK's save/restore path survives a
   reentrant double operation.
+- The Pico SDK C examples remain the fidelity gate. The pico-examples harness
+  now also builds and runs the clocks, boot-info, narrow-IO, board-ID,
+  onboard-temperature, VSYS, ADC-DMA, flash-program, DMA control-block/sniff,
+  periodic-sampler, low-power, multicore doorbell/runner/queue, low-level
+  timer, binary-info and USB low-level examples. Those runs added the ARMv8
+  round-to-integral instructions, a synthesized CLOCKS frequency counter, and
+  a bootrom park loop for a core 1 entry that returns.
 - Peripheral fidelity: TIMER `ARMED` through the `+0x3000` CLR alias clears
   only the requested alarms, alarms use the full 32-bit window, and
   TIMEHW/TIMELW writes set the counter. SHA-256 CSR control bits survive the
