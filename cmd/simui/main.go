@@ -611,9 +611,6 @@ func tabsBar(snap MachineState) {
 		if boardHasSensors(selectedBoard) {
 			tabButton("Sensors", tabSensors)
 		}
-		if selectedBoard.GPS != nil {
-			tabButton("GPS", tabGPS)
-		}
 		tabButton("Scope", tabScope)
 		tabButton("Logic", tabLogic)
 		if selectedBoard.Audio != nil {
@@ -627,6 +624,9 @@ func tabsBar(snap MachineState) {
 		tabButton("Profile", tabProfile)
 		tabButton("Trace", tabTrace)
 		tabButton("Bus", tabBus)
+		if selectedBoard.GPS != nil {
+			tabButton("GPS", tabGPS)
+		}
 		if selectedBoard.CAN != nil {
 			tabButton("CAN", tabCAN)
 		}
