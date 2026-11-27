@@ -55,3 +55,41 @@ func TestStepDebugKeepsWatchpoint(t *testing.T) {
 		t.Fatalf("stored value = %#x", got)
 	}
 }
+
+// TestPeekRegisterSIO checks that the diagnostic peek does not consume FIFO
+// words or claim spinlocks.
+func TestPeekRegisterSIO(t *testing.T) {
+	c := New()
+	c.core = 1
+	c.Write32(SIOBase+0x54, 0x12345678) // core 1 pushes to core 0's FIFO
+	c.core = 0
+	if got, ok := c.PeekRegister(SIOBase + 0x58); !ok || got != 0x12345678 {
+		t.Fatalf("peek FIFO_RD = %#x, %v", got, ok)
+	}
+	if got := c.Read32(SIOBase + 0x50); got&1 == 0 {
+		t.Fatal("peek consumed the FIFO word")
+	}
+	if got := c.Read32(SIOBase + 0x58); got != 0x12345678 {
+		t.Fatalf("read FIFO_RD = %#x", got)
+	}
+
+	if got, _ := c.PeekRegister(SIOBase + 0x100); got != 1 {
+		t.Fatalf("peek SPINLOCK0 = %#x, want 1", got)
+	}
+	if got := c.Read32(SIOBase + 0x100); got != 1 {
+		t.Fatal("peek claimed SPINLOCK0")
+	}
+}
+
+// TestPeekRegisterSysTick checks that peeking SYST_CSR does not clear the
+// latched COUNTFLAG.
+func TestPeekRegisterSysTick(t *testing.T) {
+	c := New()
+	c.ppb[0].tick.ctrl = 1 << 16 // COUNTFLAG latched, timer disabled
+	if got, _ := c.PeekRegister(SCSBase + 0x010); got&(1<<16) == 0 {
+		t.Fatal("peek SYST_CSR lost COUNTFLAG")
+	}
+	if got := c.Read32(SCSBase + 0x010); got&(1<<16) == 0 {
+		t.Fatal("peek cleared COUNTFLAG")
+	}
+}

@@ -240,10 +240,10 @@ func (c *Chip) PeekRegister(addr uint32) (uint32, bool) {
 		return 0, false
 	}
 	if addr >= SIOBase && addr < SIOBase+0x1000 {
-		return c.sio.read(c, addr-SIOBase), true
+		return c.sio.peek(c, addr-SIOBase), true
 	}
 	if addr >= SCSBase && addr < SCSBase+0x1000 {
-		return c.ppbForCore().read(addr - SCSBase), true
+		return c.ppbForCore().peek(addr - SCSBase), true
 	}
 	if b := c.regBlockFor(addr); b != nil {
 		return b.regs[(addr-b.base)/4], true
