@@ -350,7 +350,7 @@ func (d *dmaBlock) start(ch int) {
 	d.active |= 1 << uint(ch)
 	d.block.regs[base/4+2] = chp.count
 	d.block.regs[base/4+3] = chp.ctrl
-	if chp.count == 0 {
+	if chp.count == 0 && (chp.reload>>28)&0xF != 0xF {
 		d.complete(ch)
 	}
 }
@@ -496,12 +496,15 @@ func (d *dmaBlock) step(n int, ch *dmaChannel) {
 	}
 	ch.read = dmaAddress(ch.read, ch.readBase, ch.ctrl, true, size)
 	ch.write = dmaAddress(ch.write, ch.writeBase, ch.ctrl, false, size)
-	ch.count--
+	mode := (ch.reload >> 28) & 0xF
+	if mode != 0xF { // ENDLESS does not decrement or complete
+		ch.count--
+	}
 	base := uint32(n * 0x40)
 	d.block.regs[base/4] = ch.read
 	d.block.regs[base/4+1] = ch.write
 	d.block.regs[base/4+2] = ch.count
-	if ch.count == 0 {
+	if ch.count == 0 && mode != 0xF {
 		d.complete(n)
 	}
 }
@@ -550,6 +553,10 @@ func (d *dmaBlock) complete(n int) {
 	if ch.ctrl&dmaCtrlIRQQuiet == 0 {
 		d.intr |= 1 << uint(n)
 		d.syncIRQ()
+	}
+	if (ch.reload>>28)&0xF == 1 && ch.reload&dmaCountMask != 0 {
+		// TRIGGER_SELF re-arms this channel in addition to the chain target.
+		d.start(n)
 	}
 	target := int((ch.ctrl >> 13) & 0xF)
 	if target == n || target >= 16 || d.enabled&(1<<uint(target)) == 0 || d.ch[target].active {
