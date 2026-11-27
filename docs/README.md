@@ -110,8 +110,11 @@ See [ci.md](ci.md) for the full recipe.
 - **RTOS kernels**: Zephyr 4.5 (`rpi_pico2/rp2350a/m33`) and FreeRTOS-style
   preemptive kernels with SVC/PendSV/SysTick, per-core NVIC and floating-point
   context switching. See the [Zephyr guide](zephyr.md).
-- **Pico 2 W**: a *virtual* Wi-Fi netdev backed by the host stack. The real
-  CYW43439 radio and Bluetooth are not emulated; see [boards.md](boards.md).
+- **Pico 2 W**: the on-board CYW43439 gSPI radio, firmware download, WLC
+  control, join/events and the DHCP/DNS/NTP/NAT data path are emulated
+  (`-cyw43439`, board `pico2w-cyw`). The legacy `pico2w` board keeps the
+  virtual Wi-Fi netdev; Bluetooth is on the separate `-ble` controller. See
+  [boards.md](boards.md).
 - **Pico 2 + PSRAM**: optional 1–16 MiB QSPI device on QMI CS1, with a
   configurable access latency; see [boards.md](boards.md#psram).
 - **Waveshare RP2350-GEEK**: ST7789 240×135, I2C header and microSD.

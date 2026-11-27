@@ -159,11 +159,21 @@ transparent serial bridge configured with the CH9120 command set; the
 `Read`/`Write` exchange raw socket bytes. `task run:ch9120` connects to the host
 echo server, and the UI's Ethernet tab shows its state and events.
 
-### Pico 2 W (virtual Wi-Fi)
+### Pico 2 W (CYW43439 gSPI)
 
-The Pico 2 W's Infineon CYW43439 is **not** modelled: its gSPI protocol,
-firmware download and Bluetooth stack are out of the emulator's scope. Instead
-the `pico2w` board exposes a **virtual Wi-Fi netdev** backed by the host
+The on-board Infineon CYW43439 is modelled at its host pins: GP23 `WL_REG_ON`,
+GP24 `WL_D`, GP25 `WL_CS` and GP29 `WL_CLK`. Stock `soypat/cyw43439` firmware
+runs unmodified through the gSPI transport: reset, firmware/CLM/NVRAM
+download, WLC init, join and the `WL_GPIO0` LED. The radio is the `-cyw43439`
+flag and the `pico2w-cyw` UI board.
+
+The data path is a real Ethernet interface behind gSPI. The guest gets
+`10.0.2.15/24` over DHCP; gateway `10.0.2.2` maps to the host loopback, DNS
+`10.0.2.3` answers from the board hosts map or the host resolver, and TCP/UDP
+are NATed through a gVisor netstack. `task run:pico2wnet` joins, gets DHCP,
+resolves a name and echoes through a host TCP server.
+
+The legacy `pico2w` board keeps the **virtual Wi-Fi netdev** backed by the host
 network stack, reusing the CH9120 serial-module model. Firmware uses
 `drivers/ch9120`'s `NetDevice` (a one-socket `netdev`) and calls
 `netdev.UseNetdev`, so TinyGo's `net` package works normally:
@@ -194,7 +204,8 @@ rp2350sim-ui --board geek firmware.elf
 The UI starts with a board picker. The list comes from `cmd/simui/boards.yaml`
 (or `RP2350SIM_BOARDS=/path/to/boards.yaml`), and each entry declares its
 hardware: an ST7789 LCD with its CS/DC/RST pins, touch and IMU controllers, a
-W5500/W6300/CH9120 network controller, virtual Wi-Fi, a microSD directory, a
+W5500/W6300/CH9120 network controller, the CYW43439 radio, virtual Wi-Fi, a
+microSD directory, a
 WS2812B data pin, scope channels, generated analog signals, logic-analyzer
 protocols, UART TCP bridges, built-in I2C/SPI presets, scripted Lua/WASM device
 files or remote Bus Pirate devices.
@@ -290,6 +301,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:w5500` | desktop UI on the `pico2-w5500` board with the W5500 example |
 | `task run:ch9120` | CH9120 UART-to-Ethernet example against the host echo |
 | `task ui:ch9120` | desktop UI on the `rp2350-eth` board with the CH9120 example |
+| `task run:pico2w` | CYW43439 bring-up, join and `WL_GPIO0` LED |
+| `task run:pico2wnet` | CYW43439 DHCP, DNS and TCP NAT (lneto stack) |
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
