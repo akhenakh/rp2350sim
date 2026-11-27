@@ -179,3 +179,46 @@ func TestADCDmaDrain(t *testing.T) {
 		}
 	}
 }
+
+// TestADCTemperatureRoundRobin checks that RROBIN can select the on-die
+// temperature channel (after the package's GPIO inputs) and that TS_EN gates
+// the default reading.
+func TestADCTemperatureRoundRobin(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  Package
+		temp int
+	}{
+		{name: "qfn60", pkg: PackageQFN60, temp: 4},
+		{name: "qfn80", pkg: PackageQFN80, temp: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New()
+			c.SetPackage(tt.pkg)
+			c.CPU0.Sleeping = true
+			c.CPU1.Parked = true
+
+			c.Write32(adcBase, adcCSEn|uint32(tt.temp)<<adcCSAinsel|adcCSStartOnce)
+			c.Run(1000)
+			if got := c.Read32(adcBase + 4); got != 0 {
+				t.Fatalf("unbiased temperature = %#x, want 0", got)
+			}
+
+			c.Write32(adcBase, adcCSEn|adcCSTSEn|uint32(tt.temp)<<adcCSAinsel|adcCSStartOnce)
+			c.Run(1000)
+			if got := c.Read32(adcBase + 4); got != adcDefaultTemp {
+				t.Fatalf("temperature = %#x, want %#x", got, adcDefaultTemp)
+			}
+
+			// Round-robin from the last GPIO channel must reach the sensor,
+			// not wrap back to channel 0.
+			c.Write32(adcBase, adcCSEn|adcCSTSEn|uint32(tt.temp-1)<<adcCSAinsel|
+				adcCSStartOnce|1<<uint(tt.temp)<<adcCSRrobin)
+			c.Run(1000)
+			if got := (c.Read32(adcBase) >> adcCSAinsel) & 0xF; int(got) != tt.temp {
+				t.Fatalf("RROBIN selected AINSEL %d, want %d", got, tt.temp)
+			}
+		})
+	}
+}

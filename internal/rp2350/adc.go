@@ -28,6 +28,9 @@ const (
 	adcCSAinsel    = 12
 	adcCSRrobin    = 16
 	adcCSEn        = 1
+	adcCSTSEn      = 1 << 1
+	// adcDefaultTemp is the datasheet's 20.1 C example reading at 3.3 V.
+	adcDefaultTemp = 891
 	adcFCSEn       = 1
 	adcFCSShift    = 1 << 1
 	adcFCSErr      = 1 << 2
@@ -134,7 +137,7 @@ func (a *adcBlock) writeCS(v uint32) {
 	cs &^= (0x1FF << adcCSRrobin) | (0xF << adcCSAinsel) | 0x7
 	cs |= v & (0x1FF << adcCSRrobin)
 	cs |= v & (0xF << adcCSAinsel)
-	cs |= v & (adcCSEn | 1<<1 | adcCSStartMany)
+	cs |= v & (adcCSEn | adcCSTSEn | adcCSStartMany)
 	cs &^= v & (1 << 10)
 	a.block.regs[0] = cs
 	if v&adcCSEn == 0 {
@@ -230,9 +233,11 @@ func (a *adcBlock) advanceRrobin() {
 		return
 	}
 	_, channels := a.packageChannels()
+	// AINSEL has channels GPIO inputs followed by the temperature channel.
+	limit := channels + 1
 	cur := int((a.block.regs[0] >> adcCSAinsel) & 0xF)
-	for i := 1; i <= channels; i++ {
-		ch := (cur + i) % channels
+	for i := 1; i <= limit; i++ {
+		ch := (cur + i) % limit
 		if mask&(1<<uint(ch)) != 0 {
 			a.block.regs[0] = (a.block.regs[0] &^ (0xF << adcCSAinsel)) | uint32(ch)<<adcCSAinsel
 			return
@@ -241,6 +246,19 @@ func (a *adcBlock) advanceRrobin() {
 }
 
 func (a *adcBlock) sample(ch uint32) uint16 {
+	_, channels := a.packageChannels()
+	if int(ch) == channels {
+		// The on-die sensor is the channel after the package's GPIO inputs.
+		// SetADC can supply a calibrated reading; otherwise the bias must be
+		// enabled and a plausible room-temperature value is returned.
+		if v := a.values[ch]; v != 0 {
+			return v
+		}
+		if a.block.regs[0]&adcCSTSEn == 0 {
+			return 0
+		}
+		return adcDefaultTemp
+	}
 	if pin, ok := a.channelPin(ch); ok && a.chip.Pins.AnalogValid[pin] {
 		v := a.chip.Pins.Voltage(pin)
 		if v < 0 {
