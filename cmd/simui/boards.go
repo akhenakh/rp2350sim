@@ -136,7 +136,7 @@ type GPSDevice struct {
 type CANDevice struct {
 	Bus     int    `yaml:"bus"`
 	CS      int    `yaml:"cs"`
-	INT     int    `yaml:"int"`
+	INT     *int   `yaml:"int"`
 	PeerID  uint32 `yaml:"peer_id"`
 	ReplyID uint32 `yaml:"reply_id"`
 }
@@ -718,7 +718,7 @@ func LoadBoards() ([]BoardDef, error) {
 			if !pinInPackage(can.CS) {
 				return nil, fmt.Errorf("boards: %s: can CS must be 0..%d", b.ID, maxPin)
 			}
-			if can.INT >= 0 && !pinInPackage(can.INT) {
+			if can.INT != nil && !pinInPackage(*can.INT) {
 				return nil, fmt.Errorf("boards: %s: can INT must be 0..%d", b.ID, maxPin)
 			}
 			if can.PeerID == 0 {
@@ -1030,8 +1030,8 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 		if can := b.CAN; can != nil {
 			addDevicePin("can cs", can.CS)
-			if can.INT >= 0 {
-				addDevicePin("can int", can.INT)
+			if can.INT != nil {
+				addDevicePin("can int", *can.INT)
 			}
 		}
 		for _, d := range b.UARTPlugins {

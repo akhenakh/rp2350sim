@@ -1317,7 +1317,11 @@ func (e *Emu) resetChip() {
 			bus := devices.NewCANBus(c)
 			ext := can.PeerID > 0x7FF || can.ReplyID > 0x7FF
 			devices.NewCANPeer(bus, can.PeerID, can.ReplyID, ext)
-			m := devices.NewMCP2515(c, bus, can.CS, can.INT)
+			intPin := -1
+			if can.INT != nil {
+				intPin = *can.INT
+			}
+			m := devices.NewMCP2515(c, bus, can.CS, intPin)
 			attachSPI(can.Bus, can.CS, m.Transfer)
 			c.Pins.AddChangeListener(func(pin int, level bool) {
 				if pin == can.CS && !level {
