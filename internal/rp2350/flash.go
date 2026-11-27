@@ -24,7 +24,9 @@ func (c *Chip) FlashCopy() []byte {
 	return out
 }
 
-// FlashWrites reports erase/program operations performed by firmware.
+// FlashWrites reports erase/program operations that changed flash contents.
+// An erase of an already-erased sector does not count, so the UI and the
+// runner can use the counter to decide whether a snapshot needs saving.
 func (c *Chip) FlashWrites() uint64 { return c.flashWrites }
 
 func (c *Chip) flashChanged() {
