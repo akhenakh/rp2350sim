@@ -47,6 +47,7 @@ Startup flags:
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--turbo` | run as fast as the host allows instead of pacing virtual time to real time |
+| `--fps N` | UI rebuild rate in frames per second; `0` follows the active tab (e.g. `4` for a clock) |
 | `--paused` | load the firmware but do not execute until Run |
 | `--png PATH` | render one settled frame and exit (headless) |
 | `--flash PATH` | raw flash backing image; loaded before firmware, and self-updates are written back here |

@@ -2821,7 +2821,6 @@ func (e *Emu) loop() {
 	// snapshot. Asking once per chunk (hundreds of times a second) starves
 	// stepping without making the picture smoother, so cap repaints at
 	// display rate. The browser page shim paces its own rAF loop by tab.
-	const frameInterval = 16 * time.Millisecond
 	var frameAt time.Time
 	var lastYield time.Time
 	for {
@@ -2838,6 +2837,7 @@ func (e *Emu) loop() {
 		stopped := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
 		running := e.running && e.runnableLocked() && !e.chip.Halted && !stopped
 		frameEvery := e.frameEvery
+		frameInterval := max(16*time.Millisecond, frameEvery)
 		boots := e.lastBoots
 		var sleepFor time.Duration
 		if running {

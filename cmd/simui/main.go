@@ -47,6 +47,7 @@ var (
 	scopeAnalyzer      scopeSpectrum
 	triggerKind        string
 	triggerPause       bool
+	frameEveryOverride time.Duration
 	logicSaveMsg       string
 	logicSaveErr       bool
 	cywSaveMsg         string
@@ -159,6 +160,9 @@ func RootView() {
 	if frameTab != activeTab {
 		frameTab = activeTab
 		every := webFrameInterval(activeTab)
+		if frameEveryOverride > 0 {
+			every = frameEveryOverride
+		}
 		emu.SetFrameInterval(every)
 		webSetFrameInterval(every)
 	}
@@ -3768,6 +3772,7 @@ func main() {
 	otpPath := flag.String("otp", "", "seed OTP rows from this JSON file, overriding the board's otp.file")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, profile, hid, ble, bootsel, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
+	fpsFlag := flag.Int("fps", 0, "UI rebuild rate in frames per second (0 follows the active tab)")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")
 	debugTab := flag.String("debug-tab", "registers", "debug inspector tab: registers, memory, variables")
@@ -3779,6 +3784,9 @@ func main() {
 	showVer := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	busAutoConnect = *busConnect
+	if *fpsFlag > 0 {
+		frameEveryOverride = time.Second / time.Duration(*fpsFlag)
+	}
 	emu.SetTurbo(*turboFlag)
 	if webTurboDefault() {
 		emu.SetTurbo(true)

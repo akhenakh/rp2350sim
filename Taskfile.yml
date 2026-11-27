@@ -548,14 +548,14 @@ tasks:
     deps: [firmware:wificlock]
     dir: cmd/simui
     cmds:
-      - go run . --board pico2w-lcd --tab lcd '../../{{.BUILD}}/wificlock.elf'
+      - go run . --board pico2w-lcd --tab lcd --fps 4 '../../{{.BUILD}}/wificlock.elf'
 
   ui:wificlock:png:
     desc: Render the Wi-Fi clock LCD to build/ui-wificlock.png
     deps: [firmware:wificlock]
     dir: cmd/simui
     cmds:
-      - go run . --board pico2w-lcd --tab lcd --run 15 --png '../../{{.BUILD}}/ui-wificlock.png' '../../{{.BUILD}}/wificlock.elf'
+      - go run . --board pico2w-lcd --tab lcd --fps 4 --run 15 --png '../../{{.BUILD}}/ui-wificlock.png' '../../{{.BUILD}}/wificlock.elf'
 
   firmware:echo:
     desc: Build the console echo firmware

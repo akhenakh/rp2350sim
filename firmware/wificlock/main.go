@@ -116,16 +116,11 @@ func main() {
 	runtime.AdjustTimeOffset(int64(offset))
 	println("wificlock: ntp", time.Now().UTC().Format(time.RFC3339), "offset", offset.String())
 	drawStatic(&display, ip, addrs[0].String())
+	updateClock(&display, time.Now().UTC())
 
-	last := ""
 	for {
-		now := time.Now().UTC()
-		stamp := now.Format("15:04:05")
-		if stamp != last {
-			last = stamp
-			drawClock(&display, now)
-		}
-		time.Sleep(200 * time.Millisecond)
+		updateClock(&display, time.Now().UTC())
+		time.Sleep(250 * time.Millisecond)
 	}
 }
 
@@ -146,6 +141,17 @@ func drawBoot(d *st7789.Device, msg string) {
 	tinyfont.WriteLine(d, &freesans.Regular9pt7b, 20, 200, ntpHost, fg)
 }
 
+var (
+	timeCells = [...]struct {
+		x, w int16
+	}{
+		{70, 26}, {96, 26}, {122, 12}, {134, 26},
+		{160, 26}, {186, 12}, {198, 26}, {224, 26},
+	}
+	prevTime string
+	prevDate string
+)
+
 func drawStatic(d *st7789.Device, ip, server string) {
 	_ = d.FillRectangle(0, 0, 320, 240, bg)
 	_ = d.FillRectangle(0, 0, 320, 4, accent)
@@ -155,13 +161,29 @@ func drawStatic(d *st7789.Device, ip, server string) {
 	tinyfont.WriteLine(d, &freesans.Regular9pt7b, 20, 230, "UTC", accent)
 }
 
-func drawClock(d *st7789.Device, now time.Time) {
-	paint(d, 8, 98, 304, 72, bg, func(t *tile) {
-		tinyfont.WriteLine(t, &freesans.Bold24pt7b, 42, 158, now.Format("15:04:05"), fg)
+// drawTimeChar rewrites one character cell, leaving the rest of the panel and
+// its background untouched. Only the digits that changed are sent each tick.
+func drawTimeChar(d *st7789.Device, i int, r rune) {
+	c := timeCells[i]
+	paint(d, c.x, 116, c.w, 46, bg, func(t *tile) {
+		tinyfont.DrawChar(t, &freesans.Bold24pt7b, c.x, 158, r, fg)
 	})
-	paint(d, 8, 178, 304, 32, bg, func(t *tile) {
-		tinyfont.WriteLine(t, &freesans.Regular12pt7b, 46, 205, now.Format("Mon 02 Jan 2006"), fg)
-	})
+}
+
+func updateClock(d *st7789.Device, now time.Time) {
+	stamp := now.Format("15:04:05")
+	for i := 0; i < len(stamp) && i < len(timeCells); i++ {
+		if i >= len(prevTime) || prevTime[i] != stamp[i] {
+			drawTimeChar(d, i, rune(stamp[i]))
+		}
+	}
+	prevTime = stamp
+	if date := now.Format("Mon 02 Jan 2006"); date != prevDate {
+		paint(d, 8, 176, 304, 34, bg, func(t *tile) {
+			tinyfont.WriteLine(t, &freesans.Regular12pt7b, 46, 205, date, fg)
+		})
+		prevDate = date
+	}
 }
 
 func fail(d *st7789.Device, what string, err error) {
