@@ -66,6 +66,45 @@ release page consistent without retroactively editing the tagged commit.
   goroutine to each core with `machine.AssignCore` and verifies `CurrentCore`
   after sleeps and channel wakeups. `task run:assigncore` runs it, and the
   smoke suite asserts both cores report `ok=true`.
+- Cortex-M33 conformance: ADR.W and literal LDRD use `Align(PC,4)`;
+  LDA/LDAB/LDAH no longer arm the exclusive monitor; undefined `VMOV.F64`
+  encodings halt instead of panicking; `VMRS APSR_nzcv, FPSCR` copies only
+  NZCV and `VMSR` keeps AHP/DN/FZ/RMode; `CONTROL.FPCA` follows
+  `FPCCR.ASPEN`; LDMDB, SSAT and USAT are implemented and SEL halts until
+  `APSR.GE` is modelled. The double coprocessor keeps its result in X and
+  models the engaged flag, so the SDK's save/restore path survives a
+  reentrant double operation.
+- Peripheral fidelity: TIMER `ARMED` through the `+0x3000` CLR alias clears
+  only the requested alarms, alarms use the full 32-bit window, and
+  TIMEHW/TIMELW writes set the counter. SHA-256 CSR control bits survive the
+  `+0x2000`/`+0x3000` aliases, so `sha256_start()` no longer clears
+  BSWAP/DMA_SIZE. PIO `WAIT GPIO` and `DBG_PADOUT`/`DBG_PADOE` honour
+  GPIOBASE on RP2350B. ADC round-robin can select the temperature channel and
+  gates its default reading on `TS_EN`. Hang diagnostics no longer consume a
+  FIFO word or claim a spinlock. The bootrom answers CHIP_INFO, CRITICAL,
+  CPU_INFO, FLASH_DEV_INFO, NONCE and BOOT_INFO, and `rom_reboot` records the
+  boot type for `rom_get_last_boot_type()`. The `0x18000000` window is cache
+  maintenance, not a flash alias.
+- Interrupts and DMA: PWM wrap interrupts are delivered on IRQ 8 and IRQ 9.
+  An ISR that returns without clearing a still-active level-sensitive line is
+  re-entered, matching hardware. DMA TREQ pacing covers PIO TX/RX FIFOs,
+  SPI/UART/I2C, PWM wrap, ADC, HSTX and SHA-256, so DMA-driven PIO no longer
+  overruns the TX FIFO; `TRANS_COUNT.MODE` implements NORMAL, TRIGGER_SELF and
+  ENDLESS, and a null trigger requires `EN`.
+- DWARF4 `.debug_loc` no longer double-applies relocations on linked images
+  or uses an off-by-one symbol index, so optimized variable locations resolve.
+- The in-tree W6300 driver's `Recv` advances `Sn_RX_RD` by the bytes actually
+  copied on TCP, so a short read (a TLS record header) leaves the rest of the
+  stream queued, and UDP reads the WIZnet 8-byte header to return exactly one
+  datagram. `firmware/w6300` and `tools/ethhost -udp-reply` cover the split
+  read and two queued datagrams in CI.
+- OTP onboarding: boards can pre-burn the array with `otp: {file, rows,
+  persist}` and `rp2350sim-ui --otp PATH`; the CLI and UI share
+  `internal/otpfile`. A selected board seeds a fresh array, while Reset, Load
+  and `--watch` keep programmed rows. A firmware fuse or lock change writes
+  the persist file, which wins over `file` on the next start. The OTP tab
+  names the seed source and opens its page, so an unmodified production
+  firmware boots with its factory-burned key.
 
 ## v0.5 highlights
 
