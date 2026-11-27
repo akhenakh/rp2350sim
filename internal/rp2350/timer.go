@@ -8,6 +8,7 @@ type timerBlock struct {
 
 	count      uint64
 	lastCycles uint64
+	timeLow    uint32 // TIMELW write latch; applied by TIMEHW
 
 	alarm      [4]uint32
 	armed      uint32
@@ -34,19 +35,25 @@ func (t *timerBlock) init(c *Chip, idx int) {
 	t.block.readFn = t.read
 	t.block.writeFn = t.write
 	t.block.clearFn = func(c *Chip, off, v uint32) {
-		if off == 0x3C { // INTR is write-1-to-clear; the alias must clear bits
+		switch off {
+		case 0x20: // ARMED is write-1-to-clear; the alias must write the mask
+			t.tick(c.Cycles)
+			t.armed &^= v & 0xF
+			t.block.regs[off/4] = t.armed
+		case 0x3C: // INTR is write-1-to-clear; the alias must clear bits
 			t.intR &^= v & 0xF
 			t.block.regs[off/4] = t.intR
 			t.pend()
-			return
+		default:
+			t.block.write(c, off, t.block.read(c, off)&^v)
 		}
-		t.block.write(c, off, t.block.read(c, off)&^v)
 	}
 }
 
 func (t *timerBlock) reset() {
 	t.count = 0
 	t.lastCycles = 0
+	t.timeLow = 0
 	t.alarm = [4]uint32{}
 	t.armed = 0
 	t.latchHigh = 0
@@ -133,7 +140,14 @@ func (t *timerBlock) write(c *Chip, off, v uint32) {
 	}
 	t.tick(c.Cycles)
 	switch {
-	case off == 0x00, off == 0x04, off == 0x08: // time writes are not modelled
+	case off == 0x00: // TIMEHW: the low half has already been latched
+		t.count = uint64(v)<<32 | uint64(t.timeLow)
+		t.block.regs[off/4] = v
+		t.latchValid = false
+	case off == 0x04: // TIMELW is applied when TIMEHW is written
+		t.timeLow = v
+		t.block.regs[off/4] = v
+	case off == 0x08: // TIMEHR read alias
 	case off == 0x0C: // TIMELR read alias
 	case off >= 0x10 && off < 0x20:
 		// Writing an alarm value arms it.
@@ -183,6 +197,7 @@ func (t *timerBlock) tick(cycles uint64) {
 	if t.paused() {
 		return
 	}
+	prev := t.count
 	if t.source&1 != 0 {
 		t.count += elapsed
 	} else {
@@ -191,13 +206,21 @@ func (t *timerBlock) tick(cycles uint64) {
 	if t.armed == 0 {
 		return
 	}
+	// The alarms match the low 32 bits of the counter, so an alarm can be up
+	// to 2^32 counter units away. A signed difference would fire a far-future
+	// alarm immediately; instead check whether each alarm lies in the range
+	// just crossed, in 32-bit arithmetic.
+	delta := uint32(t.count) - uint32(prev)
+	if delta == 0 {
+		return
+	}
 	fired := false
 	for i := range 4 {
 		bit := uint32(1) << uint(i)
 		if t.armed&bit == 0 {
 			continue
 		}
-		if int32(uint32(t.count)-t.alarm[i]) >= 0 {
+		if uint32(t.alarm[i]-uint32(prev)) <= delta {
 			t.armed &^= bit
 			t.intR |= bit
 			fired = true
