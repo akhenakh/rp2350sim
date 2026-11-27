@@ -359,6 +359,15 @@ func (io *ioBank) init(c *Chip) {
 				c.Pins.setOutput(pin, pio.outVal&bit != 0)
 				c.Pins.setOE(pin, pio.outOE&bit != 0)
 			}
+			// Leaving PIO must release the pad: Out/OE are one shared latch, so
+			// the last PIO level would otherwise keep driving a NULL or SIO pin.
+			if oldID := int(old) - 6; oldID >= 0 && oldID < len(c.pio) && c.pio[oldID] != nil {
+				newID := int(c.Pins.Func[pin]) - 6
+				if newID < 0 || newID >= len(c.pio) || c.pio[newID] == nil {
+					c.Pins.setOutput(pin, false)
+					c.Pins.setOE(pin, false)
+				}
+			}
 			if c.Pins.Func[pin] == pwmFuncSel {
 				c.Pins.pwmPins |= bit
 			} else {

@@ -922,3 +922,101 @@ func TestPIOInputSynchronizerTracksFastInput(t *testing.T) {
 		prev = level
 	}
 }
+
+// OUT_STICKY stores the last pin write; the value is bit-0 aligned to
+// OUT_BASE, so it must be rotated into pin positions and the mask must wrap
+// through the 32-pin window.
+func TestPIOStickyHonoursBaseOffset(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	s := &p.sm[0]
+	c.Write32(pioBase0+0xCC, 1<<17) // OUT_STICKY
+
+	s.writeMainRange(24, 1, 1, false)
+	s.applySticky()
+	if p.outVal&(1<<24) == 0 {
+		t.Fatalf("sticky OUT with OUT_BASE=24 did not drive GP24: outVal=%#x", p.outVal)
+	}
+
+	s.writeMainRange(31, 2, 3, false)
+	s.applySticky()
+	if p.outVal&(1<<31) == 0 || p.outVal&1 == 0 {
+		t.Fatalf("sticky range at GP31 did not wrap: outVal=%#x", p.outVal)
+	}
+
+	s.writeMainRange(24, 1, 1, true)
+	s.applySticky()
+	if p.outOE&(1<<24) == 0 {
+		t.Fatalf("sticky PINDIRS with OUT_BASE=24 did not set GP24: outOE=%#x", p.outOE)
+	}
+}
+
+// SMx_INSTR executes at sys_clk: a forced OUT that fills an empty OSR stalls
+// for a cycle, and that cycle must complete even when the SM clock is divided
+// (piolib's SPI3w sets X then Y while the SM is halted).
+func TestPIOForcedStallRunsAtSysClk(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	s := &p.sm[0]
+	c.Write32(pioBase0+0xC8, 60<<16) // CLKDIV 60
+	s.shiftctrl = 1 << 17            // autopull
+	s.outCount = 32
+	c.Write32(pioBase0+0x10, 0x11)   // TxPut
+	c.Write32(pioBase0+0xD8, 0x6020) // out x, 32
+	if !s.stalled {
+		t.Fatal("forced OUT did not stall for the refill")
+	}
+	p.tick()
+	if s.stalled {
+		t.Fatal("forced OUT still stalled after a sys_clk tick")
+	}
+	if s.x != 0x11 {
+		t.Fatalf("x = %#x, want 0x11", s.x)
+	}
+}
+
+// A disabled SM with the default divider is normally not ticked at all; a
+// pending forced instruction must still be serviced.
+func TestPIOForcedStallTicksWithDefaultDivider(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	s := &p.sm[0]
+	s.shiftctrl = 1 << 17
+	s.outCount = 32
+	c.Write32(pioBase0+0x10, 0x22)
+	c.Write32(pioBase0+0xD8, 0x6040) // out y, 32
+	if !s.stalled {
+		t.Fatal("forced OUT did not stall for the refill")
+	}
+	p.tick()
+	if s.stalled {
+		t.Fatal("forced OUT never resumed with the default divider")
+	}
+	if s.y != 0x22 {
+		t.Fatalf("y = %#x, want 0x22", s.y)
+	}
+}
+
+// Switching FUNCSEL away from PIO must release the pad; Out/OE are shared.
+func TestPIOLeavingFuncReleasesPin(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	s := &p.sm[0]
+	c.Pins.Func[0] = pioFuncSel(0)
+	c.Pins.OE |= 1
+	c.Write32(pioBase0+0xDC, 1<<20) // OUT_COUNT=1, OUT_BASE=GP0
+	s.osr = 1
+	s.outCount = 0
+	c.Write32(pioBase0+0xD8, 0x6001) // forced out pins, 1
+	if !c.Pins.Level(0) {
+		t.Fatal("PIO did not drive GP0")
+	}
+
+	c.Write32(0x40028000+0x04, 0x1f) // IO_BANK0 GPIO0 CTRL: FUNCSEL=NULL
+	if c.Pins.OE&1 != 0 || c.Pins.Out&1 != 0 {
+		t.Fatalf("leaving PIO kept the pin driven: OE=%#x Out=%#x", c.Pins.OE, c.Pins.Out)
+	}
+	if c.Pins.Level(0) {
+		t.Fatal("pad still driven after FUNCSEL left PIO")
+	}
+}

@@ -27,6 +27,9 @@ type pioBlock struct {
 	// active is a mask of enabled state machines, kept in step with CTRL.
 	active   uint8
 	clocking uint8 // SMs whose divider is not 1 must tick while disabled
+	// forced marks disabled SMs with a stalled SMx_INSTR instruction; those
+	// execute at sys_clk, so they tick even with the default divider.
+	forced uint8
 
 	// Input synchronizers are relative to the block's 32-pin GPIO window.
 	// INPUT_SYNC_BYPASS selects the raw input for individual pins.
@@ -173,6 +176,7 @@ func (p *pioBlock) reset() {
 	p.fdebug = 0
 	p.active = 0
 	p.clocking = 0
+	p.forced = 0
 	p.inputBypass = 0
 	p.inputSync1 = 0
 	p.inputSync2 = 0
@@ -556,6 +560,7 @@ func (p *pioBlock) flevel() uint32 {
 
 func (s *pioSM) restart() {
 	s.clearSticky()
+	s.p.forced &^= 1 << uint(s.idx)
 	s.pc = uint8((s.execctrl >> 7) & 0x1F) // wrap bottom
 	s.isr = 0
 	s.inCount, s.outCount = 0, 32
@@ -704,17 +709,18 @@ func (s *pioSM) advanceClock(cycles uint64) {
 }
 
 func (s *pioSM) tick() {
-	if !s.clockTick() {
-		return
-	}
 	if !s.enabled {
-		// An instruction written to SMx_INSTR executes even while the state
-		// machine is halted. A forced OUT that needs a refill first stalls for
-		// a cycle; if the halt is never lifted the EXEC latch is left pending
-		// and piolib's SetX/SetY (TxPut + forced OUT,32) would lose the value.
+		// An instruction written to SMx_INSTR executes at sys_clk, not on the
+		// SM clock: keep the divider free-running, but a stalled forced
+		// instruction must complete on the very next cycle, before another
+		// SMx_INSTR write can replace it (piolib's SetX followed by SetY).
+		s.clockTick()
 		if s.stalled && s.stallSource == pioSourceForced {
 			s.resumeStalled()
 		}
+		return
+	}
+	if !s.clockTick() {
 		return
 	}
 	s.applySticky()
@@ -751,6 +757,7 @@ func (s *pioSM) resumeStalled() {
 	s.stalled = false
 	s.stallKind = pioStallNone
 	s.execStalled = false
+	s.p.forced &^= 1 << uint(s.idx)
 	// Side-set belongs to the instruction, not the resource wait: a resumed
 	// OUT/JMP still drives its side-set pins in the cycle it completes.
 	s.applySide(instr)
@@ -871,6 +878,8 @@ func (s *pioSM) autoPullBetween() {
 
 func (s *pioSM) forceInstruction(instr uint16) {
 	s.applySticky()
+	bit := uint8(1) << uint(s.idx)
+	s.p.forced &^= bit
 	if instr == 0xA042 && s.execStalled { // NOP clears a stalled forced instruction
 		s.stalled = false
 		s.stallKind = pioStallNone
@@ -883,6 +892,10 @@ func (s *pioSM) forceInstruction(instr uint16) {
 		s.execStalled = false
 	}
 	s.attemptInstruction(instr, pioSourceForced)
+	if s.stalled && s.stallSource == pioSourceForced && !s.enabled {
+		// Tick this SM at sys_clk until the stalled instruction completes.
+		s.p.forced |= bit
+	}
 }
 
 func (s *pioSM) advance() {
@@ -996,7 +1009,9 @@ func (s *pioSM) pinMask(base, count int) uint32 {
 	if count >= 32 {
 		return ^uint32(0)
 	}
-	return (1<<uint(count) - 1) << uint(base&31)
+	// The pin range wraps through the 32-pin window like pinAt does; a plain
+	// shift would truncate a range crossing bit 31.
+	return bits.RotateLeft32(1<<uint(count)-1, base&31)
 }
 
 func (s *pioSM) writeMainRange(base, count int, v uint32, dirs bool) {
@@ -1004,6 +1019,9 @@ func (s *pioSM) writeMainRange(base, count int, v uint32, dirs bool) {
 	if !s.sticky() {
 		return
 	}
+	// v is aligned to bit 0 of the range while the sticky latch is applied at
+	// offset 0 with the pre-shifted mask, so rotate it into pin positions.
+	v = bits.RotateLeft32(v, base&31)
 	mask := s.pinMask(base, count)
 	if dirs {
 		s.stickyDirMask = mask
@@ -1629,7 +1647,7 @@ func (p *pioBlock) syncInputs(raw uint64) {
 
 func (p *pioBlock) tickWithInputs(raw uint64) {
 	p.syncInputs(raw)
-	for mask := p.active | p.clocking; mask != 0; {
+	for mask := p.active | p.clocking | p.forced; mask != 0; {
 		i := bits.TrailingZeros8(mask)
 		mask &^= 1 << uint(i)
 		p.sm[i].tick()
