@@ -53,7 +53,8 @@ Working notes for changes after v0.6 go here.
 v0.6 models the Pico 2 W's CYW43439 at the gSPI pins: the stock TinyGo Wi-Fi
 driver runs unmodified, the radio reaches a virtual access point backed by a
 gVisor userland TCP/IP stack, and Bluetooth HCI shares the same bus. The
-Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end.
+Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end. See the
+[What's New #6](videos.md#whats-new-6) tour.
 
 - The Pico 2 W's CYW43439 is modelled at the gSPI pins, so the stock TinyGo
   `soypat/cyw43439` driver runs unmodified: reset, firmware/CLM/NVRAM

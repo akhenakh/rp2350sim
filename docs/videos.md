@@ -51,3 +51,13 @@ timed 1-Wire, DHT and HC-SR04 devices, a deterministic NMEA GPS source, an
 MCP2515 CAN controller, per-core ITM/DWT trace, the GPS/CAN/Trace tabs and the
 pico2-lcd-lab LCD dashboard. The dedicated device-plugin video is linked from
 the episode.
+
+## What's New #6
+
+[![rp2350sim what's new #6](https://img.youtube.com/vi/vr-0c5htsuM/hqdefault.jpg)](https://youtu.be/vr-0c5htsuM)
+
+[Watch on YouTube](https://youtu.be/vr-0c5htsuM) — the sixth feature tour: the
+Pico 2 W's CYW43439 modelled at the gSPI pins with the stock TinyGo driver, a
+virtual access point with DHCP, DNS and NTP, a gVisor userland TCP/IP stack
+with NAT (exercised with NTP, MQTT and TLS), Bluetooth HCI over the shared bus,
+the Wi-Fi clock demo, the PIO fidelity work, and the Wi-Fi/UART tabs.
