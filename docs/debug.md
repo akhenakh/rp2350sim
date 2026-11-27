@@ -48,6 +48,9 @@ rp2350sim -fw firmware.elf -seconds 2 -watch g_magic
     a scrollable list. Globals come from every compilation unit and include
     symbol-only objects; underscore-prefixed linker/runtime symbols are omitted
     from the UI.
+  - **Copy**, at the right of the inspector tabs, copies the active view as
+    plain text: the register set, the 128-byte memory window, or the locals and
+    application globals.
 
 ## Variables and limitations
 

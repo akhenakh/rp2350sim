@@ -47,6 +47,9 @@ func debugInspector(s DebugSnapshot) {
 			debugInspectorButton("Memory", 1)
 			debugInspectorButton("Variables", 2)
 			Filler(1)
+			if Button(NoIcon, "Copy") {
+				debugCopy(debugInspectorTab, s)
+			}
 		})
 		Container(Attrs(Grow(1), Expand), func() {
 			switch debugInspectorTab {
@@ -76,6 +79,117 @@ func debugInspectorButton(label string, tab int) {
 		}
 		Label(label, FontSize(13), FontWeight(600))
 	})
+}
+
+// debugCopy places the active inspector view on the clipboard as plain text.
+func debugCopy(tab int, s DebugSnapshot) {
+	switch tab {
+	case 1:
+		spec := debugMemSpec
+		if spec == "" {
+			spec = fmt.Sprintf("%#x", s.PC)
+		}
+		base, ok := debugAddress(spec)
+		if !ok {
+			debugMsg = "memory: enter a hex address"
+			RequestNextFrame()
+			return
+		}
+		data, ok := emu.ReadMemory(base, 128)
+		if !ok {
+			debugMsg = fmt.Sprintf("%08x is not readable memory", base)
+			RequestNextFrame()
+			return
+		}
+		RequestTextCopy(debugMemoryText(base, data))
+	case 2:
+		RequestTextCopy(debugVariablesText(s))
+	default:
+		RequestTextCopy(debugRegistersText(s))
+	}
+}
+
+// debugRegistersText renders the register panel for the clipboard.
+func debugRegistersText(s DebugSnapshot) string {
+	var b strings.Builder
+	b.WriteString("rp2350sim debug registers\n\n")
+	for r := 0; r < 16; r += 2 {
+		fmt.Fprintf(&b, "R%-2d %08x  R%-2d %08x\n",
+			r, s.Registers[r], r+1, s.Registers[r+1])
+	}
+	fmt.Fprintf(&b, "PC %08x  SP %08x\n", s.PC, s.SP)
+	fmt.Fprintf(&b, "APSR %08x  IPSR %d\n", s.APSR, s.IPSR)
+	fmt.Fprintf(&b, "CONTROL %x  MSP %08x  PSP %08x\n", s.CONTROL, s.MSP, s.PSP)
+	return b.String()
+}
+
+// debugMemoryText renders a byte window in the same rows the memory panel
+// shows. It is separate from the panel so the Copy path is testable.
+func debugMemoryText(base uint32, data []byte) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "rp2350sim debug memory\nBase: 0x%08x  Bytes: %d\n\n", base, len(data))
+	for row := 0; row < len(data); row += 16 {
+		end := min(row+16, len(data))
+		var hex strings.Builder
+		var ascii strings.Builder
+		for _, v := range data[row:end] {
+			fmt.Fprintf(&hex, "%02x ", v)
+			if v >= 32 && v < 127 {
+				ascii.WriteByte(v)
+			} else {
+				ascii.WriteByte('.')
+			}
+		}
+		fmt.Fprintf(&b, "%08x  %-47s  %s\n",
+			base+uint32(row), strings.TrimSpace(hex.String()), ascii.String())
+	}
+	return b.String()
+}
+
+// debugVariablesText renders the locals and application globals the panel
+// lists. Underscore-prefixed globals are linker/runtime symbols, as in the UI.
+func debugVariablesText(s DebugSnapshot) string {
+	var b strings.Builder
+	b.WriteString("rp2350sim debug variables\n")
+	b.WriteString("\nLocals:\n")
+	if len(s.Locals) == 0 {
+		b.WriteString("  (none)\n")
+	}
+	for _, v := range s.Locals {
+		writeDebugVariable(&b, v)
+	}
+	b.WriteString("\nGlobals:\n")
+	globals := 0
+	for _, v := range s.Globals {
+		if !strings.HasPrefix(v.Name, "_") {
+			globals++
+		}
+	}
+	if globals == 0 {
+		b.WriteString("  (none)\n")
+	}
+	for _, v := range s.Globals {
+		if strings.HasPrefix(v.Name, "_") {
+			continue
+		}
+		writeDebugVariable(&b, v)
+	}
+	return b.String()
+}
+
+func writeDebugVariable(b *strings.Builder, v debug.Variable) {
+	value := v.Value
+	if !v.Available {
+		value = v.Note
+		if value == "" {
+			value = "unavailable"
+		}
+	}
+	typ := v.Type
+	if typ == "" {
+		typ = "-"
+	}
+	fmt.Fprintf(b, "  %-24s %-14s %s\n", v.Name, typ, value)
 }
 
 func debugControls(s DebugSnapshot) {
