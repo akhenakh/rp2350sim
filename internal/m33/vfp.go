@@ -35,7 +35,11 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	// frame, exactly as the hardware does.
 	c.flushLazy()
 	c.FPUActive = true
-	c.CONTROL |= 4
+	// With FPCCR.ASPEN clear the processor does not track an active FP
+	// context in CONTROL.FPCA, so leave the bit alone.
+	if c.FPCCR&fpcASPN != 0 {
+		c.CONTROL |= 4
+	}
 	if hw1&0xFE00 == 0xEC00 {
 		// VMOV Dm,Rt,Rt2 and VMOV Rt,Rt2,Dm are EC40..EC5F (U=0, P=0,
 		// W=0, D=1). Masking only 0xFF00 also matched the non-writeback
@@ -329,10 +333,12 @@ func (c *CPU) vfpCoreTransfer(hw1, hw2 uint16) {
 		sd := int((hw1&0xF)<<1) | int((hw2>>7)&1)
 		c.R[rt] = c.S[sd]
 	case 0xE: // VMSR FPSCR, Rt
-		c.FPSCR = c.R[rt] & 0xF800_009F
-	case 0xF: // VMRS Rt, FPSCR (Rt == 15 copies the flags to APSR)
+		// NZCV/QC, AHP/DN/FZ/RMode and the exception flag bits are writable.
+		c.FPSCR = c.R[rt] & 0xFFC0_009F
+	case 0xF: // VMRS Rt, FPSCR (Rt == 15 copies NZCV to APSR)
 		if rt == 15 {
-			c.APSR = (c.APSR &^ 0xF8000000) | (c.FPSCR & 0xF8000000)
+			// Only FPSCR[31:28] maps to APSR; bit 27 is APSR.Q, not QC.
+			c.APSR = (c.APSR &^ 0xF0000000) | (c.FPSCR & 0xF0000000)
 		} else {
 			c.R[rt] = c.FPSCR
 		}

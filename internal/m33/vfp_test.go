@@ -152,6 +152,52 @@ func TestVFPDoubleRegisterBounds(t *testing.T) {
 	}
 }
 
+// TestVFPFlagTransfers checks the VMRS/VMSR masks: VMRS only copies NZCV
+// (APSR.Q belongs to the DSP extension, not FPSCR.QC) and VMSR keeps the
+// implemented modes AHP/DN/FZ/RMode.
+func TestVFPFlagTransfers(t *testing.T) {
+	cpu := New(newExecBus())
+	cpu.APSR = flagQ | fpscrN | fpscrV
+	cpu.FPSCR = fpscrZ | fpscrC | 1<<27 // Z, C, QC
+	cpu.exec32Coproc(0xEEF1, 0xFA10)    // vmrs APSR_nzcv, fpscr
+	if cpu.APSR&flagQ == 0 {
+		t.Fatal("VMRS cleared APSR.Q")
+	}
+	if cpu.APSR&fpscrN != 0 || cpu.APSR&fpscrV != 0 ||
+		cpu.APSR&fpscrZ == 0 || cpu.APSR&fpscrC == 0 {
+		t.Fatalf("APSR after VMRS = %#x", cpu.APSR)
+	}
+
+	want := uint32(1<<26 | 1<<25 | 1<<24 | 3<<22 | 1<<7 | 0x1F)
+	cpu.R[0] = want | 0x0000_0040    // bit 6 is reserved
+	cpu.exec32Coproc(0xEEE1, 0x0A10) // vmsr fpscr, r0
+	if cpu.FPSCR != want {
+		t.Fatalf("FPSCR = %#x, want %#x", cpu.FPSCR, want)
+	}
+}
+
+// TestVFPFPCARespectsASPEN checks that executing an FP instruction only sets
+// CONTROL.FPCA when automatic state preservation is enabled.
+func TestVFPFPCARespectsASPEN(t *testing.T) {
+	cpu := New(newExecBus())
+	cpu.FPCCR = 0 // ASPEN and LSPEN clear
+	cpu.CONTROL = 0
+	cpu.exec32Coproc(0xEE30, 0x0A81) // vadd.f32 s0, s1, s2
+	if cpu.CONTROL&4 != 0 {
+		t.Fatal("FPCA set with ASPEN clear")
+	}
+	if !cpu.FPUActive {
+		t.Fatal("FPU not marked active with ASPEN clear")
+	}
+
+	cpu.FPCCR = fpcASPN
+	cpu.CONTROL = 0
+	cpu.exec32Coproc(0xEE30, 0x0A81)
+	if cpu.CONTROL&4 == 0 {
+		t.Fatal("FPCA not set with ASPEN enabled")
+	}
+}
+
 // TestVFPDoubleMoveUndefined checks that VMOV.F64 Dd, Dm halts even for
 // D0-D15: FPv5-SP has no double-precision data processing, and a D16-D31
 // encoding used to index past S[31] and panic the host.
