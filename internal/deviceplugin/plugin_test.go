@@ -160,3 +160,32 @@ func TestLanguageForPathQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestLuaTimeIsDeterministic(t *testing.T) {
+	src := []byte(`
+return { new = function() return {
+  tick = function(self)
+    math.randomseed()
+    print(string.format("%.9f", math.random()))
+  end,
+} end }
+`)
+	run := func() string {
+		var logs []string
+		p, err := Load(Config{Name: "det", Lang: Lua, Source: src,
+			Log: func(line string) { logs = append(logs, line) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer p.Close()
+		p.SetNowUS(5_000_000)
+		p.Tick(5_000_000)
+		if len(logs) == 0 {
+			t.Fatal("no log")
+		}
+		return logs[0]
+	}
+	if a, b := run(), run(); a != b {
+		t.Fatalf("time-seeded random differs: %q vs %q", a, b)
+	}
+}
