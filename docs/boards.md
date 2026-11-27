@@ -200,18 +200,31 @@ What works today:
   and DNS `10.0.2.3` answers from the board `hosts` map or the host resolver.
   ARP, ICMP, TCP and UDP are NATed through a gVisor netstack; NTP is answered
   locally. `-cyw43439-host NAME=IP` adds a DNS entry on the CLI.
+- The Wi-Fi tab shows the guest IP/mask/gateway, the live and recently closed
+  TCP/UDP NAT flows with guest and peer addresses, and a frame counter with
+  **Save pcapng**. `-cyw43439-pcap PATH` writes the same Ethernet capture
+  live (Wireshark reads the direction from the EPB flags). DHCP, DNS, join and
+  socket events are also written to the panel log.
+- Bluetooth uses the chip's shared-memory ring over the same gSPI backplane:
+  the host downloads the BT firmware, exchanges HCI through the host2bt and
+  bt2host rings, and the virtual controller handles commands, events and ACL.
+  `firmware/pico2wble` initializes Bluetooth and exchanges an HCI Reset;
+  `task run:pico2wble` runs it. `-cyw43439-ble-log PATH` writes HCI H4 pcapng.
 - `firmware/pico2w` runs the bring-up, joins `rp2350sim` and toggles the LED;
   `firmware/pico2wnet` uses the lneto stack to get DHCP, resolve `app.lan` and
   echo through a host TCP server. `task run:pico2w` / `task run:pico2wnet`
-  execute them, and the `pico2w-cyw` UI board shows the radio and link state
-  in the Wi-Fi tab.
+  execute them, and the `pico2w-cyw` UI board shows the radio, link, NAT and
+  BLE state in the Wi-Fi tab.
 
 The legacy `pico2w` board still uses the CH9120 serial netdev for TinyGo `net`
-socket offload; Bluetooth stays on the separate `-ble` virtual controller.
+socket offload. The stock Pico SDK BTstack firmware is still served by the
+separate `-ble` symbol-hook controller; the C SDK's own PIO/DMA gSPI driver is
+not supported, while the TinyGo `soypat/cyw43439` driver uses the real bus.
 
 CLI: `-cyw43439` with
-`-cyw43439-{reg-on,data,cs,clk,mac,ssid,password,host,no-net}` overriding the
-Pico W wiring and defaults.
+`-cyw43439-{reg-on,data,cs,clk,mac,ssid,password,host,no-net,pcap}` and
+`-cyw43439-{no-ble,ble-addr,ble-seed,ble-log}` controlling the radio, data
+path and Bluetooth.
 
 ## Breadboard W5500
 
@@ -432,4 +445,5 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/wifi` | virtual Wi-Fi through `netdev` |
 | `firmware/pico2w` | CYW43439 gSPI bring-up (`soypat/cyw43439`) |
 | `firmware/pico2wnet` | CYW43439 DHCP, DNS and TCP NAT (lneto stack) |
+| `firmware/pico2wble` | CYW43439 Bluetooth shared-bus HCI (soypat driver) |
 | `firmware/c/*` | Pico SDK C examples (see [c.md](c.md)) |

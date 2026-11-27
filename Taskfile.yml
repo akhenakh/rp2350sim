@@ -144,6 +144,7 @@ tasks:
       - firmware:piotest
       - firmware:pico2w
       - firmware:pico2wnet
+      - firmware:pico2wble
       - firmware:ws2812
       - firmware:cores
       - firmware:assigncore
@@ -502,6 +503,25 @@ tasks:
     deps: [build, firmware:pico2wnet]
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/pico2wnet.elf -cyw43439 -cyw43439-host app.lan=10.0.2.2 -seconds 10'
+
+  firmware:pico2wble:
+    desc: Build the CYW43439 Bluetooth shared-bus HCI example
+    dir: firmware/pico2wble
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/pico2wble.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/pico2wble.elf .'
+
+  run:pico2wble:
+    desc: Initialize Bluetooth over gSPI and exchange an HCI Reset
+    deps: [build, firmware:pico2wble]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/pico2wble.elf -cyw43439 -seconds 12'
 
   firmware:echo:
     desc: Build the console echo firmware

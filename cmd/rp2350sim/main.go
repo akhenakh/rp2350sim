@@ -217,6 +217,11 @@ func main() {
 		cywSSID      = flag.String("cyw43439-ssid", "", "CYW43439 virtual AP SSID (empty accepts any)")
 		cywPass      = flag.String("cyw43439-password", "", "CYW43439 virtual AP passphrase")
 		cywNoNet     = flag.Bool("cyw43439-no-net", false, "disable the CYW43439 DHCP/DNS/NAT data path")
+		cywPcap      = flag.String("cyw43439-pcap", "", "write CYW43439 Ethernet frames to this pcapng file")
+		cywNoBLE     = flag.Bool("cyw43439-no-ble", false, "disable the CYW43439 Bluetooth shared-bus model")
+		cywBLEAddr   = flag.String("cyw43439-ble-addr", "C0:DE:12:34:56:78", "CYW43439 BLE peer address")
+		cywBLESeed   = flag.Int64("cyw43439-ble-seed", 42, "CYW43439 BLE controller PRNG seed")
+		cywBLELog    = flag.String("cyw43439-ble-log", "", "write CYW43439 HCI traffic to this pcapng file")
 		bleAddr      = flag.String("ble-addr", "C0:DE:12:34:56:78", "advertised BLE peer address")
 		bleHostWake  = flag.Int("ble-host-wake", 24, "CYW43 HOST_WAKE GPIO")
 		bleSeed      = flag.Int64("ble-seed", 42, "BLE controller PRNG seed")
@@ -545,7 +550,24 @@ func main() {
 		}
 		var macArr [6]byte
 		copy(macArr[:], mac)
-		cyw = cyw43439.Attach(c, cyw43439.Config{
+		bleAddr, berr := net.ParseMAC(*cywBLEAddr)
+		if berr != nil || len(bleAddr) != 6 {
+			log.Error("cyw43439 ble address", slog.String("value", *cywBLEAddr), slog.Any("err", berr))
+			exit(2)
+		}
+		var bleArr [6]byte
+		copy(bleArr[:], bleAddr)
+		var cywHCIFile *os.File
+		if *cywBLELog != "" && !*cywNoBLE {
+			f, err := os.Create(*cywBLELog)
+			if err != nil {
+				log.Error("cyw43439 hci log", slog.String("path", *cywBLELog), slog.Any("err", err))
+				exit(1)
+			}
+			cywHCIFile = f
+			defer func() { _ = f.Close() }()
+		}
+		cfg := cyw43439.Config{
 			Logger:   log,
 			RegOn:    *cywRegOn,
 			Data:     *cywData,
@@ -554,8 +576,27 @@ func main() {
 			MAC:      macArr,
 			SSID:     *cywSSID,
 			Password: *cywPass,
-			Network:  &cyw43439.NetConfig{Hosts: cywHosts, Disable: *cywNoNet},
-		})
+			Network:  &cyw43439.NetConfig{Hosts: cywHosts, Disable: *cywNoNet, NetLogger: log},
+			BLE:      !*cywNoBLE,
+			BLEAddr:  bleArr,
+			BLESeed:  *cywBLESeed,
+		}
+		if cywHCIFile != nil {
+			cfg.HCILog = cywHCIFile
+		}
+		cyw = cyw43439.Attach(c, cfg)
+		if *cywPcap != "" {
+			f, err := os.Create(*cywPcap)
+			if err != nil {
+				log.Error("cyw43439 pcap", slog.String("path", *cywPcap), slog.Any("err", err))
+				exit(1)
+			}
+			if err := cyw.SetPcapWriter(f); err != nil {
+				log.Error("cyw43439 pcap", slog.Any("err", err))
+				exit(1)
+			}
+			defer func() { _ = f.Close() }()
+		}
 	}
 	if *bootsel {
 		c.SetBootsel(true)
@@ -1655,6 +1696,16 @@ func main() {
 			slog.Bool("link_up", cyw.LinkUp()),
 			slog.String("ssid", cyw.SSID()),
 			slog.Bool("led", cyw.LED()))
+		if *cywPcap != "" {
+			log.Info("cyw43439 pcap", slog.String("path", *cywPcap),
+				slog.Uint64("frames", cyw.PcapTotal()))
+		}
+		if st, ok := cyw.BLEStatus(); ok {
+			log.Info("cyw43439 ble",
+				slog.Bool("connected", st.Connected),
+				slog.String("peer", net.HardwareAddr(st.Peer[:]).String()),
+				slog.Int("pending", st.Pending))
+		}
 	}
 	if !*quiet && (otpSeeded > 0 || c.OTPWrites() > 0) {
 		log.Info("otp",

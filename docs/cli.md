@@ -174,6 +174,11 @@ every UI board to its flags and demo firmware. The flags are:
 | `-cyw43439-mac ADDR` | station MAC (default `02:11:22:33:44:55`) |
 | `-cyw43439-host NAME=IP` | DNS entry for the virtual AP (repeatable) |
 | `-cyw43439-no-net` | disable the DHCP/DNS/NAT data path |
+| `-cyw43439-pcap PATH` | write CYW43439 Ethernet frames to a pcapng file |
+| `-cyw43439-no-ble` | disable the Bluetooth shared-bus model |
+| `-cyw43439-ble-addr ADDR` | BLE peer address (default `C0:DE:12:34:56:78`) |
+| `-cyw43439-ble-seed N` | BLE controller PRNG seed (default 42) |
+| `-cyw43439-ble-log PATH` | write HCI H4 traffic to a pcapng file |
 | `-ble` | virtual CYW43 BLE controller (Pico W HCI transport; see [ble.md](ble.md)) |
 | `-ble-addr ADDR` | advertised BLE peer address (default `C0:DE:12:34:56:78`) |
 | `-ble-host-wake GPIO` | CYW43 HOST_WAKE pin (default 24) |

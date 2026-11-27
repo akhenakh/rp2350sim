@@ -3,12 +3,24 @@
 `rp2350sim` can run stock **Pico W BTstack firmware** against a virtual BLE
 controller. The host stack is real: btstack's GAP, GATT, ATT, SM and L2CAP code
 runs unmodified on the emulated Cortex-M33. The emulator answers below the
-CYW43 HCI transport, so there is no CYW43439 radio, no gSPI model and no
-2.4 GHz PHY.
+CYW43 HCI transport, so there is no 2.4 GHz PHY.
 
 This is a logical controller, not a packet-level radio: advertising, scanning,
 connections and the scripted GATT peer are deterministic and driven by virtual
 time.
+
+## Transports
+
+- **Symbol hooks (`-ble`)**: the stock Pico SDK BTstack firmware keeps its own
+  `cyw43_btbus` driver; the emulator replaces `cyw43_ll_bus_init`,
+  `cyw43_btbus_read/write` and the has-work checks. This is the path the
+  `pico2-w-ble` board and `-ble` use.
+- **gSPI shared bus (`-cyw43439`)**: the TinyGo `soypat/cyw43439` driver
+  performs the real BT firmware download and HCI exchange through the chip's
+  shared-memory rings. `firmware/pico2wble` validates an HCI Reset and
+  `Read BD_ADDR` over that transport. The C SDK's own PIO/DMA gSPI driver is
+  not modelled, so the stock BTstack fixture still uses the symbol hooks.
+
 
 ## What works
 
@@ -25,8 +37,8 @@ time.
 
 Not modelled: Classic/BR-EDR, pairing and bonding, LESC, 2M/Coded PHY,
 extended advertising, multiple simultaneous connections, mesh, LE Audio and
-Wi-Fi coexistence. `pico2_w` still has no radio; the existing virtual Wi-Fi is
-a CH9120 UART netdev.
+Wi-Fi coexistence. The Pico 2 W's Wi-Fi side is the CYW43439 gSPI model
+(`-cyw43439`); the legacy virtual Wi-Fi board remains a CH9120 UART netdev.
 
 ## Run the stock Pico W example
 

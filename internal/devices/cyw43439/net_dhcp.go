@@ -2,7 +2,10 @@
 
 package cyw43439
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"net"
+)
 
 // DHCP server for the virtual AP. The guest gets GuestIP/24 with the gateway
 // as router and DNSIP as resolver; the lease never expires from the emulator's
@@ -92,6 +95,13 @@ func (n *network) handleDHCP(srcIP [4]byte, srcPort uint16, dstIP [4]byte, dstPo
 	out := n.udpFrame([6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
 		n.cfg.GatewayIP, [4]byte{255, 255, 255, 255}, 67, 68, reply)
 	n.d.queueDataFrame(out)
+	kind := "offer"
+	if replyType == 5 {
+		kind = "ack"
+	}
+	n.netLog.Info("dhcp "+kind,
+		"ip", net.IP(n.cfg.GuestIP[:]).String(),
+		"mac", net.HardwareAddr(chaddr[:]).String())
 }
 
 func maskBytes(prefix int) []byte {

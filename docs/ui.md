@@ -323,6 +323,15 @@ shows both the emulated device address and the **host address to connect to**
 
 ![Wi-Fi tab with the virtual netdev](images/wifi.png)
 
+On the Pico 2 W CYW43439 board the tab also shows the radio state, the live and
+recently closed TCP/UDP NAT flows with guest and peer addresses, the Ethernet
+capture counter and **Save pcapng** (`-cyw43439-pcap PATH` writes it live).
+DHCP, DNS, join and socket events appear in the panel log. The BLE line reports
+the shared-bus controller; the stock BTstack fixture still uses the separate
+`-ble` symbol-hook controller.
+
+![CYW43439 Wi-Fi tab with NAT flows and pcap capture](images/wifi-cyw.png)
+
 ### LEDs
 
 The last WS2812B frame as large swatches with its RGB values.

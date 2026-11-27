@@ -49,6 +49,8 @@ var (
 	triggerPause       bool
 	logicSaveMsg       string
 	logicSaveErr       bool
+	cywSaveMsg         string
+	cywSaveErr         bool
 	busTerms           = map[string]*BusTerminal{}
 	busTermErrs        = map[string]string{}
 	busInput           string
@@ -1933,6 +1935,36 @@ func ethPanel(snap MachineState) {
 					}
 				})
 				Label(c.Pins, FontSize(11), TextColor(220, 6, 62, 1))
+				Container(Attrs(Row, CrossMid, Gap(8)), func() {
+					Label(fmt.Sprintf("capture %d frame(s) · %d total", c.PcapFrames, c.PcapTotal),
+						FontSize(11), TextColor(140, 45, 65, 1))
+					Filler(1)
+					if Button(NoIcon, "Save pcapng") {
+						path, err := emu.SaveCYWCapture()
+						if err != nil {
+							cywSaveMsg = "save failed: " + err.Error()
+							cywSaveErr = true
+						} else {
+							cywSaveMsg = "saved " + path
+							cywSaveErr = false
+						}
+						RequestNextFrame()
+					}
+				})
+				if c.BLE {
+					ble := "BLE ready · shared-bus HCI"
+					if c.BLEConn {
+						ble = "BLE connected " + c.BLEPeer
+					}
+					Label(ble, FontSize(11), TextColor(140, 45, 65, 1))
+				}
+				if cywSaveMsg != "" {
+					color := TextColor(140, 45, 72, 1)
+					if cywSaveErr {
+						color = TextColor(0, 65, 55, 1)
+					}
+					Label(cywSaveMsg, FontSize(11), FontWeight(600), color)
+				}
 			})
 		}
 		if n := snap.Network; n != nil {
@@ -1941,7 +1973,7 @@ func ethPanel(snap MachineState) {
 		Container(Attrs(Grow(1), Expand, Gap(2), Pad(10), Corners(6), Clip,
 			Background(220, 12, 8, 1), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
 			if len(snap.EthLog) == 0 {
-				Label("no socket activity", FontSize(12), TextColor(220, 5, 55, 1))
+				Label("no network activity yet", FontSize(12), TextColor(220, 5, 55, 1))
 				return
 			}
 			start := max(len(snap.EthLog)-48, 0)

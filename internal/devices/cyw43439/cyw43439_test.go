@@ -3,6 +3,8 @@ package cyw43439
 import (
 	"encoding/binary"
 	"testing"
+
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 type fakeBus struct {
@@ -231,5 +233,48 @@ func TestControlIoctls(t *testing.T) {
 	d.wlanWrite(req)
 	if !d.LED() {
 		t.Fatal("gpioout did not turn the LED on")
+	}
+}
+
+func TestBackplane32BitFlag(t *testing.T) {
+	d := newDevice(&fakeBus{}, Config{})
+	d.window = 0x18100000
+	if got := d.fullAddr(0xb408); got != 0x18103408 {
+		t.Fatalf("flagged core address = %#x", got)
+	}
+	if got := d.fullAddr(0x3408); got != 0x18103408 {
+		t.Fatalf("plain core address = %#x", got)
+	}
+	if got := d.fullAddr(0x1000a); got != 0x1000a {
+		t.Fatalf("SDIO register address = %#x", got)
+	}
+}
+
+func TestBTSharedBusReset(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	d := newDevice(&fakeBus{}, Config{BLE: true, BLEAddr: [6]byte{1, 2, 3, 4, 5, 6}})
+	d.chip = c
+	d.bt = newBTBus(d)
+
+	if got := binary.LittleEndian.Uint32(d.bpRead(btRAMBaseReg, 4)); got != btSharedBase {
+		t.Fatalf("WLAN_RAM_BASE = %#x", got)
+	}
+	if got := binary.LittleEndian.Uint32(d.bpRead(btCtrlReg, 4)); got&(1<<24) == 0 || got&(1<<8) == 0 {
+		t.Fatalf("BT_CTRL = %#x, want FW_RDY|BT_AWAKE", got)
+	}
+
+	// HCI Reset: payload length 3, type 1, opcode 0x0C03, no parameters.
+	hci := []byte{3, 0, 0, 0x01, 0x03, 0x0C, 0x00, 0}
+	d.bpWrite(btSharedBase, hci)
+	d.bpWrite(btSharedBase+0x2000, []byte{8, 0, 0, 0})
+
+	if got := binary.LittleEndian.Uint32(d.bpRead(btSharedBase+0x2008, 4)); got != 12 {
+		t.Fatalf("bt2host_in = %d, want 12", got)
+	}
+	ev := d.bpRead(btSharedBase+0x1000, 12)
+	if ev[3] != 0x04 || ev[4] != 0x0E {
+		t.Fatalf("HCI event = % x, want command complete", ev)
 	}
 }

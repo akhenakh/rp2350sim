@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 
+	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
@@ -41,6 +43,15 @@ type Config struct {
 	// Network configures the virtual AP's IPv4 network and NAT. Nil uses the
 	// defaults (10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3).
 	Network *NetConfig
+	// Pcap, when non-nil, receives every Ethernet frame as pcapng.
+	Pcap io.Writer
+	// Capture keeps a ring of recent frames for SavePcap and the Wi-Fi tab.
+	Capture bool
+	// BLE enables the Bluetooth shared-bus/HCI model on the gSPI transport.
+	BLE     bool
+	BLEAddr [6]byte
+	BLESeed int64
+	HCILog  io.Writer
 	// Logger receives bring-up and unknown-IOCTL diagnostics.
 	Logger *slog.Logger
 }
@@ -55,6 +66,9 @@ type NetConfig struct {
 	// Hosts maps a DNS name to an address (IPv4 or IPv6 literal). Names not in
 	// the map are resolved by the host resolver.
 	Hosts map[string]string
+	// NetLogger receives user-facing DHCP, DNS and NAT socket events for the
+	// Wi-Fi panel. Nil discards them.
+	NetLogger *slog.Logger
 	// Disable turns off the gVisor data path (radio control only).
 	Disable bool
 }
@@ -83,6 +97,7 @@ type dataPath interface {
 	handleFrame([]byte)
 	tick(micros uint64)
 	close()
+	networkInfo() devices.NetworkInfo
 }
 
 type bus interface {
@@ -136,13 +151,14 @@ type Device struct {
 	version uint64
 
 	// busRegs holds the SPI function-0 registers.
-	busRegs map[uint32]uint32
-	testReg uint32
-	window  uint32
-	clock   uint32
-	intMask uint32
-	water   uint32
-	cores   [2]coreState
+	busRegs   map[uint32]uint32
+	testReg   uint32
+	window    uint32
+	clock     uint32
+	intMask   uint32
+	intStatus uint32
+	water     uint32
+	cores     [2]coreState
 
 	firmwareUp bool
 	queue      [][]byte
@@ -155,6 +171,16 @@ type Device struct {
 	hostNet    dataPath
 	dataSeq    uint8
 	mu         sync.Mutex
+	cap        *pcapWriter
+	pcapRing   []pcapFrame
+	pcapTotal  uint64
+	bt         *btBus
+}
+
+type pcapFrame struct {
+	ts      uint64
+	inbound bool
+	data    []byte
 }
 
 // eventSpec is one async SDPCM event to queue after the current control
@@ -236,6 +262,9 @@ func Attach(c *rp2350.Chip, cfg Config) *Device {
 	if cfg.MAC == ([6]byte{}) {
 		cfg.MAC = [6]byte{0x02, 0x11, 0x22, 0x33, 0x44, 0x55}
 	}
+	if cfg.BLE && cfg.BLEAddr == ([6]byte{}) {
+		cfg.BLEAddr = [6]byte{0xC0, 0xDE, 0x12, 0x34, 0x56, 0x78}
+	}
 	d := newDevice(pinBus{chip: c, pin: cfg.Data}, cfg)
 	d.chip = c
 	c.Pins.AddChangeListener(d.pinChange)
@@ -250,6 +279,15 @@ func Attach(c *rp2350.Chip, cfg Config) *Device {
 	}
 	cfg.Network.defaults()
 	d.cfg.Network = cfg.Network
+	if cfg.Pcap != nil {
+		if err := d.SetPcapWriter(cfg.Pcap); err != nil {
+			d.log.Error("cyw43439 pcap", slog.Any("err", err))
+		}
+	}
+	if cfg.BLE {
+		d.bt = newBTBus(d)
+		c.AddPeriodicHook(rp2350.CyclesPerMicrosecond*1000, d.tickBLE)
+	}
 	if !cfg.Network.Disable {
 		if dp, err := newDataPath(d); err != nil {
 			d.log.Error("cyw43439 network", slog.Any("err", err))
@@ -266,6 +304,12 @@ func Attach(c *rp2350.Chip, cfg Config) *Device {
 func (d *Device) tickNetwork() {
 	if d.hostNet != nil && d.chip != nil {
 		d.hostNet.tick(d.chip.NowMicros())
+	}
+}
+
+func (d *Device) tickBLE() {
+	if d.bt != nil {
+		d.bt.tick()
 	}
 }
 
@@ -295,6 +339,7 @@ func (d *Device) reset() {
 	d.window = 0
 	d.clock = 0
 	d.intMask = 0
+	d.intStatus = 0
 	d.water = 0
 	d.cores = [2]coreState{}
 	d.firmwareUp = false
@@ -592,13 +637,22 @@ func (d *Device) busWrite(addr uint32, data []byte) {
 // ---- function 1: backplane ----
 
 func (d *Device) fullAddr(raw uint32) uint32 {
-	if raw > 0x7fff {
-		return raw
+	// Backplane accesses below 0x10000 are window-relative; 32-bit reads and
+	// writes set bit 15 (SBSDIO_SB_ACCESS_2_4B_FLAG) and the low 15 bits carry
+	// the offset. Addresses at 0x10000 and above are full (SDIO/window
+	// registers).
+	if raw < 0x10000 {
+		return d.window&^0x7fff | raw&0x7fff
 	}
-	return d.window&^0x7fff | raw&0x7fff
+	return raw
 }
 
 func (d *Device) bpRead(full uint32, length int) []byte {
+	if d.bt != nil {
+		if data, ok := d.bt.read(full, length); ok {
+			return data
+		}
+	}
 	var v uint32
 	switch {
 	case full == chipCommonBase:
@@ -617,6 +671,8 @@ func (d *Device) bpRead(full uint32, length int) []byte {
 		v = d.window >> 24 & 0xff
 	case full == 0x18002024:
 		v = d.intMask
+	case full == 0x18002020:
+		v = d.intStatus
 	case full >= wlanCoreBase && full < wlanCoreBase+0x1000:
 		v = d.coreRead(0, full-wlanCoreBase)
 	case full >= socramCoreBase && full < socramCoreBase+0x1000:
@@ -636,6 +692,9 @@ func (d *Device) coreRead(core int, off uint32) uint32 {
 }
 
 func (d *Device) bpWrite(full uint32, data []byte) {
+	if d.bt != nil && d.bt.write(full, data) {
+		return
+	}
 	v := leValue(data)
 	switch full {
 	case sdioWindowLow:
@@ -658,6 +717,8 @@ func (d *Device) bpWrite(full uint32, data []byte) {
 		d.water = v
 	case 0x18002024:
 		d.intMask = v
+	case 0x18002020:
+		d.intStatus &^= v // write one to clear
 	default:
 		if full >= wlanCoreBase && full < wlanCoreBase+0x1000 {
 			d.coreWrite(0, full-wlanCoreBase, v)
@@ -763,6 +824,7 @@ func (d *Device) queueDataFrame(frame []byte) {
 		}
 		return
 	}
+	d.captureLocked(false, frame)
 	total := sdpcmHeaderLen + bdcLen + len(frame)
 	pkt := make([]byte, total)
 	binary.LittleEndian.PutUint16(pkt, uint16(total))
@@ -903,6 +965,9 @@ func (d *Device) joinRequest(payload []byte) {
 	d.log.Debug("cyw43439 join", slog.String("ssid", ssid))
 	if d.cfg.SSID != "" && ssid != d.cfg.SSID {
 		d.log.Debug("cyw43439 join rejected", slog.String("want", d.cfg.SSID))
+		if d.cfg.Network != nil {
+			loggerOr(d.cfg.Network.NetLogger).Info("join failed", "ssid", ssid)
+		}
 		d.mu.Lock()
 		d.ssid = ssid
 		d.linkUp = false
@@ -916,6 +981,9 @@ func (d *Device) joinRequest(payload []byte) {
 	d.linkUp = true
 	d.version++
 	d.mu.Unlock()
+	if d.cfg.Network != nil {
+		loggerOr(d.cfg.Network.NetLogger).Info("join", "ssid", ssid)
+	}
 	d.scheduleEvents(
 		eventSpec{typ: evSETSSID, status: 0},
 		eventSpec{typ: evAUTH, status: 0},
@@ -995,6 +1063,101 @@ func (d *Device) Version() uint64 {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.version
+}
+
+// NetworkInfo reports the virtual AP's IPv4 parameters and live NAT flows for
+// the Wi-Fi tab and the runner summary.
+func (d *Device) NetworkInfo() devices.NetworkInfo {
+	if d.hostNet == nil {
+		info := devices.NetworkInfo{Kind: "CYW43439"}
+		if d.LinkUp() {
+			info.Configured = true
+		}
+		return info
+	}
+	return d.hostNet.networkInfo()
+}
+
+// SetPcapWriter starts writing every Ethernet frame as pcapng.
+func (d *Device) SetPcapWriter(w io.Writer) error {
+	p, err := newPCAPWriter(w)
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	d.cap = p
+	d.mu.Unlock()
+	return nil
+}
+
+// PcapFrames reports the number of frames in the in-memory capture ring.
+func (d *Device) PcapFrames() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.pcapRing)
+}
+
+// PcapTotal reports every frame captured, including those aged out of the ring.
+func (d *Device) PcapTotal() uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.pcapTotal
+}
+
+// SavePcap writes the in-memory capture ring to path as pcapng.
+func (d *Device) SavePcap(path string) (int, error) {
+	d.mu.Lock()
+	frames := append([]pcapFrame(nil), d.pcapRing...)
+	d.mu.Unlock()
+	f, err := os.Create(path)
+	if err != nil {
+		return 0, err
+	}
+	p, err := newPCAPWriter(f)
+	if err != nil {
+		_ = f.Close()
+		return 0, err
+	}
+	for _, fr := range frames {
+		if err := p.packet(fr.ts, fr.inbound, fr.data); err != nil {
+			_ = f.Close()
+			return 0, err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return 0, err
+	}
+	return len(frames), nil
+}
+
+func (d *Device) captureLocked(inbound bool, frame []byte) {
+	if d.cap == nil && !d.cfg.Capture {
+		return
+	}
+	var ts uint64
+	if d.chip != nil {
+		ts = d.chip.NowMicros()
+	}
+	if d.cap != nil {
+		_ = d.cap.packet(ts, inbound, frame)
+	}
+	if d.cfg.Capture {
+		d.pcapRing = append(d.pcapRing, pcapFrame{
+			ts:      ts,
+			inbound: inbound,
+			data:    append([]byte(nil), frame...),
+		})
+		if len(d.pcapRing) > 2048 {
+			d.pcapRing = d.pcapRing[len(d.pcapRing)-2048:]
+		}
+	}
+	d.pcapTotal++
+}
+
+func (d *Device) capture(inbound bool, frame []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.captureLocked(inbound, frame)
 }
 
 // Close releases the pin drive.

@@ -173,6 +173,12 @@ The data path is a real Ethernet interface behind gSPI. The guest gets
 are NATed through a gVisor netstack. `task run:pico2wnet` joins, gets DHCP,
 resolves a name and echoes through a host TCP server.
 
+The Wi-Fi tab lists the virtual AP's IP parameters and live/recent NAT flows,
+and can save the captured Ethernet frames as pcapng. Bluetooth runs on the same
+gSPI transport through the chip's shared-memory HCI rings;
+`task run:pico2wble` initializes it and exchanges an HCI Reset. The stock C
+BTstack firmware still uses the separate `-ble` symbol-hook controller.
+
 The legacy `pico2w` board keeps the **virtual Wi-Fi netdev** backed by the host
 network stack, reusing the CH9120 serial-module model. Firmware uses
 `drivers/ch9120`'s `NetDevice` (a one-socket `netdev`) and calls
@@ -303,6 +309,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:ch9120` | desktop UI on the `rp2350-eth` board with the CH9120 example |
 | `task run:pico2w` | CYW43439 bring-up, join and `WL_GPIO0` LED |
 | `task run:pico2wnet` | CYW43439 DHCP, DNS and TCP NAT (lneto stack) |
+| `task run:pico2wble` | CYW43439 Bluetooth shared-bus HCI |
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |

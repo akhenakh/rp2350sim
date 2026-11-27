@@ -148,6 +148,17 @@ func (c *Controller) SetObserver(fn func(dir string, pkt []byte)) {
 func (c *Controller) QueueLen() int { return len(c.events) }
 
 // popEvent removes the first queued HCI packet.
+// WriteHCI feeds one HCI packet into the controller. packetType is the HCI
+// packet indicator (1 command, 2 ACL) and data is the packet without it.
+func (c *Controller) WriteHCI(packetType byte, data []byte) { c.writeHCI(packetType, data) }
+
+// PopEvent removes and returns the first queued HCI packet. Byte 0 is the
+// packet type and the rest is the HCI payload.
+func (c *Controller) PopEvent() []byte { return c.popEvent() }
+
+// HasEvents reports whether an HCI event or ACL packet is queued.
+func (c *Controller) HasEvents() bool { return len(c.events) > 0 }
+
 func (c *Controller) popEvent() []byte {
 	if len(c.events) == 0 {
 		return nil

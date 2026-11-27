@@ -133,6 +133,12 @@ type CYWState struct {
 	LED        bool
 	MAC        string
 	Pins       string
+	PcapFrames int
+	PcapTotal  uint64
+	BLE        bool
+	BLEConn    bool
+	BLEPeer    string
+	BLEPending int
 }
 
 // TouchState is the last reported touch point in panel coordinates.
@@ -1408,8 +1414,11 @@ func (e *Emu) resetChip() {
 					MAC:      mac,
 					SSID:     w.SSID,
 					Password: w.Pass,
-					Network:  &cyw43439.NetConfig{Hosts: w.Hosts, Disable: w.NoNet},
+					Network:  &cyw43439.NetConfig{Hosts: w.Hosts, Disable: w.NoNet, NetLogger: logEth},
+					Capture:  true,
+					BLE:      true,
 				})
+				e.ethKind = "cyw43439"
 			} else {
 				ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)
 				ch.Logger = logEth
@@ -3014,6 +3023,26 @@ func (e *Emu) ClearUARTEvents() {
 	e.uartEvents = e.uartEvents[:0]
 }
 
+// SaveCYWCapture writes the CYW43439's recent Ethernet frames as pcapng in
+// the working directory and returns the path.
+func (e *Emu) SaveCYWCapture() (string, error) {
+	e.mu.Lock()
+	d := e.cyw
+	e.mu.Unlock()
+	if d == nil {
+		return "", fmt.Errorf("no CYW43439 attached")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(wd, "cyw43439-"+time.Now().Format("20060102-150405")+".pcapng")
+	if _, err := d.SavePcap(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // CANInfo returns the controller and recent bus frames, if attached.
 func (e *Emu) CANInfo() (devices.MCP2515Info, []devices.CANFrame, bool) {
 	e.mu.Lock()
@@ -3212,6 +3241,9 @@ func (e *Emu) Snapshot() MachineState {
 			info.Kind = "Wi-Fi (virtual)"
 		}
 		s.Network = &info
+	case e.cyw != nil:
+		info := e.cyw.NetworkInfo()
+		s.Network = &info
 	}
 	s.DeviceLogs = append([]string(nil), e.deviceLog...)
 	s.UARTCount = len(e.uartEvents)
@@ -3237,6 +3269,14 @@ func (e *Emu) Snapshot() MachineState {
 			MAC:        w.MAC,
 			Pins: fmt.Sprintf("WL_REG_ON GP%d · WL_D GP%d · WL_CS GP%d · WL_CLK GP%d",
 				w.RegOn, w.Data, w.CS, w.CLK),
+			PcapFrames: e.cyw.PcapFrames(),
+			PcapTotal:  e.cyw.PcapTotal(),
+		}
+		if st, ok := e.cyw.BLEStatus(); ok {
+			s.CYW.BLE = true
+			s.CYW.BLEConn = st.Connected
+			s.CYW.BLEPeer = formatBLEAddr(st.Peer)
+			s.CYW.BLEPending = st.Pending
 		}
 	}
 	s.EthLog = e.ethLog.snapshot()

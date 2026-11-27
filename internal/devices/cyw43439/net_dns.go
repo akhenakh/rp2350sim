@@ -36,6 +36,9 @@ func (n *network) handleDNS(srcIP [4]byte, srcPort uint16, dstIP [4]byte, dstPor
 		rcode := uint16(0)
 		if len(ips) == 0 {
 			rcode = 3 // NXDOMAIN
+			n.netLog.Info("dns", "name", name, "result", "nxdomain")
+		} else {
+			n.netLog.Info("dns", "name", name, "ip", ips[0].String())
 		}
 		var answer []byte
 		for _, ip := range ips {

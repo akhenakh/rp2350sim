@@ -2,11 +2,12 @@
 
 Status: **M1–M3 implemented, plus the M5 HCI log and BLE tab.** The virtual
 controller, CYW43 symbol binding, temperature peer, CLI flow, pcapng capture
-and `pico2-w-ble` UI board are in place. The CYW43439's Wi-Fi side now has its
-own gSPI model (`internal/devices/cyw43439`, see [boards.md](boards.md)); the
-BLE controller still uses symbol hooks and is not carried over that transport
-yet. M4 (pairing/bonding/multiple connections) and M6 (two-chip scenario)
-remain open.
+and `pico2-w-ble` UI board are in place. The Wi-Fi side has a real gSPI model
+(`internal/devices/cyw43439`, see [boards.md](boards.md)), and its Bluetooth
+shared-memory ring now carries HCI for the TinyGo `soypat/cyw43439` driver
+(`firmware/pico2wble`). The stock Pico SDK BTstack firmware still uses these
+symbol hooks because its own PIO/DMA gSPI driver is not modelled. M4
+(pairing/bonding/multiple connections) and M6's RF/PHY realism remain open.
 
 This page records the seam, the exact symbols to bind and the HCI subset the
 controller implements.
@@ -32,9 +33,11 @@ existing virtual Wi-Fi is a CH9120 UART netdev, not a CYW43439.
 
 **Use symbol hooks at the CYW43 low-level bus boundary (option A), not at the
 `cyw43_bluetooth_hci_*` wrappers.** A paravirtual MMIO transport (option B)
-stays as the wasm/CI fallback. The Wi-Fi side now has a real gSPI model
-(`internal/devices/cyw43439`); moving BLE onto that transport is deferred until
-the Wi-Fi data path is complete.
+stays as the wasm/CI fallback. The Wi-Fi side has a real gSPI model
+(`internal/devices/cyw43439`), and BLE is now carried over its shared-memory
+ring for the TinyGo `soypat/cyw43439` driver. The symbol hooks remain for the
+stock Pico SDK BTstack firmware because the C SDK's PIO/DMA gSPI driver is not
+modelled.
 
 The stock Pico W example calls `cyw43_arch_init()` before `btstack_main()`.
 That path is:

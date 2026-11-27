@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/akhenakh/rp2350sim/internal/devices"
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
@@ -34,24 +35,36 @@ const (
 // Ethernet frames at L3 and NATs TCP/UDP to the host; DHCP, DNS and NTP are
 // answered locally because gVisor has no server for them.
 type network struct {
-	d     *Device
-	cfg   *NetConfig
-	log   *slog.Logger
-	clk   *vclock
-	s     *stack.Stack
-	ep    *channel.Endpoint
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	done  bool
+	d      *Device
+	cfg    *NetConfig
+	log    *slog.Logger
+	netLog *slog.Logger
+	clk    *vclock
+	s      *stack.Stack
+	ep     *channel.Endpoint
+	mu     sync.Mutex
+	conns  map[net.Conn]struct{}
+	socks  []*natSocket
+	done   bool
+}
+
+// natSocket is one guest TCP/UDP flow as the Wi-Fi tab shows it.
+type natSocket struct {
+	proto string
+	guest string
+	peer  string
+	port  int
+	state string
 }
 
 func newDataPath(d *Device) (dataPath, error) {
 	n := &network{
-		d:     d,
-		cfg:   d.cfg.Network,
-		log:   d.log,
-		clk:   &vclock{},
-		conns: map[net.Conn]struct{}{},
+		d:      d,
+		cfg:    d.cfg.Network,
+		log:    d.log,
+		netLog: loggerOr(d.cfg.Network.NetLogger),
+		clk:    &vclock{},
+		conns:  map[net.Conn]struct{}{},
 	}
 	s := stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol},
@@ -106,6 +119,7 @@ func (n *network) close() {
 		return
 	}
 	n.done = true
+	n.socks = nil
 	conns := make([]net.Conn, 0, len(n.conns))
 	for c := range n.conns {
 		conns = append(conns, c)
@@ -119,12 +133,68 @@ func (n *network) close() {
 	n.s.Close()
 }
 
+// networkInfo builds the Wi-Fi tab's view of the virtual AP.
+func (n *network) networkInfo() devices.NetworkInfo {
+	info := devices.NetworkInfo{
+		Kind:       "CYW43439",
+		Configured: n.d.LinkUp(),
+		IP:         net.IP(n.cfg.GuestIP[:]).String(),
+		Mask:       net.IP(net.CIDRMask(n.cfg.Prefix, 32)).String(),
+		Gateway:    net.IP(n.cfg.GatewayIP[:]).String(),
+		MAC:        net.HardwareAddr(n.d.cfg.MAC[:]).String(),
+		Mode:       "station",
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i, s := range n.socks {
+		info.Sockets = append(info.Sockets, devices.SocketInfo{
+			Index:     i,
+			Proto:     s.proto,
+			State:     s.state,
+			LocalPort: s.port,
+			GuestAddr: s.guest,
+			Peer:      s.peer,
+		})
+	}
+	return info
+}
+
+func guestSocket(id stack.TransportEndpointID) string {
+	return net.JoinHostPort(net.IP(id.RemoteAddress.AsSlice()).String(), strconv.Itoa(int(id.RemotePort)))
+}
+
+func (n *network) addSocket(s *natSocket) {
+	n.mu.Lock()
+	if !n.done {
+		n.socks = append(n.socks, s)
+	}
+	n.mu.Unlock()
+}
+
+func (n *network) setSocketState(s *natSocket, state string) {
+	n.mu.Lock()
+	s.state = state
+	n.mu.Unlock()
+}
+
+func (n *network) removeSocket(s *natSocket) {
+	n.mu.Lock()
+	for i, x := range n.socks {
+		if x == s {
+			n.socks = append(n.socks[:i], n.socks[i+1:]...)
+			break
+		}
+	}
+	n.mu.Unlock()
+}
+
 // ---- Ethernet in/out ----
 
 func (n *network) handleFrame(frame []byte) {
 	if len(frame) < 14 {
 		return
 	}
+	n.d.capture(true, frame)
 	var src [6]byte
 	copy(src[:], frame[6:12])
 	switch binary.BigEndian.Uint16(frame[12:]) {
@@ -323,8 +393,9 @@ func (n *network) tcpHandler(r *tcp.ForwarderRequest) {
 		r.Complete(true)
 		return
 	}
-	dst := r.ID().LocalAddress
-	port := r.ID().LocalPort
+	id := r.ID()
+	dst := id.LocalAddress
+	port := id.LocalPort
 	var wq waiter.Queue
 	ep, err := r.CreateEndpoint(&wq)
 	if err != nil {
@@ -333,7 +404,16 @@ func (n *network) tcpHandler(r *tcp.ForwarderRequest) {
 	}
 	r.Complete(false)
 	guest := gonet.NewTCPConn(&wq, ep)
+	sock := &natSocket{
+		proto: "tcp",
+		guest: guestSocket(id),
+		peer:  net.JoinHostPort(dst.String(), strconv.Itoa(int(port))),
+		port:  int(port),
+		state: "dialing",
+	}
+	n.addSocket(sock)
 	n.track(guest)
+	n.netLog.Info("tcp connect", "guest", sock.guest, "peer", sock.peer)
 	go func() {
 		host, err := net.DialTimeout("tcp", net.JoinHostPort(n.hostAddr(dst), strconv.Itoa(int(port))), 5*time.Second)
 		if err != nil {
@@ -341,12 +421,20 @@ func (n *network) tcpHandler(r *tcp.ForwarderRequest) {
 				n.log.Debug("cyw43439 tcp dial", slog.String("dst", dst.String()),
 					slog.Int("port", int(port)), slog.Any("err", err))
 			}
+			n.netLog.Info("tcp failed", "peer", sock.peer, "err", err)
+			n.setSocketState(sock, "failed")
 			_ = guest.Close()
 			n.untrack(guest)
+			time.AfterFunc(2*time.Second, func() { n.removeSocket(sock) })
 			return
 		}
+		n.setSocketState(sock, "connected")
+		n.netLog.Info("tcp connected", "guest", sock.guest, "peer", sock.peer)
 		n.track(host)
 		relay(guest, host)
+		n.setSocketState(sock, "closed")
+		n.netLog.Info("tcp closed", "guest", sock.guest, "peer", sock.peer)
+		time.AfterFunc(2*time.Second, func() { n.removeSocket(sock) })
 		n.untrack(guest)
 		n.untrack(host)
 	}()
@@ -356,26 +444,41 @@ func (n *network) udpHandler(r *udp.ForwarderRequest) bool {
 	if n.isDone() {
 		return true
 	}
+	id := r.ID()
+	dst := id.LocalAddress
+	port := id.LocalPort
 	var wq waiter.Queue
 	ep, err := r.CreateEndpoint(&wq)
 	if err != nil {
 		return false
 	}
-	dst := r.ID().LocalAddress
-	port := r.ID().LocalPort
 	guest := gonet.NewUDPConn(&wq, ep)
+	sock := &natSocket{
+		proto: "udp",
+		guest: guestSocket(id),
+		peer:  net.JoinHostPort(dst.String(), strconv.Itoa(int(port))),
+		port:  int(port),
+		state: "open",
+	}
+	n.addSocket(sock)
 	n.track(guest)
+	n.netLog.Info("udp open", "guest", sock.guest, "peer", sock.peer)
 	go func() {
 		host, err := net.Dial("udp", net.JoinHostPort(n.hostAddr(dst), strconv.Itoa(int(port))))
 		if err != nil {
+			n.netLog.Info("udp failed", "peer", sock.peer, "err", err)
 			_ = guest.Close()
 			n.untrack(guest)
+			n.removeSocket(sock)
 			return
 		}
 		n.track(host)
 		relayUDP(guest, host)
 		_ = guest.Close()
 		_ = host.Close()
+		n.setSocketState(sock, "closed")
+		n.netLog.Info("udp closed", "guest", sock.guest, "peer", sock.peer)
+		time.AfterFunc(2*time.Second, func() { n.removeSocket(sock) })
 		n.untrack(guest)
 		n.untrack(host)
 	}()

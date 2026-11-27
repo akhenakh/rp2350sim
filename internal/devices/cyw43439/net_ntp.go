@@ -4,6 +4,7 @@ package cyw43439
 
 import (
 	"encoding/binary"
+	"net"
 	"time"
 )
 
@@ -26,6 +27,7 @@ func (n *network) handleNTP(srcIP [4]byte, srcPort uint16, dstIP [4]byte, dstPor
 	putNTP(out[40:48], now)
 	frame := n.udpFrame(n.d.cfg.MAC, dstIP, srcIP, 123, srcPort, out)
 	n.d.queueDataFrame(frame)
+	n.netLog.Info("ntp reply", "to", net.IP(srcIP[:]).String())
 }
 
 func putNTP(dst []byte, t time.Time) {

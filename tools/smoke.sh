@@ -422,6 +422,13 @@ if [ -f "$BUILD/pico2w.elf" ]; then
 	contains "CYW43439 WL_GPIO0 LED" "pico2w: led on" "$out"
 fi
 
+# --- CYW43439 Bluetooth over the shared bus ---------------------------------
+if [ -f "$BUILD/pico2wble.elf" ]; then
+	out=$("$EMU" -fw "$BUILD/pico2wble.elf" -cyw43439 -seconds 12 2>&1)
+	contains "CYW43439 BT firmware and HCI" "pico2wble: bt ready" "$out"
+	contains "CYW43439 HCI command complete" "pico2wble: reset complete event" "$out"
+fi
+
 # --- virtual CYW43 BLE controller -------------------------------------------
 if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
 	rm -f "$BUILD/ble.pcapng"
