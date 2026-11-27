@@ -100,6 +100,7 @@ add_subdirectory(${EX}/dma/sniff_crc dma_sniff_crc)
 add_subdirectory(${EX}/timer/periodic_sampler timer_periodic_sampler)
 add_subdirectory(${EX}/binary_info/hello_anything binary_info_hello)
 add_subdirectory(${EX}/usb/device/dev_lowlevel usb_dev_lowlevel)
+add_subdirectory(${EX}/low_power/low_power_sleep low_power_sleep)
 EOF
 
 # The smoke suite consumes ELFs only. Skip picotool so the SDK never fetches

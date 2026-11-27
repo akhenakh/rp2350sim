@@ -736,6 +736,9 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			contains "pico-examples timer low-level alarm" "Alarm IRQ fired" "$out"
 			out=$("$EMU" -fw "$EX/timer_periodic_sampler/periodic_sampler.elf" -seconds 3 -quiet 2>&1)
 			contains "pico-examples periodic sampler" "Done" "$out"
+			out=$("$EMU" -fw "$EX/low_power_sleep/low_power_sleep_timer.elf" -seconds 2 -quiet 2>&1)
+			contains "pico-examples low-power sleep" "Wake up, test run:" "$out"
+			contains "pico-examples low-power awake" "Awake for 10000ms" "$out"
 			out=$("$EMU" -fw "$EX/multicore_doorbell/multicore_doorbell.elf" -seconds 3 -quiet 2>&1)
 			contains "pico-examples multicore doorbell" "Final doorbell irq count" "$out"
 			out=$("$EMU" -fw "$EX/multicore_runner/multicore_runner.elf" -seconds 2 -quiet 2>&1)
