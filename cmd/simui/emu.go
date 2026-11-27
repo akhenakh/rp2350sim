@@ -74,6 +74,7 @@ type MachineState struct {
 	EthLog        []string
 	Serial        []string
 	Buses         []string
+	DeviceLogs    []string
 
 	Touch     *TouchState
 	IMU       *IMUState
@@ -100,6 +101,13 @@ type InputValue struct {
 	Volts float32
 	// Phase is the quadrature phase (0..3) of a rotary encoder.
 	Phase uint8
+}
+
+func (e *Emu) addDeviceLog(line string) {
+	e.deviceLog = append(e.deviceLog, line)
+	if len(e.deviceLog) > 500 {
+		e.deviceLog = e.deviceLog[len(e.deviceLog)-500:]
+	}
 }
 
 // BLEState is the virtual controller view for the BLE tab.
@@ -173,6 +181,7 @@ type Emu struct {
 	debugInfo *debug.Info
 	ble       *ble.Controller
 	bleEvents []string
+	deviceLog []string
 	debugger  *rp2350.Debugger
 	fwPath    string
 	flashPath string
@@ -1194,6 +1203,7 @@ func (e *Emu) resetChip() {
 	}
 	e.ble = nil
 	e.bleEvents = nil
+	e.deviceLog = nil
 	e.debugger.Reset()
 	c.Debug = e.debugger
 	if e.sd != nil {
@@ -1406,15 +1416,29 @@ func (e *Emu) resetChip() {
 		e.attachBusPresets(c, b, attachSPI)
 		for _, d := range b.OneWire {
 			w := devices.NewWire(c, d.Pin)
-			devices.NewDS18B20(w, devices.DS18B20Config{TemperatureC: d.Temperature})
+			devices.NewDS18B20(w, devices.DS18B20Config{
+				TemperatureC: d.Temperature,
+				OnRead: func(temperature float64) {
+					e.addDeviceLog(fmt.Sprintf("%8.2f ms 1-Wire DS18B20 %.2f C",
+						float64(e.chip.Cycles)/150_000, temperature))
+				},
+			})
 		}
 		for _, d := range b.DHT {
 			devices.NewDHT(devices.NewWire(c, d.Pin), devices.DHTConfig{
 				Kind: d.Kind, Humidity: d.Humidity, Temperature: d.Temperature,
+				OnRead: func(kind string, humidity, temperature float64) {
+					e.addDeviceLog(fmt.Sprintf("%8.2f ms %s %.1f %% %.1f C",
+						float64(e.chip.Cycles)/150_000, strings.ToUpper(kind), humidity, temperature))
+				},
 			})
 		}
 		for _, d := range b.Ultrasonic {
-			devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
+			us := devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
+			us.OnMeasure = func(distance float64) {
+				e.addDeviceLog(fmt.Sprintf("%8.2f ms HC-SR04 %.0f cm",
+					float64(e.chip.Cycles)/150_000, distance))
+			}
 		}
 		pluginSelects := e.attachPlugins(c, b, attachSPI)
 		if len(pluginSelects) > 0 {
@@ -3002,6 +3026,7 @@ func (e *Emu) Snapshot() MachineState {
 		}
 		s.Network = &info
 	}
+	s.DeviceLogs = append([]string(nil), e.deviceLog...)
 	if e.ble != nil {
 		st := e.ble.Status()
 		s.BLE = &BLEState{

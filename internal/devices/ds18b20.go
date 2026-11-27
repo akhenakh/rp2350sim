@@ -7,6 +7,8 @@ type DS18B20Config struct {
 	TemperatureC float64
 	// Serial is the six-byte ROM serial. Zero means a deterministic default.
 	Serial [6]byte
+	// OnRead is called when the host reads the scratchpad.
+	OnRead func(temperatureC float64)
 }
 
 // DS18B20 is a bit-level DS18B20 model on a single Wire. It implements reset/
@@ -192,6 +194,9 @@ func (d *DS18B20) command(cmd byte) {
 		d.searchEdge = 0
 		d.state = dsSearch
 	case 0xBE: // Read scratchpad
+		if d.cfg.OnRead != nil {
+			d.cfg.OnRead(d.TemperatureC())
+		}
 		d.beginRead(d.scratchpad())
 	case 0x44: // Convert T
 		d.state = dsIdle

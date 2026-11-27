@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	. "go.hasen.dev/shirei"
@@ -33,14 +34,28 @@ func gpsPanel() {
 		})
 		Container(Attrs(Grow(1), Expand, Gap(6), Pad(12), Corners(8),
 			Background(220, 12, 12, 1), BorderWidth(1), BorderColor(220, 8, 26, 1)), func() {
-			Label("Last sentence", FontSize(12), FontWeight(700))
-			Label(fmt.Sprintf("%d sentences emitted", info.Sentences), FontSize(11),
-				TextColor(220, 6, 68, 1))
-			last := strings.TrimSpace(info.Last)
-			if last == "" {
-				last = "waiting for the first fix…"
-			}
-			Label(last, Fonts(Monospace...), FontSize(13), TextColor(150, 45, 72, 1))
+			Container(Attrs(Row, CrossMid, Gap(8)), func() {
+				Label("NMEA log", FontSize(12), FontWeight(700))
+				Label(fmt.Sprintf("%d sentences emitted", info.Sentences), FontSize(11),
+					TextColor(220, 6, 68, 1))
+				Filler(1)
+				if Button(NoIcon, "Copy") {
+					RequestTextCopy(strings.Join(info.History, ""))
+				}
+			})
+			Container(Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
+				Background(220, 12, 8, 1), Corners(4)), func() {
+				ScrollOnInput()
+				ScrollBars()
+				if len(info.History) == 0 {
+					Label("waiting for the first sentence…", FontSize(12))
+					return
+				}
+				for _, line := range slices.Backward(info.History) {
+					Label(strings.TrimRight(line, "\r\n"), Fonts(Monospace...), FontSize(12),
+						TextColor(150, 45, 72, 1))
+				}
+			})
 		})
 		Label("The same NMEA stream is available on UART receive; use the Logic tab to decode it.",
 			FontSize(11), TextColor(220, 6, 68, 1))

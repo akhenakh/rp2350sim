@@ -3065,30 +3065,11 @@ func boardDevices(b *BoardDef) []boardBusDevice {
 	return out
 }
 
-// deviceLogLines returns the recent events of directly attached devices that
-// do not have their own log tab: GPS sentences, WS2812 frames and BLE HCI
-// traffic. CAN keeps its frames in the dedicated CAN tab and is intentionally
-// absent here. The timed 1-Wire/DHT/HC-SR04 models expose state, not a
-// transaction log, so they are only listed in the Board devices card.
+// deviceLogLines returns the transaction log of the timed wire devices that
+// have no log tab of their own: 1-Wire, DHT and HC-SR04. CAN, GPS, WS2812 and
+// BLE keep their history in their dedicated tabs.
 func deviceLogLines(snap MachineState) []string {
-	var out []string
-	if g := emu.GPSInfo(); g != nil {
-		out = append(out, fmt.Sprintf("GPS fix=%v lat=%.6f lon=%.6f sentences=%d",
-			g.Fix, g.Lat, g.Lon, g.Sentences))
-		if g.Last != "" {
-			out = append(out, "NMEA "+g.Last)
-		}
-	}
-	if len(snap.WSColors) > 0 {
-		for i, c := range snap.WSColors {
-			out = append(out, fmt.Sprintf("WS2812 %d #%02x%02x%02x", i, c.R, c.G, c.B))
-		}
-	}
-	if snap.BLE != nil {
-		limit := max(len(snap.BLE.Events)-50, 0)
-		out = append(out, snap.BLE.Events[limit:]...)
-	}
-	return out
+	return append([]string(nil), snap.DeviceLogs...)
 }
 
 func busPanel(snap MachineState) {

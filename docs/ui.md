@@ -501,10 +501,11 @@ same data is available headlessly through `-coverage`, `-profile-out` and
 ### GPS
 
 The GPS tab shows the attached NMEA 0183 source: fix state, latitude,
-longitude, satellites, altitude, speed, course and the last emitted GGA/RMC
-sentence. The sentences also arrive on the configured UART receive FIFO, so
-the Logic tab or a firmware parser sees exactly the same stream. `task ui:gps`
-opens it on `pico2-gps` with `firmware/gps`; `ui:gps:png` renders it.
+longitude, satellites, altitude, speed and course, plus the **NMEA log** with
+the recent GGA/RMC sentences (**Copy** exports them). The sentences also
+arrive on the configured UART receive FIFO, so the Logic tab or a firmware
+parser sees exactly the same stream. `task ui:gps` opens it on `pico2-gps` with
+`firmware/gps`; `ui:gps:png` renders it.
 
 ![GPS tab](images/gps.png)
 
@@ -544,13 +545,13 @@ it on `firmware/c/itmdemo`; `ui:trace:png` renders it.
 The I2C/SPI tab is available on every board. Its **Board devices** card lists
 everything the board model attaches directly — LCD, touch, IMU, SD, CAN,
 1-Wire, DHT, ultrasonic, GPS, Ethernet, Wi-Fi, WS2812 and BLE — with the bus,
-chip select or GPIO it uses. A **Device logs** card below it shows the recent
-events of the directly attached devices that have no log tab of their own:
-NMEA sentences, WS2812 frames and BLE HCI packets. CAN frames stay in the
-dedicated CAN tab. The timed 1-Wire/DHT/HC-SR04 models expose state rather than
-a transaction log; their live values are in the Board and device tabs. When the board has no scripted, preset or
-TCP-bridged target, the tab still keeps a stable position and explains that
-those timed devices are modelled outside the I2C/SPI target registry. It lists
+chip select or GPIO it uses. A **Device logs** card below it shows the
+transaction log of the timed wire devices that have no tab of their own:
+1-Wire DS18B20 reads, DHT22 conversions and HC-SR04 measurements. CAN frames,
+GPS sentences, WS2812 frames and BLE HCI traffic stay in their dedicated tabs.
+When the board has no scripted, preset or TCP-bridged target, the tab still
+keeps a stable position and explains that those timed devices are modelled
+outside the I2C/SPI target registry. It lists
 the board's built-in presets (`i2c_presets` /
 `spi_presets`), scripted device files (`i2c_plugins`, `spi_plugins`,
 `serial_plugins`) and TCP bridges. A preset or plugin is attached directly to

@@ -11,6 +11,8 @@ type HCSR04 struct {
 	trigHighAt uint64
 	trigHigh   bool
 	active     bool
+	// OnMeasure is called for each accepted trigger pulse.
+	OnMeasure func(distanceCM float64)
 }
 
 // NewHCSR04 attaches an ultrasonic sensor to trigger and echo wires.
@@ -38,6 +40,9 @@ func NewHCSR04(trig, echo *Wire, distanceCM float64) *HCSR04 {
 		}
 		d.trigHighAt = 0
 		d.active = true
+		if d.OnMeasure != nil {
+			d.OnMeasure(d.distanceCM)
+		}
 		d.action.Schedule(trig.Now() + 20*uint64(rp2350.CyclesPerMicrosecond))
 	})
 	return d

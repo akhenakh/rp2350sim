@@ -27,6 +27,7 @@ type GPS struct {
 	next      uint64
 	seconds   uint64
 	last      string
+	history   []string
 	sentences int
 }
 
@@ -41,6 +42,7 @@ type GPSInfo struct {
 	Fix        bool
 	Sentences  int
 	Last       string
+	History    []string
 }
 
 // Info returns the current simulated state.
@@ -49,7 +51,7 @@ func (g *GPS) Info() GPSInfo {
 		UART: g.uart, Lat: g.cfg.Lat, Lon: g.cfg.Lon,
 		Altitude: g.cfg.Altitude, SpeedKnots: g.cfg.SpeedKnots,
 		Course: g.cfg.Course, Satellites: g.cfg.Satellites, Fix: g.cfg.Fix,
-		Sentences: g.sentences, Last: g.last,
+		Sentences: g.sentences, Last: g.last, History: append([]string(nil), g.history...),
 	}
 }
 
@@ -86,6 +88,7 @@ func (g *GPS) Reset() {
 	g.seconds = 0
 	g.sentences = 0
 	g.last = ""
+	g.history = nil
 }
 
 func (g *GPS) tick() {
@@ -110,6 +113,10 @@ func (g *GPS) tick() {
 		line := nmeaLine(body)
 		g.sentences++
 		g.last = line
+		g.history = append(g.history, line)
+		if len(g.history) > 200 {
+			g.history = g.history[len(g.history)-200:]
+		}
 		g.c.SendUART(g.uart, []byte(line))
 	}
 }

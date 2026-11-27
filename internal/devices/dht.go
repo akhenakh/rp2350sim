@@ -12,6 +12,8 @@ type DHTConfig struct {
 	Humidity    float64
 	Temperature float64
 	BadChecksum bool
+	// OnRead is called when the host starts a conversion.
+	OnRead func(kind string, humidity, temperature float64)
 }
 
 // DHT is a DHT11/DHT22 model. The host pulls the line low for at least 1 ms,
@@ -29,6 +31,7 @@ type DHT struct {
 	data   [5]byte
 	action *rp2350.Deadline
 	fallAt uint64
+	onRead func(kind string, humidity, temperature float64)
 }
 
 const (
@@ -51,7 +54,7 @@ func NewDHT(w *Wire, cfg DHTConfig) *DHT {
 		cfg.Temperature = 23
 	}
 	w.EnablePullUp()
-	d := &DHT{w: w, kind: cfg.Kind, hum: cfg.Humidity, temp: cfg.Temperature, bad: cfg.BadChecksum}
+	d := &DHT{w: w, kind: cfg.Kind, hum: cfg.Humidity, temp: cfg.Temperature, bad: cfg.BadChecksum, onRead: cfg.OnRead}
 	d.action = w.chip.AddDeadline(d.onAction)
 	d.encode()
 	w.OnEdge(d.onEdge)
@@ -85,6 +88,9 @@ func (d *DHT) onEdge(level bool) {
 }
 
 func (d *DHT) start() {
+	if d.onRead != nil {
+		d.onRead(d.kind, d.hum, d.temp)
+	}
 	d.state = dhtResponseLow
 	d.w.DriveLow()
 	d.action.Schedule(d.w.Now() + 80*uint64(rp2350.CyclesPerMicrosecond))
