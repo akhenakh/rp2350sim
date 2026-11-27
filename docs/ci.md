@@ -83,12 +83,14 @@ toolchain needs its C++ headers. On Ubuntu install
 `tools/picoexamples.sh` downloads a pinned `raspberrypi/pico-examples` snapshot
 (SDK 2.3.1, commit `0d62f75`) and builds the subset the emulator supports:
 hello world over UART, blink, UART, timer, multicore, DMA, PIO, PWM, ADC,
-reset, watchdog, I2C bus scan, divider and DCP. FreeRTOS and the examples that
-need external hardware are not built; the in-tree `firmware/c/rtosctx` covers
+reset, watchdog, I2C bus scan, divider, DCP, the PIO 1-Wire ROM search and
+the NMEA GPS UART parser (with a simulated receiver). FreeRTOS and the examples that need external
+hardware are not built; the in-tree `firmware/c/rtosctx` covers
 the kernel mechanics (SVC, SysTick, PendSV, BASEPRI, nesting) instead. The
 `task ci` smoke suite runs each one
 and checks its console output; GPIO-producing examples are checked on the wire,
-not just on stdout.
+not just on stdout. The GPS example blocks in `uart_getc` between its 1 Hz
+sentences, so its smoke run passes `-hang-cycles 0`.
 
 `tools/pincheck` measures a pin in a logic trace produced by `-logic-pins`:
 

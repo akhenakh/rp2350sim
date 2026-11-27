@@ -738,8 +738,11 @@ ready-made board; `task ui:plugins` opens it.
 ## 1-Wire and DS18B20
 
 A DS18B20 can be attached to any GPIO with a bit-banged or PIO 1-Wire master.
-The model implements reset/presence, Skip ROM, Read ROM, Convert T and Read
-Scratchpad with the Dallas CRC8; timing runs on the virtual clock.
+The model implements reset/presence, Skip/Read/Match/Search ROM, Convert T and
+Read Scratchpad with the Dallas CRC8; timing runs on the virtual clock. One
+device per wire is attached; the search/Match path is covered by
+`TestDS18B20SearchAndMatch`, while multiple sensors on one bus remain a
+follow-up.
 
 ```sh
 rp2350sim -fw build/onewire.elf -seconds 2 -onewire 6:22.5
@@ -752,7 +755,9 @@ onewire:
 
 `type` defaults to `ds18b20`; `temperature` is in Celsius. The reference
 firmware is `firmware/onewire`, and `task run:onewire` runs it with a 22.5 °C
-sensor on GP6. The board `pico2-onewire` is the UI equivalent.
+sensor on GP6. The stock `pico-examples` `pio/onewire` ROM-search example is
+also exercised in the smoke suite (GP15, ROM search and Match ROM). The board
+`pico2-onewire` is the UI equivalent.
 
 ## DHT11/DHT22 and HC-SR04
 
@@ -800,7 +805,9 @@ gps:
 Reference firmware: `firmware/gps`; board `pico2-gps`; tasks `run:gps`,
 `ui:gps` and `ui:gps:png`. The GPS tab reads the model directly, the logic
 analyzer decodes the same UART stream, and `ParseNMEA` in `internal/devices`
-validates checksums.
+validates checksums. The stock `pico-examples` `uart/gps_uart` GPRMC parser is
+also run against the model in the smoke suite; it blocks in `uart_getc`
+between sentences, so that run passes `-hang-cycles 0`.
 
 ## CAN / MCP2515
 

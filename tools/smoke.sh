@@ -538,6 +538,13 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			fi
 			out=$("$EMU" -fw "$EX/hello_uart/hello_uart.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples hello_uart" "AB Hello, UART!" "$out"
+			out=$("$EMU" -fw "$EX/gps_uart/gps_uart.elf" -seconds 3 -quiet -hang-cycles 0 -gps 1 2>/dev/null)
+			contains "pico-examples GPS NMEA" "Valid GPS Data Received" "$out"
+			contains "pico-examples GPS latitude" "Latitude: 45.501701" "$out"
+			contains "pico-examples GPS longitude" "Longitude: -73.567299" "$out"
+			out=$("$EMU" -fw "$EX/pio_onewire/pio_onewire.elf" -seconds 2 -quiet -onewire 15:22.5 2>/dev/null)
+			contains "pico-examples PIO 1-Wire ROM" "9e06050403020128" "$out"
+			contains "pico-examples PIO 1-Wire temperature" "0: 22.500000" "$out"
 			out=$("$EMU" -fw "$EX/hello_dma/hello_dma.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples hello_dma" "Hello, world! (from DMA)" "$out"
 			out=$("$EMU" -fw "$EX/hello_reset/hello_reset.elf" -seconds 0.5 -quiet 2>&1)
