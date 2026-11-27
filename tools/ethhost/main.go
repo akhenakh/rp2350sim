@@ -18,6 +18,7 @@ func main() {
 	tcpPort := flag.Int("tcp", 9000, "TCP echo port")
 	udpPort := flag.Int("udp", 9001, "UDP sink port")
 	checkPort := flag.Int("check", 9002, "connect to emulated server on this port after 1s")
+	udpReply := flag.Bool("udp-reply", false, "answer each datagram with two queued datagrams")
 	flag.Parse()
 
 	tcpLn, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *tcpPort))
@@ -49,6 +50,14 @@ func main() {
 				return
 			}
 			fmt.Printf("udp from %s: %q\n", from, buf[:n])
+			if *udpReply {
+				for _, msg := range []string{"first\n", "second\n"} {
+					if _, err := udpConn.WriteToUDP([]byte(msg), from); err != nil {
+						fmt.Printf("udp reply to %s: %v\n", from, err)
+						return
+					}
+				}
+			}
 		}
 	}()
 

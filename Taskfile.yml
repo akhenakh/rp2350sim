@@ -500,6 +500,8 @@ tasks:
       - main.go
       - go.mod
       - go.sum
+      - '../../drivers/ch9120/*.go'
+      - '../../drivers/ch9120/go.mod'
     generates:
       - '../../{{.BUILD}}/ch9120.elf'
     cmds:
@@ -526,6 +528,8 @@ tasks:
       - main.go
       - go.mod
       - go.sum
+      - '../../drivers/ch9120/*.go'
+      - '../../drivers/ch9120/go.mod'
     generates:
       - '../../{{.BUILD}}/wifi.elf'
     cmds:
@@ -743,6 +747,8 @@ tasks:
       - main.go
       - go.mod
       - go.sum
+      - '../../drivers/w6300/*.go'
+      - '../../drivers/w6300/go.mod'
     generates:
       - '../../{{.BUILD}}/w6300.elf'
     cmds:
@@ -755,7 +761,7 @@ tasks:
     cmds:
       - |
         go build -o {{.BUILD}}/ethhost ./tools/ethhost
-        {{.BUILD}}/ethhost > {{.BUILD}}/ethhost.log 2>&1 &
+        {{.BUILD}}/ethhost -udp-reply > {{.BUILD}}/ethhost.log 2>&1 &
         HOST=$!
         trap 'kill $HOST 2>/dev/null' EXIT
         sleep 0.5

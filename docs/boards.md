@@ -139,8 +139,12 @@ to.
 - The in-tree TinyGo netdev driver is `drivers/w6300`; the chip model is
   `internal/devices/w6300.go`.
 - Reference firmware: `firmware/w6300` (TCP client/server, UDP client/server).
-  UDP sockets bind the guest `Sn_PORT`; received datagrams are stored with the
-  WIZnet 8-byte peer header, which `drivers/w6300` strips on receive.
+  UDP sockets bind the guest `Sn_PORT`; each queued datagram is stored with the
+  WIZnet 8-byte peer header (peer IPv4/port, payload length). `Recv` returns one
+  datagram per call and advances the read pointer by the header plus that
+  datagram's length, truncating a datagram larger than the caller's buffer. TCP
+  advances only by the bytes copied, so a short read leaves the rest of the
+  stream queued for the next call.
 
 ## W5500 (breadboard)
 

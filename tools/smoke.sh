@@ -192,14 +192,16 @@ if port_busy 9000; then
 	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
 	exit 1
 fi
-"$BUILD/ethhost" >"$BUILD/ethhost-smoke.log" 2>&1 &
+"$BUILD/ethhost" -udp-reply >"$BUILD/ethhost-smoke.log" 2>&1 &
 host=$!
 trap 'kill "$host" 2>/dev/null' EXIT
 sleep 0.5
 out=$("$EMU" -fw "$BUILD/w6300.elf" -seconds 12 -w6300 2>&1)
 log=$(cat "$BUILD/ethhost-smoke.log")
 contains "W6300 TCP echo" "tcp echo:" "$out"
+contains "W6300 TCP split read" "tcp split: ok" "$out"
 contains "W6300 UDP" "udp: ok" "$out"
+contains "W6300 UDP framing" 'udp datagrams: "first\n" "second\n"' "$out"
 contains "W6300 TCP server" 'server check 1: reply "pong\n"' "$log"
 contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
 contains "W6300 network advertised" "tcp/9002 listen host=127.0.0.1:9002" "$out"

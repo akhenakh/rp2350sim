@@ -379,18 +379,38 @@ func (d *Device) Recv(sockfd int, buf []byte, _ int, deadline time.Time) (int, e
 
 	recvPtr := d.readUint16(sockRXReadPtr, sockAddr(sock.sockn))
 
-	// UDP datagrams are stored with an 8-byte WIZnet header (peer IPv4, peer
-	// port, length); the payload follows it.
-	header := 0
-	if sock.protocol == 2 {
-		header = 8
+	if sock.protocol == 2 { // UDP: one datagram per Recv
+		if size < 8 {
+			// A partially queued header cannot be framed. Discard it rather
+			// than reading past the pending bytes.
+			d.writeUint16(sockRXReadPtr, sockAddr(sock.sockn), recvPtr+uint16(size))
+			d.socketSendCmd(sock.sockn, sockCmdRecv)
+			return 0, nil
+		}
+		// Datagrams are stored with an 8-byte WIZnet header (peer IPv4, peer
+		// port, payload length). Sn_RX_RSR covers every queued datagram, so
+		// use the header's length rather than the whole pending size.
+		var hdr [8]byte
+		d.read(recvPtr, bufferAddr(sock.sockn, blockRX), hdr[:])
+		dlen := int(hdr[6])<<8 | int(hdr[7])
+		if avail := size - 8; dlen > avail {
+			dlen = avail // the RX buffer truncated the datagram
+		}
+		buf = buf[:min(dlen, len(buf))]
+		d.read(recvPtr+8, bufferAddr(sock.sockn, blockRX), buf)
+		// A datagram larger than buf is truncated, matching recvfrom; the
+		// rest of it is consumed with the datagram.
+		d.writeUint16(sockRXReadPtr, sockAddr(sock.sockn), recvPtr+uint16(8+dlen))
+		d.socketSendCmd(sock.sockn, sockCmdRecv)
+		return len(buf), nil
 	}
-	payload := max(size-header, 0)
-	buf = buf[:min(payload, len(buf))]
-	d.read(recvPtr+uint16(header), bufferAddr(sock.sockn, blockRX), buf)
-	d.writeUint16(sockRXReadPtr, sockAddr(sock.sockn), recvPtr+uint16(size))
-	d.socketSendCmd(sock.sockn, sockCmdRecv)
 
+	// TCP is a stream: consume only what was copied, so a short read (a TLS
+	// record header, say) leaves the rest for the next Recv.
+	buf = buf[:min(size, len(buf))]
+	d.read(recvPtr, bufferAddr(sock.sockn, blockRX), buf)
+	d.writeUint16(sockRXReadPtr, sockAddr(sock.sockn), recvPtr+uint16(len(buf)))
+	d.socketSendCmd(sock.sockn, sockCmdRecv)
 	return len(buf), nil
 }
 

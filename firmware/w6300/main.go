@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"machine"
 	"net"
 	"net/netip"
@@ -60,7 +61,7 @@ func main() {
 	} else {
 		fmt.Println("tcp: ok")
 	}
-	if err := udpSend(eth); err != nil {
+	if err := udpRoundTrip(eth); err != nil {
 		fmt.Printf("udp: %s\n", err)
 	} else {
 		fmt.Println("udp: ok")
@@ -79,18 +80,27 @@ func tcpEcho() error {
 	}
 	defer conn.Close()
 
-	if _, err := conn.Write([]byte("hello w6300\n")); err != nil {
+	payload := []byte("split-read-payload-0123456789\n")
+	if _, err := conn.Write(payload); err != nil {
 		return err
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	// No guest deadline: the emulator can run a long way past a short virtual
+	// timeout before the host answers. A short read must leave the rest of the
+	// stream queued in the W6300.
+	hdr := make([]byte, 5)
+	if _, err := io.ReadFull(conn, hdr); err != nil {
 		return err
 	}
-	buf := make([]byte, 64)
-	n, err := conn.Read(buf)
-	if err != nil {
+	rest := make([]byte, len(payload)-len(hdr))
+	if _, err := io.ReadFull(conn, rest); err != nil {
 		return err
 	}
-	fmt.Printf("tcp echo: %q\n", buf[:n])
+	got := append(hdr, rest...)
+	if string(got) != string(payload) {
+		return fmt.Errorf("split read got %q, want %q", got, payload)
+	}
+	fmt.Printf("tcp echo: %q\n", got)
+	fmt.Println("tcp split: ok")
 	return nil
 }
 
@@ -139,7 +149,7 @@ func tcpServer() {
 	}
 }
 
-func udpSend(eth *w6300.Device) error {
+func udpRoundTrip(eth *w6300.Device) error {
 	fd, err := eth.Socket(netdev.AF_INET, netdev.SOCK_DGRAM, netdev.IPPROTO_UDP)
 	if err != nil {
 		return err
@@ -153,6 +163,24 @@ func udpSend(eth *w6300.Device) error {
 	if err := eth.Connect(fd, "", netip.AddrPortFrom(server, udpPort)); err != nil {
 		return err
 	}
-	_, err = eth.Send(fd, []byte("udp w6300\n"), 0, time.Time{})
-	return err
+	if _, err := eth.Send(fd, []byte("udp w6300\n"), 0, time.Time{}); err != nil {
+		return err
+	}
+	// ethhost -udp-reply queues two datagrams before the guest reads. Each
+	// Recv must return one datagram, not the concatenation.
+	first := make([]byte, 16)
+	n1, err := eth.Recv(fd, first, 0, time.Time{})
+	if err != nil {
+		return err
+	}
+	second := make([]byte, 16)
+	n2, err := eth.Recv(fd, second, 0, time.Time{})
+	if err != nil {
+		return err
+	}
+	if string(first[:n1]) != "first\n" || string(second[:n2]) != "second\n" {
+		return fmt.Errorf("datagrams %q %q", first[:n1], second[:n2])
+	}
+	fmt.Printf("udp datagrams: %q %q\n", first[:n1], second[:n2])
+	return nil
 }
