@@ -350,6 +350,15 @@ func (io *ioBank) init(c *Chip) {
 			old := c.Pins.Func[pin]
 			c.Pins.Func[pin] = uint8(v & 0x1F)
 			bit := uint64(1) << uint(pin)
+			// A PIO pindir/output is latched in the block even while the pad
+			// is routed elsewhere. The pico-sdk's cyw43 driver sets the
+			// pindirs before it switches FUNCSEL to PIO, so re-apply the
+			// latched state when the pad becomes a PIO pin.
+			if id := int(c.Pins.Func[pin]) - 6; id >= 0 && id < len(c.pio) && c.pio[id] != nil {
+				pio := c.pio[id]
+				c.Pins.setOutput(pin, pio.outVal&bit != 0)
+				c.Pins.setOE(pin, pio.outOE&bit != 0)
+			}
 			if c.Pins.Func[pin] == pwmFuncSel {
 				c.Pins.pwmPins |= bit
 			} else {

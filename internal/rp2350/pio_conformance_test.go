@@ -356,6 +356,25 @@ func TestPIOOutRefillResumesAfterPush(t *testing.T) {
 	}
 }
 
+// The pico-sdk cyw43 driver sets PIO pindirs while the pad is still routed to
+// SIO, then switches FUNCSEL to PIO. The latched pindir/output must appear at
+// that point or the clock pin never toggles.
+func TestPIOLatchedPinsOnFuncSwitch(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	c.Pins.Func[0] = 0x1F // FUNCSEL_NULL
+	p.outOE = 1 << 0
+	p.outVal = 1 << 0
+	before := c.Pins.Level(0)
+	c.Write32(0x40028000+0x04, uint32(pioFuncSel(0))) // IO_BANK0 GPIO0 CTRL
+	if c.Pins.OE&1 == 0 {
+		t.Fatal("PIO pindir not applied when FUNCSEL switched to PIO")
+	}
+	if !c.Pins.Level(0) {
+		t.Fatalf("PIO output not applied on FUNCSEL switch (before=%v)", before)
+	}
+}
+
 func TestPIOInputCountMasksPins(t *testing.T) {
 	c := newPIOConformanceChip()
 	p := c.pio[0]
