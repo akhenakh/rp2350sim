@@ -360,7 +360,10 @@ func (d *dmaBlock) triggerRegister(ch int, v uint32) {
 		return
 	}
 	if v == 0 {
-		if !d.ch[ch].active && d.ch[ch].ctrl&dmaCtrlIRQQuiet != 0 {
+		// A disabled channel ignores triggering events, including the null
+		// trigger that ends a quiet chain.
+		if d.enabled&(1<<uint(ch)) != 0 && !d.ch[ch].active &&
+			d.ch[ch].ctrl&dmaCtrlIRQQuiet != 0 {
 			d.intr |= 1 << uint(ch)
 			d.syncIRQ()
 		}

@@ -634,3 +634,21 @@ func TestDMASnifferExplicitlyRejected(t *testing.T) {
 		t.Fatal("SNIFF_DATA read was silently accepted")
 	}
 }
+
+// TestDMANullTriggerNeedsEnable: a null trigger is a triggering event, so a
+// channel with EN=0 must ignore it instead of raising the quiet interrupt.
+func TestDMANullTriggerNeedsEnable(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.Write32(dmaBase+0x10, dmaCtrlIRQQuiet) // AL1_CTRL, EN=0
+	c.Write32(dmaBase+0x2C, 0)               // AL2_WRITE_ADDR_TRIG null trigger
+	if c.dma.intr&1 != 0 {
+		t.Fatal("disabled channel raised INTR on a null trigger")
+	}
+	c.Write32(dmaBase+0x10, dmaCtrlIRQQuiet|dmaCtrlEN)
+	c.Write32(dmaBase+0x2C, 0)
+	if c.dma.intr&1 == 0 {
+		t.Fatal("enabled quiet channel did not raise INTR")
+	}
+}
