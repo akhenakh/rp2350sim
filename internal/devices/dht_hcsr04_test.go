@@ -130,3 +130,93 @@ func TestHCSR04Echo(t *testing.T) {
 		t.Fatalf("echo width = %d us, want ~5800", width)
 	}
 }
+
+func TestDHTNegativeTemperature(t *testing.T) {
+	c := rp2350.New()
+	d := NewDHT(NewWire(c, 6), DHTConfig{Temperature: -5.0, Humidity: 45})
+	d.encode()
+	if d.data[2] != 0x80 || d.data[3] != 0x32 {
+		t.Fatalf("DHT22 negative = % X", d.data)
+	}
+	d11 := NewDHT(NewWire(c, 7), DHTConfig{Kind: "dht11", Temperature: -5})
+	d11.encode()
+	if d11.data[3] != 0 {
+		t.Fatalf("DHT11 negative = % X", d11.data)
+	}
+}
+
+func TestDHT11PulseLength(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Parked = true
+	padsPullUp(c, 6)
+	NewDHT(NewWire(c, 6), DHTConfig{Kind: "dht11", Humidity: 45, Temperature: 23})
+	edges := 0
+	c.Pins.AddChangeListener(func(pin int, level bool) {
+		if pin == 6 {
+			edges++
+		}
+	})
+	hostLow(c, 6, 1000)
+	c.Write32(sioOeClr, 1<<6)
+	runUS(c, 100)
+	if edges > 2 { // host low + release only
+		t.Fatalf("1 ms start pulse triggered DHT11: %d edges", edges)
+	}
+	edges = 0
+	hostLow(c, 6, 18000)
+	c.Write32(sioOeClr, 1<<6)
+	runUS(c, 400)
+	if edges < 6 {
+		t.Fatalf("18 ms start pulse did not trigger DHT11: %d edges", edges)
+	}
+}
+
+func TestHCSR04RejectsShortTrigger(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Parked = true
+	padsOutput(c, 6)
+	NewHCSR04(NewWire(c, 6), NewWire(c, 7), 100)
+	rise := false
+	c.Pins.AddChangeListener(func(pin int, level bool) {
+		if pin == 7 && level {
+			rise = true
+		}
+	})
+	hostHigh(c, 6, 5)
+	c.Write32(sioOeClr, 1<<6)
+	runUS(c, 1000)
+	if rise {
+		t.Fatal("5 us trigger produced an echo")
+	}
+}
+
+func TestHCSR04OutOfRange(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Parked = true
+	padsOutput(c, 6)
+	NewHCSR04(NewWire(c, 6), NewWire(c, 7), 401)
+	rise := false
+	c.Pins.AddChangeListener(func(pin int, level bool) {
+		if pin == 7 && level {
+			rise = true
+		}
+	})
+	hostHigh(c, 6, 10)
+	c.Write32(sioOeClr, 1<<6)
+	runUS(c, 100000)
+	if rise {
+		t.Fatal("distance above 400 cm produced an echo")
+	}
+}
+
+func TestDHTResetHook(t *testing.T) {
+	c := rp2350.New()
+	d := NewDHT(NewWire(c, 6), DHTConfig{Humidity: 45, Temperature: 23})
+	d.state = dhtResponseLow
+	d.bit = 17
+	d.data[0] = 0xFF
+	c.Reset()
+	if d.state != dhtIdle || d.bit != 0 || d.data[0] != 0 {
+		t.Fatalf("DHT state survived reset: state=%d bit=%d data=% X", d.state, d.bit, d.data)
+	}
+}

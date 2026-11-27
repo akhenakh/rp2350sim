@@ -1,6 +1,10 @@
 package devices
 
-import "github.com/akhenakh/rp2350sim/internal/rp2350"
+import (
+	"math"
+
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
+)
 
 // DHTConfig describes a DHT11/DHT22 single-wire sensor.
 type DHTConfig struct {
@@ -51,7 +55,16 @@ func NewDHT(w *Wire, cfg DHTConfig) *DHT {
 	d.action = w.chip.AddDeadline(d.onAction)
 	d.encode()
 	w.OnEdge(d.onEdge)
+	w.chip.AddResetHook(d.onReset)
 	return d
+}
+
+func (d *DHT) onReset() {
+	d.state = dhtIdle
+	d.bit = 0
+	d.data = [5]byte{}
+	d.fallAt = 0
+	d.w.Release()
 }
 
 func (d *DHT) onEdge(level bool) {
@@ -60,7 +73,11 @@ func (d *DHT) onEdge(level bool) {
 		d.fallAt = now
 		return
 	}
-	if d.state == dhtIdle && now-d.fallAt >= 1000*uint64(rp2350.CyclesPerMicrosecond) {
+	need := uint64(1000)
+	if d.kind == "dht11" {
+		need = 18000
+	}
+	if d.state == dhtIdle && now-d.fallAt >= need*uint64(rp2350.CyclesPerMicrosecond) {
 		d.start()
 	}
 }
@@ -111,12 +128,33 @@ func (d *DHT) dataBit(i int) byte {
 
 func (d *DHT) encode() {
 	if d.kind == "dht11" {
-		d.data[0], d.data[1], d.data[2], d.data[3] = 0, byte(d.hum), 0, byte(d.temp)
+		hum := int(math.Round(d.hum))
+		temp := int(math.Round(d.temp))
+		if hum < 0 {
+			hum = 0
+		} else if hum > 100 {
+			hum = 100
+		}
+		if temp < 0 {
+			temp = 0
+		} else if temp > 50 {
+			temp = 50
+		}
+		d.data[0], d.data[1], d.data[2], d.data[3] = 0, byte(hum), 0, byte(temp)
 	} else {
-		hum := uint16(d.hum*10 + 0.5)
-		temp := int16(d.temp*10 + 0.5)
+		hum := uint16(math.Round(d.hum * 10))
+		temp := int(math.Round(d.temp * 10))
+		var sign uint16
+		if temp < 0 {
+			sign = 0x8000
+			temp = -temp
+		}
+		if temp > 1250 {
+			temp = 1250
+		}
 		d.data[0], d.data[1] = byte(hum>>8), byte(hum)
-		d.data[2], d.data[3] = byte(uint16(temp)>>8), byte(temp)
+		d.data[2] = byte(sign>>8 | uint16(temp)>>8)
+		d.data[3] = byte(temp)
 	}
 	var sum byte
 	for _, b := range d.data[:4] {

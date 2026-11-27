@@ -146,3 +146,15 @@ func TestDS18B20SearchAndMatch(t *testing.T) {
 		t.Fatalf("matched device scratchpad = % X", got)
 	}
 }
+
+func TestDS18B20NegativeTemperature(t *testing.T) {
+	c := rp2350.New()
+	d := NewDS18B20(NewWire(c, oneWirePin), DS18B20Config{TemperatureC: -10.125})
+	s := d.scratchpad()
+	if s[0] != 0x5E || s[1] != 0xFF {
+		t.Fatalf("negative scratchpad = % X", s)
+	}
+	if crc8(s[:8]) != s[8] {
+		t.Fatalf("negative CRC = %#x", s[8])
+	}
+}

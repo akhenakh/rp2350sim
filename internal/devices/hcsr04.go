@@ -8,6 +8,8 @@ type HCSR04 struct {
 	trig, echo *Wire
 	distanceCM float64
 	action     *rp2350.Deadline
+	trigHighAt uint64
+	trigHigh   bool
 	active     bool
 }
 
@@ -18,12 +20,25 @@ func NewHCSR04(trig, echo *Wire, distanceCM float64) *HCSR04 {
 	}
 	d := &HCSR04{trig: trig, echo: echo, distanceCM: distanceCM}
 	d.action = trig.chip.AddDeadline(d.onAction)
+	trig.chip.AddResetHook(d.onReset)
 	echo.DriveLow()
 	trig.OnEdge(func(level bool) {
-		if level && !d.active {
-			d.active = true
-			d.action.Schedule(trig.Now() + 20*uint64(rp2350.CyclesPerMicrosecond))
+		if level {
+			d.trigHighAt = trig.Now()
+			d.trigHigh = true
+			return
 		}
+		if d.active || !d.trigHigh {
+			return
+		}
+		d.trigHigh = false
+		if trig.Now()-d.trigHighAt < 8*uint64(rp2350.CyclesPerMicrosecond) {
+			d.trigHighAt = 0
+			return
+		}
+		d.trigHighAt = 0
+		d.active = true
+		d.action.Schedule(trig.Now() + 20*uint64(rp2350.CyclesPerMicrosecond))
 	})
 	return d
 }
@@ -31,12 +46,23 @@ func NewHCSR04(trig, echo *Wire, distanceCM float64) *HCSR04 {
 // SetDistance changes the measured distance.
 func (d *HCSR04) SetDistance(cm float64) { d.distanceCM = cm }
 
+func (d *HCSR04) onReset() {
+	d.active = false
+	d.trigHigh = false
+	d.trigHighAt = 0
+	d.echo.DriveLow()
+}
+
 func (d *HCSR04) onAction() {
 	if !d.active {
 		return
 	}
 	if d.echo.Level() {
 		d.echo.DriveLow()
+		d.active = false
+		return
+	}
+	if d.distanceCM > 400 {
 		d.active = false
 		return
 	}

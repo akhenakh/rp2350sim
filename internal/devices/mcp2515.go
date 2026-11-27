@@ -38,6 +38,7 @@ func NewMCP2515(c *rp2350.Chip, bus *CANBus, cs, intPin int) *MCP2515 {
 	m := &MCP2515{chip: c, bus: bus, cs: cs, int: intPin}
 	bus.Attach(m)
 	m.reset()
+	c.AddResetHook(m.reset)
 	return m
 }
 
@@ -84,6 +85,8 @@ func (m *MCP2515) Transfer(tx byte) byte {
 			return m.regs[m.addr]
 		case tx == 0xA0: // READ STATUS
 			return m.status()
+		case tx == 0xB0: // RX STATUS
+			return m.rxStatus()
 		case tx == 0x05: // BIT MODIFY
 			m.state = 7
 			return 0xFF
@@ -116,9 +119,13 @@ func (m *MCP2515) Transfer(tx byte) byte {
 		m.addr = (m.addr + 1) & 0x7F
 		return v
 	case 5, 6: // LOAD TX / WRITE data
-		m.regs[m.addr] = tx
-		if m.addr == 0x0F { // CANCTRL: the requested mode is mirrored in CANSTAT
+		addr := m.addr
+		m.regs[addr] = tx
+		if addr == 0x0F { // CANCTRL: the requested mode is mirrored in CANSTAT
 			m.regs[0x0E] = m.regs[0x0E]&0x1F | tx&0xE0
+		}
+		if addr == 0x2B || addr == 0x2C || addr == 0x2D {
+			m.updateIRQ()
 		}
 		m.addr = (m.addr + 1) & 0x7F
 		return 0xFF
@@ -142,6 +149,8 @@ func (m *MCP2515) Transfer(tx byte) byte {
 }
 
 func (m *MCP2515) status() byte {
+	// READ STATUS: RX0IF, RX1IF, TX0REQ, TX0IF, TX1REQ, TX1IF,
+	// TX2REQ, TX2IF.
 	var v byte
 	if m.regs[0x2C]&0x01 != 0 {
 		v |= 0x01
@@ -149,11 +158,38 @@ func (m *MCP2515) status() byte {
 	if m.regs[0x2C]&0x02 != 0 {
 		v |= 0x02
 	}
-	if m.regs[0x2C]&0x04 != 0 {
-		v |= 0x04
+	for i := range 3 {
+		if m.regs[0x30+i*0x10]&0x08 != 0 {
+			v |= 1 << uint(2+2*i)
+		}
+		if m.regs[0x2C]&(1<<uint(2+i)) != 0 {
+			v |= 1 << uint(3+2*i)
+		}
 	}
-	if m.regs[0x2C]&0x40 != 0 {
+	return v
+}
+
+func (m *MCP2515) rxStatus() byte {
+	// Bits 7..6 select the buffer, 5..4 the message type, bit 3 RTR;
+	// this model accepts all filters, so bits 2..0 report RXF0.
+	var v byte
+	if m.regs[0x2C]&0x01 != 0 {
 		v |= 0x40
+	}
+	if m.regs[0x2C]&0x02 != 0 {
+		v |= 0x80
+	}
+	base := byte(0x60)
+	if m.regs[0x2C]&0x01 == 0 {
+		base = 0x70
+	}
+	ext := m.regs[base+2]&0x08 != 0
+	rtr := m.regs[base+2]&0x10 != 0
+	if ext {
+		v |= 0x20
+	}
+	if rtr {
+		v |= 0x10 | 0x08
 	}
 	return v
 }
@@ -182,10 +218,10 @@ func (m *MCP2515) Receive(f CANFrame) {
 func (m *MCP2515) writeRX(base byte, f CANFrame) {
 	id := f.ID
 	if f.Ext {
-		m.regs[base+1] = byte(id >> 21)
-		m.regs[base+2] = byte(id>>13) | 0x08 // IDE
-		m.regs[base+3] = byte(id >> 5)
-		m.regs[base+4] = byte(id << 3)
+		m.regs[base+1] = byte(id >> 21)                                    // ID28..21
+		m.regs[base+2] = (byte(id>>18)&0x07)<<5 | byte(id>>16)&0x03 | 0x08 // ID20..16, IDE
+		m.regs[base+3] = byte(id >> 8)                                     // ID15..8
+		m.regs[base+4] = byte(id)                                          // ID7..0
 	} else {
 		m.regs[base+1] = byte(id >> 3)
 		m.regs[base+2] = byte(id << 5)
@@ -195,6 +231,7 @@ func (m *MCP2515) writeRX(base byte, f CANFrame) {
 	}
 	dlc := min(len(f.Data), 8)
 	m.regs[base+5] = byte(dlc)
+
 	for i := range dlc {
 		m.regs[int(base)+6+i] = f.Data[i]
 	}
@@ -212,9 +249,9 @@ func (m *MCP2515) transmit(n int) {
 		RTR: m.regs[base+2]&0x10 != 0,
 	}
 	if f.Ext {
-		f.ID = uint32(m.regs[base+1])<<21 | uint32(m.regs[base+2]&0x03)<<19 |
-			uint32(m.regs[base+3])<<11 | uint32(m.regs[base+4])<<3 |
-			uint32(m.regs[base+5])>>5
+		f.ID = uint32(m.regs[base+1])<<21 | uint32(m.regs[base+2]>>5)<<18 |
+			uint32(m.regs[base+2]&0x03)<<16 | uint32(m.regs[base+3])<<8 |
+			uint32(m.regs[base+4])
 	}
 	dlc := min(int(m.regs[base+5]&0x0F), 8)
 	f.Data = append([]byte(nil), m.regs[base+6:base+6+byte(dlc)]...)

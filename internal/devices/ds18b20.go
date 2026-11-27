@@ -66,6 +66,7 @@ func NewDS18B20(w *Wire, cfg DS18B20Config) *DS18B20 {
 	d.readSlot = w.chip.AddDeadline(d.onReadSlot)
 	d.release = w.chip.AddDeadline(d.onRelease)
 	w.OnEdge(d.onEdge)
+	w.chip.AddResetHook(d.onReset)
 	return d
 }
 
@@ -74,6 +75,15 @@ func (d *DS18B20) TemperatureC() float64 { return float64(d.temp) / 16 }
 
 // SetTemperature changes the temperature returned by Convert T.
 func (d *DS18B20) SetTemperature(c float64) { d.temp = int16(c * 16) }
+
+func (d *DS18B20) onReset() {
+	d.state = dsIdle
+	d.bitIndex, d.searchSlot, d.searchEdge, d.matchIndex = 0, 0, 0, 0
+	d.byteVal = 0
+	d.read = d.read[:0]
+	d.reset = false
+	d.w.Release()
+}
 
 func (d *DS18B20) onEdge(level bool) {
 	now := d.w.Now()

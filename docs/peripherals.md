@@ -832,7 +832,8 @@ The peer answers a request frame by incrementing each data byte. This is
 classic CAN 2.0B; CAN FD needs an MCP2518FD-class controller and is a separate
 model. Reference firmware: `firmware/can`; board `pico2-can`; tasks `run:can`,
 `ui:can` and `ui:can:png`. The CAN tab shows the controller registers and the
-bus frames.
+bus frames. `-can-bus 1` attaches the controller to SPI1; an ID above `0x7FF`
+selects a 29-bit peer and reply frame.
 
 ## ITM and DWT trace
 

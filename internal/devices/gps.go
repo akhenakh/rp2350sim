@@ -15,6 +15,7 @@ type GPSConfig struct {
 	Course     float64
 	Satellites int
 	Fix        bool
+	FixSet     bool
 	Rate       time.Duration
 }
 
@@ -60,7 +61,7 @@ func NewGPS(c *rp2350.Chip, uart int, cfg GPSConfig) *GPS {
 	if cfg.Satellites == 0 {
 		cfg.Satellites = 9
 	}
-	if !cfg.Fix {
+	if !cfg.FixSet {
 		cfg.Fix = true
 	}
 	if cfg.Lat == 0 && cfg.Lon == 0 {
@@ -72,6 +73,7 @@ func NewGPS(c *rp2350.Chip, uart int, cfg GPSConfig) *GPS {
 	g := &GPS{c: c, uart: uart, cfg: cfg}
 	g.next = c.Cycles + uint64(cfg.Rate/time.Microsecond)*uint64(rp2350.CyclesPerMicrosecond)
 	c.AddPeriodicHook(rp2350.CyclesPerMicrosecond*1000, g.tick)
+	c.AddResetHook(g.Reset)
 	return g
 }
 
@@ -82,6 +84,8 @@ func (g *GPS) TX(byte) {}
 func (g *GPS) Reset() {
 	g.next = g.c.Cycles + uint64(g.cfg.Rate/time.Microsecond)*uint64(rp2350.CyclesPerMicrosecond)
 	g.seconds = 0
+	g.sentences = 0
+	g.last = ""
 }
 
 func (g *GPS) tick() {
@@ -91,8 +95,8 @@ func (g *GPS) tick() {
 	g.next = g.c.Cycles + uint64(g.cfg.Rate/time.Microsecond)*uint64(rp2350.CyclesPerMicrosecond)
 	g.seconds++
 	t := fmt.Sprintf("%02d%02d%02d.00", (g.seconds/3600)%24, (g.seconds/60)%60, g.seconds%60)
-	lat := formatNMEACoord(g.cfg.Lat, 'N', 'S')
-	lon := formatNMEACoord(g.cfg.Lon, 'E', 'W')
+	lat := formatNMEACoord(g.cfg.Lat, 'N', 'S', 2)
+	lon := formatNMEACoord(g.cfg.Lon, 'E', 'W', 3)
 	fix := 0
 	if g.cfg.Fix {
 		fix = 1

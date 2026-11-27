@@ -103,7 +103,7 @@ func parseNMEACoord(v, hemi string) (float64, error) {
 }
 
 // formatNMEACoord formats decimal degrees as ddmm.mmmm,hemisphere.
-func formatNMEACoord(v float64, pos, neg byte) string {
+func formatNMEACoord(v float64, pos, neg byte, degWidth int) string {
 	hemi := pos
 	if v < 0 {
 		hemi = neg
@@ -111,5 +111,5 @@ func formatNMEACoord(v float64, pos, neg byte) string {
 	}
 	deg := int(v)
 	min := (v - float64(deg)) * 60
-	return fmt.Sprintf("%02d%07.4f,%c", deg, min, hemi)
+	return fmt.Sprintf("%0*d%07.4f,%c", degWidth, deg, min, hemi)
 }
