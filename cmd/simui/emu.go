@@ -2831,13 +2831,13 @@ func (e *Emu) GPSInfo() *devices.GPSInfo {
 }
 
 // SetGPSConfig updates the simulated GPS position and motion.
-func (e *Emu) SetGPSConfig(lat, lon, altitude, speedKnots, course float64) error {
+func (e *Emu) SetGPSConfig(lat, lon, altitude, speedMPS, course float64) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.gpsDev == nil {
 		return fmt.Errorf("no GPS attached")
 	}
-	return e.gpsDev.SetConfig(lat, lon, altitude, speedKnots, course)
+	return e.gpsDev.SetConfig(lat, lon, altitude, speedMPS, course)
 }
 
 // CANInfo returns the controller and recent bus frames, if attached.

@@ -76,8 +76,8 @@ func ParseNMEA(line string) (NMEASentence, error) {
 		if err != nil {
 			return s, err
 		}
-		knots, _ := strconv.ParseFloat(f[7], 64)
-		s.SpeedMPS = knots * 0.514444
+		rmcSpeed, _ := strconv.ParseFloat(f[7], 64)
+		s.SpeedMPS = rmcSpeed * 0.514444
 		s.Course, _ = strconv.ParseFloat(f[8], 64)
 	default:
 		return s, fmt.Errorf("nmea: unsupported %q", f[0])

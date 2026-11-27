@@ -156,10 +156,10 @@ func (g *GPS) tick() {
 	gga := fmt.Sprintf("GPGGA,%s,%s,%s,%d,%02d,0.9,%.1f,M,0.0,M,,",
 		t, lat, lon, fix, g.cfg.Satellites, g.cfg.Altitude)
 	// RMC carries speed over ground in knots; the editable value is m/s.
-	knots := g.cfg.SpeedMPS * 1.9438444924406
+	rmcSpeed := g.cfg.SpeedMPS * 1.9438444924406
 	rmc := fmt.Sprintf("GPRMC,%s,%s,%s,%s,%.2f,%.1f,010125,,,A",
 		t, map[bool]string{true: "A", false: "V"}[g.cfg.Fix], lat, lon,
-		knots, g.cfg.Course)
+		rmcSpeed, g.cfg.Course)
 	for _, body := range []string{gga, rmc} {
 		line := nmeaLine(body)
 		g.sentences++
