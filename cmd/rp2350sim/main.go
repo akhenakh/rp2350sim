@@ -214,6 +214,8 @@ func main() {
 		cywCS        = flag.Int("cyw43439-cs", 25, "CYW43439 WL_CS GPIO")
 		cywCLK       = flag.Int("cyw43439-clk", 29, "CYW43439 WL_CLK GPIO")
 		cywMAC       = flag.String("cyw43439-mac", "02:11:22:33:44:55", "CYW43439 station MAC address")
+		cywSSID      = flag.String("cyw43439-ssid", "", "CYW43439 virtual AP SSID (empty accepts any)")
+		cywPass      = flag.String("cyw43439-password", "", "CYW43439 virtual AP passphrase")
 		bleAddr      = flag.String("ble-addr", "C0:DE:12:34:56:78", "advertised BLE peer address")
 		bleHostWake  = flag.Int("ble-host-wake", 24, "CYW43 HOST_WAKE GPIO")
 		bleSeed      = flag.Int64("ble-seed", 42, "BLE controller PRNG seed")
@@ -534,12 +536,14 @@ func main() {
 		var macArr [6]byte
 		copy(macArr[:], mac)
 		cyw = cyw43439.Attach(c, cyw43439.Config{
-			Logger: log,
-			RegOn:  *cywRegOn,
-			Data:   *cywData,
-			CS:     *cywCS,
-			CLK:    *cywCLK,
-			MAC:    macArr,
+			Logger:   log,
+			RegOn:    *cywRegOn,
+			Data:     *cywData,
+			CS:       *cywCS,
+			CLK:      *cywCLK,
+			MAC:      macArr,
+			SSID:     *cywSSID,
+			Password: *cywPass,
 		})
 	}
 	if *bootsel {
@@ -1637,6 +1641,8 @@ func main() {
 	if cyw != nil && !*quiet {
 		log.Info("cyw43439",
 			slog.Bool("firmware_up", cyw.FirmwareUp()),
+			slog.Bool("link_up", cyw.LinkUp()),
+			slog.String("ssid", cyw.SSID()),
 			slog.Bool("led", cyw.LED()))
 	}
 	if !*quiet && (otpSeeded > 0 || c.OTPWrites() > 0) {

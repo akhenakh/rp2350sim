@@ -82,6 +82,69 @@ func (b *fakeBus) read32(d *Device, fn int, addr uint32, word32 bool) uint32 {
 	return v
 }
 
+func TestJoinEvents(t *testing.T) {
+	d := newDevice(&fakeBus{}, Config{MAC: [6]byte{2, 0, 0, 0, 0, 1}})
+	d.firmwareUp = true
+
+	name := "bsscfg:ssid\x00"
+	payload := make([]byte, len(name)+4+32)
+	copy(payload, name)
+	binary.LittleEndian.PutUint32(payload[len(name):], 4)
+	copy(payload[len(name)+4:], "test")
+	req := make([]byte, sdpcmHeaderLen+cdcHeaderLen+len(payload))
+	size := len(req)
+	binary.LittleEndian.PutUint16(req, uint16(size))
+	binary.LittleEndian.PutUint16(req[2:], ^uint16(size))
+	req[7] = sdpcmHeaderLen
+	binary.LittleEndian.PutUint32(req[12:], wlcSetVar)
+	binary.LittleEndian.PutUint32(req[16:], uint32(len(payload)))
+	copy(req[28:], payload)
+
+	d.wlanWrite(req)
+	if len(d.queue) != 5 {
+		t.Fatalf("queue = %d, want 1 control + 4 events", len(d.queue))
+	}
+	if !d.LinkUp() || d.SSID() != "test" {
+		t.Fatalf("join state: up=%v ssid=%q", d.LinkUp(), d.SSID())
+	}
+	resp := d.wlanRead(len(d.queue[0]))
+	if got := resp[5] & 0xf; got != channelControl {
+		t.Fatalf("control response channel = %d", got)
+	}
+	if got := binary.LittleEndian.Uint32(resp[sdpcmHeaderLen:]); got != wlcSetVar {
+		t.Fatalf("control response cmd = %d", got)
+	}
+
+	want := []struct {
+		typ    uint32
+		status uint32
+	}{
+		{evSETSSID, 0},
+		{evAUTH, 0},
+		{evJOIN, 0},
+		{evPSKSUP, 6},
+	}
+	for i, w := range want {
+		pkt := d.wlanRead(len(d.queue[0]))
+		if got := pkt[5] & 0xf; got != 1 {
+			t.Fatalf("event %d channel = %d", i, got)
+		}
+		if got := binary.LittleEndian.Uint16(pkt); int(got) != len(pkt) {
+			t.Fatalf("event %d size = %d, packet %d", i, got, len(pkt))
+		}
+		msg := sdpcmHeaderLen + 4 + 24
+		if got := binary.BigEndian.Uint32(pkt[msg+4:]); got != w.typ {
+			t.Fatalf("event %d type = %d, want %d", i, got, w.typ)
+		}
+		if got := binary.BigEndian.Uint32(pkt[msg+8:]); got != w.status {
+			t.Fatalf("event %d status = %d, want %d", i, got, w.status)
+		}
+	}
+	if len(d.queue) != 0 {
+		t.Fatalf("%d packets left in the queue", len(d.queue))
+	}
+}
+
 func TestBusRegisters(t *testing.T) {
 	b := &fakeBus{}
 	d := newDevice(b, Config{MAC: [6]byte{1, 2, 3, 4, 5, 6}})

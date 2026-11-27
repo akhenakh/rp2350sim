@@ -481,7 +481,7 @@ tasks:
     desc: Initialize the CYW43439 over gSPI and toggle WL_GPIO0
     deps: [build, firmware:pico2w]
     cmds:
-      - '{{.EMU}} -fw {{.BUILD}}/pico2w.elf -cyw43439 -seconds 4'
+      - '{{.EMU}} -fw {{.BUILD}}/pico2w.elf -cyw43439 -seconds 7'
 
   firmware:echo:
     desc: Build the console echo firmware

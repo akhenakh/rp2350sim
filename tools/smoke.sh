@@ -400,8 +400,9 @@ contains "UART air sensor values" "pm=" "$out"
 
 # --- CYW43439 gSPI radio bring-up ------------------------------------------
 if [ -f "$BUILD/pico2w.elf" ]; then
-	out=$("$EMU" -fw "$BUILD/pico2w.elf" -cyw43439 -seconds 4 2>&1)
+	out=$("$EMU" -fw "$BUILD/pico2w.elf" -cyw43439 -seconds 7 2>&1)
 	contains "CYW43439 firmware download and init" "pico2w: radio ready" "$out"
+	contains "CYW43439 join" "pico2w: joined rp2350sim" "$out"
 	contains "CYW43439 WL_GPIO0 LED" "pico2w: led on" "$out"
 fi
 

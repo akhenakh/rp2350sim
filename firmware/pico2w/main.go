@@ -1,13 +1,18 @@
-// pico2w initializes the real CYW43439 driver and toggles WL_GPIO0, the
-// Pico W's on-board LED. It is the first end-to-end gSPI check: the driver
-// resets the radio, downloads firmware and CLM/NVRAM, and sends the LED
-// control iovar over the control channel.
+// pico2w initializes the real CYW43439 driver, joins the virtual AP and
+// toggles WL_GPIO0, the Pico W's on-board LED. It is the first end-to-end gSPI
+// check: the driver resets the radio, downloads firmware and CLM/NVRAM, sends
+// the WLC control iovars, joins and drives the LED.
 package main
 
 import (
 	"time"
 
 	"github.com/soypat/cyw43439"
+)
+
+const (
+	ssid = "rp2350sim"
+	pass = "password"
 )
 
 func main() {
@@ -21,6 +26,11 @@ func main() {
 		}
 	}
 	println("pico2w: radio ready")
+	if err := dev.Join(ssid, cyw43439.JoinOptions{Passphrase: pass}); err != nil {
+		println("pico2w: join failed:", err.Error())
+	} else {
+		println("pico2w: joined", ssid)
+	}
 	on := false
 	for {
 		on = !on

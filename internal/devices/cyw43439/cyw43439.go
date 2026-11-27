@@ -33,6 +33,10 @@ type Config struct {
 	CS    int // WL_CS, usually GP25
 	CLK   int // WL_CLK, usually GP29
 	MAC   [6]byte
+	// SSID, when set, is the only network the virtual AP accepts. Password is
+	// currently advisory; the association always succeeds.
+	SSID     string
+	Password string
 	// Logger receives bring-up and unknown-IOCTL diagnostics.
 	Logger *slog.Logger
 }
@@ -98,9 +102,31 @@ type Device struct {
 
 	firmwareUp bool
 	queue      [][]byte
+	scheduled  []eventSpec
+	eventSeq   uint8
 	led        bool
+	linkUp     bool
+	ssid       string
 	fwBytes    int
 }
+
+// eventSpec is one async SDPCM event to queue after the current control
+// response has been sent.
+type eventSpec struct {
+	typ    uint32
+	status uint32
+	reason uint32
+	flags  uint32
+}
+
+// Async event types (WLC_E_*).
+const (
+	evSETSSID = 0
+	evJOIN    = 1
+	evAUTH    = 3
+	evLINK    = 16
+	evPSKSUP  = 46
+)
 
 type coreState struct {
 	ioctrl   uint8
@@ -151,6 +177,7 @@ const (
 	cdcHeaderLen   = 16
 	wlcGetVar      = 262
 	wlcSetVar      = 263
+	wlcSetSSID     = 26
 	channelControl = 0
 )
 
@@ -203,7 +230,11 @@ func (d *Device) reset() {
 	d.cores = [2]coreState{}
 	d.firmwareUp = false
 	d.queue = nil
+	d.scheduled = nil
+	d.eventSeq = 0
 	d.led = false
+	d.linkUp = false
+	d.ssid = ""
 	d.fwBytes = 0
 	d.version++
 	d.bus.drive(true)
@@ -614,6 +645,56 @@ func (d *Device) wlanWrite(packet []byte) {
 	payload := packet[hdrLen+cdcHeaderLen : hdrLen+cdcHeaderLen+clen]
 	resp := d.ioctl(cmd, flags&3, payload)
 	d.queueResponse(seq, cmd, flags&3, id, resp)
+	// Events follow the control response so the driver's ioctl wait finds its
+	// answer first and the next poll drains them in order.
+	for _, ev := range d.scheduled {
+		d.queueEvent(ev)
+	}
+	d.scheduled = nil
+}
+
+func (d *Device) scheduleEvents(events ...eventSpec) {
+	d.scheduled = append(d.scheduled, events...)
+}
+
+// queueEvent builds one SDPCM async-event packet: BDC header, the 0x886c
+// Ethernet frame, the Broadcom event header and the 48-byte event message.
+func (d *Device) queueEvent(ev eventSpec) {
+	const (
+		bdcLen   = 4
+		payload  = 72
+		total    = sdpcmHeaderLen + bdcLen + payload
+		frameOff = sdpcmHeaderLen + bdcLen
+		hdrOff   = frameOff + 14
+		msgOff   = hdrOff + 10
+	)
+	pkt := make([]byte, total)
+	binary.LittleEndian.PutUint16(pkt, uint16(total))
+	binary.LittleEndian.PutUint16(pkt[2:], ^uint16(total))
+	pkt[4] = d.eventSeq
+	d.eventSeq++
+	pkt[5] = 1 // ASYNCEVENT channel
+	pkt[7] = sdpcmHeaderLen
+	pkt[9] = 8 // bus data credit
+	// Ethernet frame carrying the Broadcom event.
+	copy(pkt[frameOff:], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(pkt[frameOff+6:], d.cfg.MAC[:])
+	pkt[frameOff+12] = 0x88
+	pkt[frameOff+13] = 0x6c
+	binary.BigEndian.PutUint16(pkt[hdrOff:], 32769) // BCMILCP_SUBTYPE_VENDOR_LONG
+	binary.BigEndian.PutUint16(pkt[hdrOff+2:], uint16(payload-24))
+	pkt[hdrOff+4] = 0
+	copy(pkt[hdrOff+5:], []byte{0x00, 0x10, 0x18})
+	binary.BigEndian.PutUint16(pkt[hdrOff+8:], 1) // BCM subtype event
+	binary.BigEndian.PutUint16(pkt[msgOff:], 0)   // version
+	binary.BigEndian.PutUint16(pkt[msgOff+2:], uint16(ev.flags))
+	binary.BigEndian.PutUint32(pkt[msgOff+4:], ev.typ)
+	binary.BigEndian.PutUint32(pkt[msgOff+8:], ev.status)
+	binary.BigEndian.PutUint32(pkt[msgOff+12:], ev.reason)
+	copy(pkt[msgOff+24:], d.cfg.MAC[:]) // address
+	copy(pkt[msgOff+30:], "wl0")
+	d.queue = append(d.queue, pkt)
+	d.version++
 }
 
 func (d *Device) queueResponse(seq uint8, cmd uint32, kind uint16, id uint16, payload []byte) {
@@ -657,6 +738,9 @@ func (d *Device) ioctl(cmd uint32, kind uint16, payload []byte) []byte {
 	case wlcGetVar:
 		name, _ := splitIovar(payload)
 		return d.getIovar(name, len(payload))
+	case wlcSetSSID:
+		d.joinRequest(payload)
+		return nil
 	default:
 		// Direct WLC_* ioctls (WLC_UP and friends) are acknowledged. A GET of
 		// one returns a zero word.
@@ -674,6 +758,36 @@ func splitIovar(payload []byte) (string, []byte) {
 		}
 	}
 	return string(payload), nil
+}
+
+// joinRequest records the SSID and queues the association events. The payload
+// starts with the SSID length, followed by the SSID bytes.
+func (d *Device) joinRequest(payload []byte) {
+	if len(payload) >= 4 {
+		n := int(binary.LittleEndian.Uint32(payload))
+		if n > 32 {
+			n = 32
+		}
+		if len(payload) >= 4+n {
+			d.ssid = string(payload[4 : 4+n])
+		}
+	}
+	d.log.Debug("cyw43439 join", slog.String("ssid", d.ssid))
+	if d.cfg.SSID != "" && d.ssid != d.cfg.SSID {
+		d.log.Debug("cyw43439 join rejected", slog.String("want", d.cfg.SSID))
+		d.linkUp = false
+		d.version++
+		d.scheduleEvents(eventSpec{typ: evSETSSID, status: 3}) // no matching network
+		return
+	}
+	d.linkUp = true
+	d.version++
+	d.scheduleEvents(
+		eventSpec{typ: evSETSSID, status: 0},
+		eventSpec{typ: evAUTH, status: 0},
+		eventSpec{typ: evJOIN, status: 0},
+		eventSpec{typ: evPSKSUP, status: 6},
+	)
 }
 
 func (d *Device) getIovar(name string, reqLen int) []byte {
@@ -700,6 +814,8 @@ func (d *Device) setIovar(name string, value []byte, reqLen int) {
 				d.version++
 			}
 		}
+	case "bsscfg:ssid":
+		d.joinRequest(value)
 	default:
 		if d.debug {
 			d.log.Debug("cyw43439 iovar", slog.String("name", name), slog.Int("len", reqLen))
@@ -715,6 +831,12 @@ func (d *Device) LED() bool { return d.led }
 // FirmwareUp reports whether the driver has downloaded firmware and released
 // the WLAN core.
 func (d *Device) FirmwareUp() bool { return d.firmwareUp }
+
+// LinkUp reports whether a join completed.
+func (d *Device) LinkUp() bool { return d.linkUp }
+
+// SSID reports the network the station joined.
+func (d *Device) SSID() string { return d.ssid }
 
 // Version changes whenever the visible state changes.
 func (d *Device) Version() uint64 { return d.version }

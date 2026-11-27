@@ -168,6 +168,10 @@ every UI board to its flags and demo firmware. The flags are:
 | `-eth` | W5500 on SPI0 (CS GP17) |
 | `-w6300` | W6300 on SPI0 (CS GP17) |
 | `-ch9120` | CH9120 on UART1 (GP20/21), CFG0 GP18, RST GP19, TCPCS GP17 |
+| `-cyw43439` | CYW43439 gSPI radio on GP23/24/25/29 (see [boards.md](boards.md)) |
+| `-cyw43439-ssid NAME` | virtual AP SSID; empty accepts any network |
+| `-cyw43439-password PASS` | virtual AP passphrase |
+| `-cyw43439-mac ADDR` | station MAC (default `02:11:22:33:44:55`) |
 | `-ble` | virtual CYW43 BLE controller (Pico W HCI transport; see [ble.md](ble.md)) |
 | `-ble-addr ADDR` | advertised BLE peer address (default `C0:DE:12:34:56:78`) |
 | `-ble-host-wake GPIO` | CYW43 HOST_WAKE pin (default 24) |

@@ -1889,6 +1889,9 @@ func ethPanel(snap MachineState) {
 					if c.FirmwareUp {
 						state = "firmware running · control channel ready"
 					}
+					if c.LinkUp {
+						state = "joined " + c.SSID
+					}
 					Label(state, FontSize(12), TextColor(140, 35, 70, 1))
 					Filler(1)
 					led := "LED off"

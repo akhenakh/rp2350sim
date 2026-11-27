@@ -191,16 +191,20 @@ What works today:
 - SDPCM/CDC control requests: the WLC init sequence (`cur_etheraddr`, CLM
   chunks, `bus:txglom`, power management, …) and `gpioout`, which drives the
   on-board `WL_GPIO0` LED.
-- `firmware/pico2w` runs the bring-up and toggles the LED; `task run:pico2w`
-  executes it, and the `pico2w-cyw` UI board shows the radio state in the
-  Wi-Fi tab.
+- Join and async events: `bsscfg:ssid`/`WLC_SET_SSID` schedules the
+  SET_SSID/AUTH/JOIN/PSK_SUP event sequence, so the driver's `Join` completes
+  and `IsLinkUp` reports true. The virtual AP accepts any SSID unless the board
+  config names one (`ssid`, `password`).
+- `firmware/pico2w` runs the bring-up, joins `rp2350sim` and toggles the LED;
+  `task run:pico2w` executes it, and the `pico2w-cyw` UI board shows the radio
+  and link state in the Wi-Fi tab.
 
-Join/scan events and the Ethernet data path (DHCP/DNS/NAT) are the next slice.
-The legacy `pico2w` board still uses the CH9120 serial netdev for TinyGo `net`
-socket offload; Bluetooth stays on the separate `-ble` virtual controller.
+The Ethernet data path (DHCP/DNS/NAT/TCP/UDP) is the next slice. The legacy
+`pico2w` board still uses the CH9120 serial netdev for TinyGo `net` socket
+offload; Bluetooth stays on the separate `-ble` virtual controller.
 
-CLI: `-cyw43439` with `-cyw43439-{reg-on,data,cs,clk,mac}` overriding the Pico
-W wiring.
+CLI: `-cyw43439` with `-cyw43439-{reg-on,data,cs,clk,mac,ssid,password}`
+overriding the Pico W wiring.
 
 ## Breadboard W5500
 

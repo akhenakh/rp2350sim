@@ -393,6 +393,8 @@ boards:
       cs: 25
       clk: 29
       mac: 02:11:22:33:44:55
+      ssid: rp2350sim
+      password: password
 
   - id: pico2-analog
     name: RP2350 + analog + protocols

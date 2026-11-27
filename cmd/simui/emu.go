@@ -127,6 +127,8 @@ type BLEState struct {
 // CYWState is the CYW43439 bring-up state shown in the Wi-Fi panel.
 type CYWState struct {
 	FirmwareUp bool
+	LinkUp     bool
+	SSID       string
 	LED        bool
 	MAC        string
 	Pins       string
@@ -1398,11 +1400,13 @@ func (e *Emu) resetChip() {
 			if w.Kind == "cyw43439" {
 				mac, _ := parseMAC(w.MAC)
 				e.cyw = cyw43439.Attach(c, cyw43439.Config{
-					RegOn: w.RegOn,
-					Data:  w.Data,
-					CS:    w.CS,
-					CLK:   w.CLK,
-					MAC:   mac,
+					RegOn:    w.RegOn,
+					Data:     w.Data,
+					CS:       w.CS,
+					CLK:      w.CLK,
+					MAC:      mac,
+					SSID:     w.SSID,
+					Password: w.Pass,
 				})
 			} else {
 				ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)
@@ -3211,6 +3215,8 @@ func (e *Emu) Snapshot() MachineState {
 		w := e.board.Wifi
 		s.CYW = &CYWState{
 			FirmwareUp: e.cyw.FirmwareUp(),
+			LinkUp:     e.cyw.LinkUp(),
+			SSID:       e.cyw.SSID(),
 			LED:        e.cyw.LED(),
 			MAC:        w.MAC,
 			Pins: fmt.Sprintf("WL_REG_ON GP%d · WL_D GP%d · WL_CS GP%d · WL_CLK GP%d",

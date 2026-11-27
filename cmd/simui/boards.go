@@ -214,6 +214,8 @@ type WifiDevice struct {
 	CS    int    `yaml:"cs"`
 	CLK   int    `yaml:"clk"`
 	MAC   string `yaml:"mac"`
+	SSID  string `yaml:"ssid"`
+	Pass  string `yaml:"password"`
 }
 
 func parseMAC(s string) ([6]byte, error) {
