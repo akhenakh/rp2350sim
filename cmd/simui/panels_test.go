@@ -1,8 +1,10 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
@@ -47,5 +49,32 @@ func TestTraceLinesPartialAndCap(t *testing.T) {
 	lines = traceLines(events)
 	if len(lines) != 1 || len(lines[0].text) != maxTraceLine {
 		t.Fatalf("capped line length = %d", len(lines))
+	}
+}
+
+func TestTraceText(t *testing.T) {
+	events := []rp2350.TraceEvent{
+		{Cycle: 150_000, Port: 0, Kind: "itm", Text: "hello\n"},
+		{Cycle: 300_000, Port: 0, Kind: "pc", PC: 0x10000123},
+	}
+	got := traceText(events)
+	for _, want := range []string{"rp2350sim trace", "Events: 2", "1.00 ms", "port 0", "hello", "pc=10000123"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("trace text missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestCANText(t *testing.T) {
+	info := devices.MCP2515Info{CANSTAT: 0, CANCTRL: 0, CANINTF: 0x05, EFLG: 0}
+	frames := []devices.CANFrame{
+		{Time: 150_000, ID: 0x123, Data: []byte{0x41}},
+		{Time: 300_000, ID: 0x1ABCDE, Ext: true, RTR: true, Data: []byte{0x41, 0x42}},
+	}
+	got := canText(info, frames)
+	for _, want := range []string{"rp2350sim CAN", "Frames: 2", "EXT/RTR", "1ABCDE", "41 42", "2.00"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("CAN text missing %q:\n%s", want, got)
+		}
 	}
 }

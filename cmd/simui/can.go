@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/akhenakh/rp2350sim/internal/devices"
 
 	. "go.hasen.dev/shirei"
 	. "go.hasen.dev/shirei/widgets"
@@ -23,6 +26,33 @@ func canMode(v byte) string {
 	return "reserved"
 }
 
+// canText renders the controller state and visible frames for Copy.
+func canText(info devices.MCP2515Info, frames []devices.CANFrame) string {
+	var b strings.Builder
+	b.WriteString("rp2350sim CAN\n")
+	fmt.Fprintf(&b, "Controller: MCP2515 (classic CAN 2.0B)\n")
+	fmt.Fprintf(&b, "Mode: %s\n", canMode(info.CANSTAT))
+	fmt.Fprintf(&b, "CANSTAT %#02x  CANCTRL %#02x  CANINTF %#02x  EFLG %#02x\n",
+		info.CANSTAT, info.CANCTRL, info.CANINTF, info.EFLG)
+	fmt.Fprintf(&b, "Frames: %d\n\n", len(frames))
+	b.WriteString("Bus frames (newest first):\n")
+	fmt.Fprintf(&b, "%10s %5s %8s %4s  %s\n", "time_ms", "id", "type", "dlc", "data")
+	limit := max(len(frames)-100, 0)
+	for i := len(frames) - 1; i >= limit; i-- {
+		f := frames[i]
+		typ := "STD"
+		if f.Ext {
+			typ = "EXT"
+		}
+		if f.RTR {
+			typ += "/RTR"
+		}
+		fmt.Fprintf(&b, "%10.2f %5X %8s %4d  % X\n",
+			float64(f.Time)/150_000, f.ID, typ, len(f.Data), f.Data)
+	}
+	return b.String()
+}
+
 // canPanel shows the MCP2515 registers and the recent CAN bus frames.
 func canPanel() {
 	info, frames, ok := emu.CANInfo()
@@ -35,6 +65,9 @@ func canPanel() {
 			Label("CAN", FontSize(16), FontWeight(700))
 			Label("MCP2515 · classic CAN 2.0B", FontSize(12))
 			Filler(1)
+			if Button(NoIcon, "Copy") {
+				RequestTextCopy(canText(info, frames))
+			}
 			Label(fmt.Sprintf("%d frames", len(frames)), FontSize(12), FontWeight(600))
 		})
 		Container(Attrs(Row, Gap(10)), func() {

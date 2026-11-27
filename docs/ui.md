@@ -508,8 +508,9 @@ opens it on `pico2-gps` with `firmware/gps`; `ui:gps:png` renders it.
 ### CAN
 
 The CAN tab shows the MCP2515 status registers and the recent bus frames with
-bus time, identifier, standard/extended type and payload. It is a classic CAN
-2.0B controller; the board's simulated peer answers a matching request.
+bus time, identifier, standard/extended type and payload. **Copy** copies the
+controller state and visible frames as plain text. It is a classic CAN 2.0B
+controller; the board's simulated peer answers a matching request.
 `task ui:can` opens it with `firmware/can`; `ui:can:png` renders it.
 
 ![CAN tab](images/can.png)
@@ -517,7 +518,8 @@ bus time, identifier, standard/extended type and payload. It is a classic CAN
 ### Trace
 
 The Trace tab lists ITM stimulus writes grouped into lines, with virtual time
-and port, plus any other chip trace events. **Clear** drops the ring. The same
+and port, plus any other chip trace events. **Copy** copies the visible lines
+as plain text; **Clear** drops the ring. The same
 events are printed by the headless runner's `-itm` flag. `task ui:trace` opens
 it on `firmware/c/itmdemo`; `ui:trace:png` renders it.
 

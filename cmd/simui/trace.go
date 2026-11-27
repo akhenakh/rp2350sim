@@ -27,6 +27,11 @@ func tracePanel() {
 			Label("Trace", FontSize(16), FontWeight(700))
 			Label("ITM stimulus · DWT counters", FontSize(12))
 			Filler(1)
+			if len(events) > 0 {
+				if Button(NoIcon, "Copy") {
+					RequestTextCopy(traceText(events))
+				}
+			}
 			if Button(NoIcon, "Clear") {
 				emu.ClearTrace()
 				RequestNextFrame()
@@ -58,6 +63,22 @@ func tracePanel() {
 		Label("ITM writes are gated by TER/TCR; DWT CYCCNT and PCSR are readable from firmware.",
 			FontSize(11), TextColor(220, 6, 68, 1))
 	})
+}
+
+// traceText renders the visible trace as plain text for the Copy button.
+func traceText(events []rp2350.TraceEvent) string {
+	var b strings.Builder
+	b.WriteString("rp2350sim trace\n")
+	fmt.Fprintf(&b, "Events: %d\n\n", len(events))
+	for _, line := range traceLines(events) {
+		ms := float64(line.cycle) / 150_000
+		if line.kind != "" {
+			fmt.Fprintf(&b, "%8.2f ms  %s\n", ms, line.text)
+		} else {
+			fmt.Fprintf(&b, "%8.2f ms  port %d  %s\n", ms, line.port, line.text)
+		}
+	}
+	return b.String()
 }
 
 func traceLines(events []rp2350.TraceEvent) []traceLine {
