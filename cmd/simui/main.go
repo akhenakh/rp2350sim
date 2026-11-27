@@ -640,10 +640,6 @@ func tabsBar(snap MachineState) {
 			tabButton("BOOTSEL", tabBootsel)
 		}
 		tabButton("Console", tabConsole)
-		Filler(1)
-		if selectedBoard.Description != "" {
-			Label(selectedBoard.Description, FontSize(11), TextColor(220, 6, 68, 1))
-		}
 	})
 }
 
@@ -1060,7 +1056,7 @@ func toolbar(snap MachineState) {
 		}
 	})
 
-	Container(Attrs(Row, CrossMid, Gap(14), Pad4(2, 10, 6, 10)), func() {
+	Container(Attrs(Row, CrossMid, Expand, Gap(14), Pad4(2, 10, 6, 10)), func() {
 		name := "no firmware"
 		if snap.Firmware != "" {
 			name = filepath.Base(snap.Firmware)
@@ -1106,6 +1102,10 @@ func toolbar(snap MachineState) {
 				}
 				Label(text, FontSize(12), FontWeight(600), TextColor(35, 70, 65, 1))
 			}
+		}
+		if selectedBoard != nil && selectedBoard.Description != "" {
+			Filler(1)
+			Label(selectedBoard.Description, FontSize(11), TextColor(220, 6, 68, 1))
 		}
 	})
 	if snap.FlashWrites > 0 {
