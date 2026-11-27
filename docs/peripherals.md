@@ -44,7 +44,7 @@ commands and UI steps; the register-level wiring lives in
 | Oscilloscope | power trace + `pincheck` | Scope | `pico2-analog` |
 | Bus Pirate target | `-i2c-tcp`, `-spi-tcp` | `i2c_tcp` / `spi_tcp`, Bus | `busmaster`, `busdevice` |
 | Built-in bus presets | `-i2c-preset`, `-spi-preset`, `-list-presets` | `i2c_presets` / `spi_presets`, Bus | `presets` |
-| Scripted I2C/SPI/UART devices | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `i2c_plugins` / `spi_plugins` / `serial_plugins`, Bus and Console | `plugins/examples` |
+| Scripted I2C/SPI/UART devices | `-i2c-plugin`, `-spi-plugin`, `-uart-plugin` | `i2c_plugins` / `spi_plugins` / `serial_plugins`, Plugins and UART | `plugins/examples` |
 | 1-Wire DS18B20 | `-onewire PIN[:C]` | `onewire`, Board | `onewire` |
 | DHT11/DHT22 | `-dht PIN[:KIND[:HUM[:TEMP]]]` | `dht`, Board | `dht` |
 | HC-SR04 ultrasonic | `-ultrasonic TRIG:ECHO[:CM]` | `ultrasonic`, Board | `ultrasonic` |

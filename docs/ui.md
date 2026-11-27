@@ -587,11 +587,12 @@ with **Clear** and **Copy** buttons. See [device plugins](plugins.md).
 
 The **UART** tab is the raw hardware UART byte log, separate from the firmware
 console. It shows both directions (`TX` firmware→device, `RX` device→firmware)
-and both controllers, with a timestamp, hex byte and ASCII rendering. Use it
-for a `serial_plugins` device on UART1 while the firmware's console stays on
-UART0. **Copy** exports the log and **Clear** empties it; the tab appears when
-the board configures a UART plugin or a logic-analyzer UART, or once any UART
-byte has moved.
+and both controllers. Bytes are grouped into readable lines of up to 64 bytes
+(and split at newlines), with the clear text and the hex bytes on the same
+line. Use it for a `serial_plugins` device on UART1 while the firmware's
+console stays on UART0. **Copy** exports the grouped log and **Clear** empties
+it; the tab appears when the board configures a UART plugin or a logic-analyzer
+UART, or once any UART byte has moved.
 
 ![UART byte log](images/uart.png)
 

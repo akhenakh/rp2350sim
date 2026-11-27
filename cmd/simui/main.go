@@ -619,12 +619,6 @@ func tabsBar(snap MachineState) {
 		if selectedBoard.HSTX {
 			tabButton("DVI", tabDVI)
 		}
-		if selectedBoard.Ethernet != nil {
-			tabButton("Ethernet", tabEth)
-		}
-		if selectedBoard.Wifi != nil {
-			tabButton("Wi-Fi", tabEth)
-		}
 		if selectedBoard.WS2812 != nil {
 			tabButton("LEDs", tabWS)
 		}
@@ -644,6 +638,12 @@ func tabsBar(snap MachineState) {
 		tabButton("Profile", tabProfile)
 		tabButton("Trace", tabTrace)
 		tabButton("Bus", tabBus)
+		if selectedBoard.Ethernet != nil {
+			tabButton("Ethernet", tabEth)
+		}
+		if selectedBoard.Wifi != nil {
+			tabButton("Wi-Fi", tabEth)
+		}
 		if boardHasPlugins(selectedBoard) {
 			tabButton("Plugins", tabPlugins)
 		}
@@ -3458,6 +3458,81 @@ func pluginTotalLines(plugins []PluginInfo) int {
 // uartPanel shows the raw hardware UART byte stream, both directions and both
 // controllers. It is the wire log the device tabs and plugin models do not
 // show.
+// uartLineBytes is the maximum number of bytes grouped into one log line. A
+// newline also ends the line, so firmware output stays line-oriented.
+const uartLineBytes = 64
+
+type uartLogLine struct {
+	cycle uint64
+	bus   int
+	in    bool
+	data  []byte
+}
+
+// groupUART turns the byte stream into contiguous same-direction runs, split
+// at newlines and every uartLineBytes bytes.
+func groupUART(events []UARTEvent) []uartLogLine {
+	var out []uartLogLine
+	var cur *uartLogLine
+	flush := func() {
+		if cur != nil {
+			out = append(out, *cur)
+			cur = nil
+		}
+	}
+	for _, e := range events {
+		if cur == nil || cur.bus != e.Bus || cur.in != e.In || len(cur.data) >= uartLineBytes {
+			flush()
+			cur = &uartLogLine{cycle: e.Cycle, bus: e.Bus, in: e.In}
+		}
+		cur.data = append(cur.data, e.Data)
+		if e.Data == '\n' || len(cur.data) >= uartLineBytes {
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+// uartClear renders bytes as readable text, keeping the line printable even
+// when the protocol is binary.
+func uartClear(data []byte) string {
+	var b strings.Builder
+	for _, c := range data {
+		switch c {
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '\t':
+			b.WriteString("\\t")
+		default:
+			if c >= 0x20 && c < 0x7f {
+				b.WriteByte(c)
+			} else {
+				b.WriteByte('.')
+			}
+		}
+	}
+	return b.String()
+}
+
+func (l uartLogLine) String(base uint64) string {
+	dir := "TX"
+	if l.in {
+		dir = "RX"
+	}
+	var hex strings.Builder
+	for i, b := range l.data {
+		if i > 0 {
+			hex.WriteByte(' ')
+		}
+		fmt.Fprintf(&hex, "%02x", b)
+	}
+	return fmt.Sprintf("%9.3fms UART%d %s  \"%s\" | %s",
+		float64(l.cycle-base)/150e3, l.bus, dir, uartClear(l.data), hex.String())
+}
+
 func uartPanel(snap MachineState) {
 	events := emu.UARTEvents()
 	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
@@ -3493,26 +3568,17 @@ func uartPanel(snap MachineState) {
 					Label("no UART traffic yet", FontSize(11), TextColor(220, 6, 62, 1))
 					return
 				}
-				base := events[0].Cycle
-				show := events
-				if len(show) > 512 {
-					show = show[len(show)-512:]
+				lines := groupUART(events)
+				if len(lines) > 512 {
+					lines = lines[len(lines)-512:]
 				}
-				for _, e := range show {
-					Label(uartEventLine(base, e), Fonts(Monospace...), FontSize(10),
+				base := events[0].Cycle
+				for _, line := range lines {
+					Label(line.String(base), Fonts(Monospace...), FontSize(10),
 						TextColor(220, 6, 68, 1))
 				}
 			})
 	})
-}
-
-func uartEventLine(base uint64, e UARTEvent) string {
-	dir := "TX"
-	if e.In {
-		dir = "RX"
-	}
-	return fmt.Sprintf("%9.3fms UART%d %s 0x%02x %q",
-		float64(e.Cycle-base)/150e3, e.Bus, dir, e.Data, string(rune(e.Data)))
 }
 
 func uartBytesText(events []UARTEvent) string {
@@ -3521,8 +3587,8 @@ func uartBytesText(events []UARTEvent) string {
 	}
 	base := events[0].Cycle
 	var b strings.Builder
-	for _, e := range events {
-		b.WriteString(uartEventLine(base, e))
+	for _, line := range groupUART(events) {
+		b.WriteString(line.String(base))
 		b.WriteByte('\n')
 	}
 	return b.String()
