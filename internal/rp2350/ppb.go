@@ -196,6 +196,11 @@ func (n *NVIC) ClearPending(irq int) {
 		return
 	}
 	bit := uint32(1) << uint(irq%32)
+	if n.pending[irq/32]&bit == 0 {
+		// The line was already low; nothing changed and the core's cached
+		// pending state is still correct.
+		return
+	}
 	n.pending[irq/32] &^= bit
 	if n.swPending[irq/32]&bit == 0 {
 		n.chip.noteIRQUnpend(n.core, irq)

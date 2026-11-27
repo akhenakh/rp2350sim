@@ -191,6 +191,7 @@ func (t *timerBlock) tick(cycles uint64) {
 	if t.armed == 0 {
 		return
 	}
+	fired := false
 	for i := range 4 {
 		bit := uint32(1) << uint(i)
 		if t.armed&bit == 0 {
@@ -199,10 +200,16 @@ func (t *timerBlock) tick(cycles uint64) {
 		if int32(uint32(t.count)-t.alarm[i]) >= 0 {
 			t.armed &^= bit
 			t.intR |= bit
+			fired = true
 		}
 	}
-	t.block.regs[0x20/4] = t.armed
-	t.pend()
+	// An armed alarm that has not expired changes nothing, so the IRQ lines
+	// and the ARMED register stay as they are. Re-evaluating them every cycle
+	// dominated busy firmware with a far-future alarm.
+	if fired {
+		t.block.regs[0x20/4] = t.armed
+		t.pend()
+	}
 }
 
 // pend resynchronizes every timer IRQ from the masked raw/forced state.

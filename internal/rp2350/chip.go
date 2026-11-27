@@ -385,9 +385,18 @@ const noPeriodic = ^uint64(0)
 // only every `every` cycles, so the chip calls it on that grid instead of once
 // per cycle and lets an idle fast-forward land on the next grid point.
 type periodicHook struct {
-	every uint64
-	next  uint64
-	fn    func()
+	every  uint64
+	next   uint64
+	fn     func()
+	paused bool
+}
+
+// PeriodicHook identifies one interval sampler. SetActive pauses or resumes
+// it: a paused hook keeps its registration (callbacks must not remove hooks
+// during dispatch) but is skipped by the chip and by the idle-jump horizon.
+type PeriodicHook struct {
+	chip *Chip
+	idx  int
 }
 
 // AddPeriodicHook schedules fn on a fixed virtual-cycle grid. Traces, analog
@@ -398,24 +407,60 @@ type periodicHook struct {
 // Missed slots are skipped, never replayed, so this is for value samplers, not
 // edge-sensitive observers (use a pin listener plus a Deadline for those). A
 // callback may add a hook, but the new hook waits for the next dispatch pass;
-// callbacks must not remove hooks.
-func (c *Chip) AddPeriodicHook(every uint64, fn func()) {
+// callbacks must not remove hooks. The returned handle can pause the sampler
+// without unregistering it.
+func (c *Chip) AddPeriodicHook(every uint64, fn func()) *PeriodicHook {
 	if fn == nil {
-		return
+		return nil
 	}
 	if every == 0 {
 		every = 1
 	}
 	c.periodicHooks = append(c.periodicHooks, periodicHook{every: every, next: c.Cycles + every, fn: fn})
 	c.refreshPeriodicNext()
+	return &PeriodicHook{chip: c, idx: len(c.periodicHooks) - 1}
 }
 
-// refreshPeriodicNext recomputes the earliest periodic deadline.
+// SetActive pauses or resumes the sampler. Resuming restarts its grid at the
+// current cycle so it cannot fire a backlog of missed slots.
+func (h *PeriodicHook) SetActive(active bool) {
+	if h == nil || h.chip == nil {
+		return
+	}
+	h.chip.setPeriodicHookActive(h.idx, active)
+}
+
+// Active reports whether the sampler is currently running.
+func (h *PeriodicHook) Active() bool {
+	if h == nil || h.chip == nil || h.idx < 0 || h.idx >= len(h.chip.periodicHooks) {
+		return false
+	}
+	return !h.chip.periodicHooks[h.idx].paused
+}
+
+func (c *Chip) setPeriodicHookActive(idx int, active bool) {
+	if idx < 0 || idx >= len(c.periodicHooks) {
+		return
+	}
+	h := &c.periodicHooks[idx]
+	if h.paused == !active {
+		return
+	}
+	h.paused = !active
+	if active {
+		h.next = c.Cycles + h.every
+	}
+	c.refreshPeriodicNext()
+}
+
+// refreshPeriodicNext recomputes the earliest live periodic deadline. Paused
+// hooks do not bound an idle jump.
 func (c *Chip) refreshPeriodicNext() {
 	c.periodicNext = noPeriodic
 	for i := range c.periodicHooks {
-		if c.periodicHooks[i].next < c.periodicNext {
-			c.periodicNext = c.periodicHooks[i].next
+		h := &c.periodicHooks[i]
+		if !h.paused && h.next < c.periodicNext {
+			c.periodicNext = h.next
 		}
 	}
 }
@@ -529,7 +574,7 @@ func (c *Chip) runPeriodicHooks() {
 			break
 		}
 		h := &c.periodicHooks[i]
-		if h.next > c.Cycles {
+		if h.paused || h.next > c.Cycles {
 			continue
 		}
 		h.fn()
@@ -678,12 +723,34 @@ func (c *Chip) hangSample(core int, pc uint32) {
 	if hs.count < 16 {
 		return
 	}
-	seen := map[uint32]int{}
+	// Count distinct PCs without allocating: the ring holds 32 samples and a
+	// real loop touches only a handful of addresses. Stop as soon as a ninth
+	// distinct PC rules the sample out.
+	var uniq [9]uint32
+	distinct, repeat := 0, 0
 	for i := 0; i < hs.count; i++ {
-		seen[hs.ring[i]]++
+		v := hs.ring[i]
+		if v == pc {
+			repeat++
+		}
+		found := false
+		for j := 0; j < distinct; j++ {
+			if uniq[j] == v {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if distinct == len(uniq) {
+			distinct++
+			break
+		}
+		uniq[distinct] = v
+		distinct++
 	}
-	repeat := seen[pc]
-	if len(seen) > 8 || repeat < 4 {
+	if distinct > 8 || repeat < 4 {
 		hs.loopCycles = 0
 		return
 	}
@@ -691,7 +758,7 @@ func (c *Chip) hangSample(core int, pc uint32) {
 	// legitimate busy-wait (for example while (!timer_fired)), not a hang.
 	// Only a peripheral poll or a pure one/two-instruction spin counts.
 	polled := hs.mmioAt != 0 && c.Cycles-hs.mmioAt <= hs.loopCycles+hangSampleCycles
-	if !polled && len(seen) > 2 {
+	if !polled && distinct > 2 {
 		hs.loopCycles = 0
 		return
 	}

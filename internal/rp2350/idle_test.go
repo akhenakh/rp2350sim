@@ -17,6 +17,32 @@ func TestIdleSkipAdvancesExactCycles(t *testing.T) {
 	}
 }
 
+// TestPeriodicHookPauseReleasesIdleSkip checks that a paused sampler neither
+// runs nor caps the idle jump, and that resuming restarts its grid.
+func TestPeriodicHookPauseReleasesIdleSkip(t *testing.T) {
+	c := New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	calls := 0
+	h := c.AddPeriodicHook(50, func() { calls++ })
+	h.SetActive(false)
+	c.Run(1000)
+	if calls != 0 {
+		t.Fatalf("paused hook ran %d times", calls)
+	}
+	if h.Active() {
+		t.Fatal("hook reports active after pausing")
+	}
+	if c.nextEventCycle() != noPeriodic {
+		t.Fatalf("paused hook still bounds the jump: next=%d", c.nextEventCycle())
+	}
+	h.SetActive(true)
+	c.Run(200)
+	if calls < 3 {
+		t.Fatalf("resumed hook ran %d times in 200 cycles", calls)
+	}
+}
+
 // TestIdleSkipWakesOnAlarm checks that a timer alarm still ends the skip: the
 // core must leave WFI and the raw alarm interrupt must remain latched.
 func TestIdleSkipWakesOnAlarm(t *testing.T) {
