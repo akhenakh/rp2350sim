@@ -161,6 +161,7 @@ type Chip struct {
 	pioInputOE          uint64
 	pioInputExtLevel    uint64
 	pioInputExtValid    uint64
+	pioInputExtPull     uint64
 	pioInputPulls       uint64
 	pioInputPWMPins     uint64
 	pioInputPadIE       uint64

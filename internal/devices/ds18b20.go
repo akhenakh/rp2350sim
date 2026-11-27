@@ -25,8 +25,11 @@ type DS18B20 struct {
 	readSlot *rp2350.Deadline
 	release  *rp2350.Deadline
 
-	bitIndex int
-	byteVal  byte
+	bitIndex   int
+	byteVal    byte
+	searchSlot int
+	searchEdge int
+	matchIndex int
 
 	read     []byte
 	readByte int
@@ -42,6 +45,8 @@ const (
 	dsIdle uint8 = iota
 	dsCommand
 	dsRead
+	dsSearch
+	dsMatch
 )
 
 // NewDS18B20 attaches one sensor to a wire.
@@ -52,6 +57,7 @@ func NewDS18B20(w *Wire, cfg DS18B20Config) *DS18B20 {
 	if cfg.TemperatureC == 0 {
 		cfg.TemperatureC = 22.5
 	}
+	w.EnablePullUp()
 	d := &DS18B20{w: w, cfg: cfg, th: 0x4B, tl: 0x46, conf: 0x7F}
 	d.temp = int16(cfg.TemperatureC * 16)
 	d.sample = w.chip.AddDeadline(d.onSample)
@@ -76,10 +82,17 @@ func (d *DS18B20) onEdge(level bool) {
 		d.reset = false
 		d.check.Schedule(now + 480*uint64(rp2350.CyclesPerMicrosecond))
 		switch d.state {
-		case dsCommand:
+		case dsCommand, dsMatch:
 			d.sample.Schedule(now + 15*uint64(rp2350.CyclesPerMicrosecond))
 		case dsRead:
 			d.readSlot.Schedule(now + 2*uint64(rp2350.CyclesPerMicrosecond))
+		case dsSearch:
+			// Search slots come in triples: true bit, complement, then the
+			// master's selection write. Only the first two are read slots.
+			if d.searchEdge%3 != 2 {
+				d.readSlot.Schedule(now + 2*uint64(rp2350.CyclesPerMicrosecond))
+			}
+			d.searchEdge++
 		}
 		return
 	}
@@ -100,6 +113,9 @@ func (d *DS18B20) startPresence() {
 	d.state = dsCommand
 	d.bitIndex = 0
 	d.byteVal = 0
+	d.searchSlot = 0
+	d.searchEdge = 0
+	d.matchIndex = 0
 	d.w.Release()
 	d.action.Schedule(d.w.Now() + 30*uint64(rp2350.CyclesPerMicrosecond))
 }
@@ -124,7 +140,7 @@ func (d *DS18B20) onRelease() {
 }
 
 func (d *DS18B20) onSample() {
-	if d.reset || d.state != dsCommand ||
+	if d.reset || (d.state != dsCommand && d.state != dsMatch) ||
 		d.w.Now()-d.fallAt > 120*uint64(rp2350.CyclesPerMicrosecond) {
 		return
 	}
@@ -140,6 +156,14 @@ func (d *DS18B20) onSample() {
 	cmd := d.byteVal
 	d.bitIndex = 0
 	d.byteVal = 0
+	if d.state == dsMatch {
+		// Match ROM: eight address bytes follow before the next command.
+		d.matchIndex++
+		if d.matchIndex == 8 {
+			d.state = dsCommand
+		}
+		return
+	}
 	d.command(cmd)
 }
 
@@ -149,6 +173,14 @@ func (d *DS18B20) command(cmd byte) {
 		// The next eight write slots are another command.
 	case 0x33: // Read ROM
 		d.beginRead(d.rom())
+	case 0x55: // Match ROM
+		d.state = dsMatch
+		d.matchIndex = 0
+	case 0xF0: // Search ROM
+		d.read = append(d.read[:0], d.rom()...)
+		d.searchSlot = 0
+		d.searchEdge = 0
+		d.state = dsSearch
 	case 0xBE: // Read scratchpad
 		d.beginRead(d.scratchpad())
 	case 0x44: // Convert T
@@ -167,7 +199,27 @@ func (d *DS18B20) beginRead(data []byte) {
 
 // readSlotBit drives a zero bit low; the release deadline ends the slot.
 func (d *DS18B20) readSlotBit() {
-	if d.reset || d.state != dsRead {
+	if d.reset {
+		return
+	}
+	if d.state == dsSearch {
+		if d.searchSlot >= 128 {
+			d.state = dsCommand
+			d.w.Release()
+			return
+		}
+		bit := (d.read[(d.searchSlot/2)/8] >> uint((d.searchSlot/2)%8)) & 1
+		if d.searchSlot%2 == 1 {
+			bit ^= 1 // the search reads the bit then its complement
+		}
+		if bit == 0 {
+			d.w.DriveLow()
+		}
+		d.release.Schedule(d.w.Now() + 30*uint64(rp2350.CyclesPerMicrosecond))
+		d.searchSlot++
+		return
+	}
+	if d.state != dsRead {
 		return
 	}
 	if d.readByte >= len(d.read) {

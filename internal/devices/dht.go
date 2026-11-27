@@ -46,6 +46,7 @@ func NewDHT(w *Wire, cfg DHTConfig) *DHT {
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 23
 	}
+	w.EnablePullUp()
 	d := &DHT{w: w, kind: cfg.Kind, hum: cfg.Humidity, temp: cfg.Temperature, bad: cfg.BadChecksum}
 	d.action = w.chip.AddDeadline(d.onAction)
 	d.encode()

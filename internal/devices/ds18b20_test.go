@@ -106,3 +106,43 @@ func TestDS18B20Scratchpad(t *testing.T) {
 		t.Fatalf("scratchpad CRC = %#x, want %#x", got[8], crc8(got[:8]))
 	}
 }
+
+func TestDS18B20SearchAndMatch(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Parked = true
+	oneWireMaster(c)
+	serial := [6]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}
+	NewDS18B20(NewWire(c, oneWirePin), DS18B20Config{TemperatureC: 22.5, Serial: serial})
+
+	rom := []byte{0x28}
+	rom = append(rom, serial[:]...)
+	rom = append(rom, crc8(rom))
+	_ = rom
+
+	resetPulse(c)
+	writeByte(c, 0xF0) // Search ROM
+	for i := range 64 {
+		bit := (rom[i/8] >> uint(i%8)) & 1
+		a := readBit(c)
+		b := readBit(c)
+		if a != bit || b != 1-bit {
+			t.Fatalf("search bit %d = (%d,%d), want (%d,%d)", i, a, b, bit, 1-bit)
+		}
+		writeBit(c, bit)
+	}
+
+	resetPulse(c)
+	writeByte(c, 0x55) // Match ROM
+	for _, b := range rom {
+		writeByte(c, b)
+	}
+	writeByte(c, 0xBE) // Read scratchpad
+
+	got := make([]byte, 9)
+	for i := range got {
+		got[i] = readByte(c)
+	}
+	if got[0] != 0x68 || got[1] != 0x01 {
+		t.Fatalf("matched device scratchpad = % X", got)
+	}
+}

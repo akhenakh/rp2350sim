@@ -29,6 +29,13 @@ func (w *Wire) Pin() int { return w.pin }
 // Level returns the resolved wire level.
 func (w *Wire) Level() bool { return w.chip.Pins.Level(w.pin) }
 
+// EnablePullUp models the pull-up resistor on a sensor module or breakout.
+// Hosts that configure their own pull-up are unaffected; stock examples that
+// rely on the external resistor still see an idle-high line.
+func (w *Wire) EnablePullUp() {
+	w.chip.Pins.ExtPullUp |= uint64(1) << uint(w.pin)
+}
+
 // DriveLow pulls the line low.
 func (w *Wire) DriveLow() { w.drive(false) }
 

@@ -6,6 +6,9 @@ type PinState struct {
 	Func     [48]uint8
 	PullUp   [48]bool
 	PullDown [48]bool
+	// ExtPullUp models a pull-up resistor on a sensor module. It survives
+	// PADS_BANK0 writes, unlike the pad's internal PUE bit.
+	ExtPullUp uint64
 
 	// PADS_BANK0 controls. padIE gates the pad's digital input back to the
 	// peripherals; padISO isolates the pad and holds the output enable,
@@ -164,7 +167,7 @@ func (p *PinState) rawLevel(pin int) bool {
 	if p.ExtValid&bit != 0 {
 		return p.ExtLevel&bit != 0
 	}
-	return p.pullUpEnabled(pin)
+	return p.pullUpEnabled(pin) || p.ExtPullUp&bit != 0
 }
 
 // Voltage returns the pin voltage for the scope: the chip's driven level when

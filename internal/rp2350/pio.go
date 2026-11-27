@@ -1520,6 +1520,7 @@ func (c *Chip) pioInputStable() bool {
 	return c.pioInputValid && p.pwmPins == 0 &&
 		c.pioInputOut == p.Out && c.pioInputOE == p.OE &&
 		c.pioInputExtLevel == p.ExtLevel && c.pioInputExtValid == p.ExtValid &&
+		c.pioInputExtPull == p.ExtPullUp &&
 		c.pioInputPulls == p.pullUpMask &&
 		c.pioInputPadIE == p.padIE && c.pioInputPadISO == p.padISO &&
 		c.pioInputPadOD == p.padOD
@@ -1546,7 +1547,7 @@ func (c *Chip) pioInputLevels() uint64 {
 			}
 		}
 	}
-	out, oe, pulls = p.padView(out, oe, pulls)
+	out, oe, pulls = p.padView(out, oe, pulls|p.ExtPullUp)
 
 	ext := p.ExtValid
 	levels := (out & oe) | (p.ExtLevel &^ oe & ext) | (pulls &^ oe &^ ext)
@@ -1574,6 +1575,7 @@ func (c *Chip) pioInputLevels() uint64 {
 	c.pioInputValid = true
 	c.pioInputOut, c.pioInputOE = p.Out, p.OE
 	c.pioInputExtLevel, c.pioInputExtValid = p.ExtLevel, p.ExtValid
+	c.pioInputExtPull = p.ExtPullUp
 	c.pioInputPulls, c.pioInputPWMPins = p.pullUpMask, p.pwmPins
 	c.pioInputPadIE, c.pioInputPadISO, c.pioInputPadOD = p.padIE, p.padISO, p.padOD
 	c.pioInputCacheLevels = levels
