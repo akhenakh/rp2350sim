@@ -115,6 +115,7 @@ cmake -S "$DEST" -B "$BUILD" -G Ninja \
 	-DPICO_SDK_PATH="$PICO_SDK_PATH" \
 	-DPICO_EXAMPLES_PATH="$SRC" \
 	-DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
 	"${picotool[@]}"
 cmake --build "$BUILD"
 echo "$BUILD"

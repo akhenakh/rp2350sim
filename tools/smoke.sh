@@ -541,7 +541,7 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		C_BUILD=$PICO_C_BUILD
 	elif cmake -S firmware/c -B "$BUILD/pico-c" -G Ninja -DPICO_BOARD=pico2 \
 		-DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release \
-		-DPICO_NO_PICOTOOL=1 \
+		-DPICO_NO_PICOTOOL=1 -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
 		>>"$SMOKE_LOG" 2>&1 &&
 		cmake --build "$BUILD/pico-c" >>"$SMOKE_LOG" 2>&1; then
 		C_BUILD="$BUILD/pico-c"
