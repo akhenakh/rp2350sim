@@ -544,7 +544,11 @@ it on `firmware/c/itmdemo`; `ui:trace:png` renders it.
 The I2C/SPI tab is available on every board. Its **Board devices** card lists
 everything the board model attaches directly — LCD, touch, IMU, SD, CAN,
 1-Wire, DHT, ultrasonic, GPS, Ethernet, Wi-Fi, WS2812 and BLE — with the bus,
-chip select or GPIO it uses. When the board has no scripted, preset or
+chip select or GPIO it uses. A **Device logs** card below it shows the recent
+events of the directly attached devices that keep a log: CAN frames, NMEA
+sentences, WS2812 frames and BLE HCI packets. The timed 1-Wire/DHT/HC-SR04
+models expose state rather than a transaction log; their live values are in
+the Board and device tabs. When the board has no scripted, preset or
 TCP-bridged target, the tab still keeps a stable position and explains that
 those timed devices are modelled outside the I2C/SPI target registry. It lists
 the board's built-in presets (`i2c_presets` /

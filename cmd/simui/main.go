@@ -3065,14 +3065,55 @@ func boardDevices(b *BoardDef) []boardBusDevice {
 	return out
 }
 
+// deviceLogLines returns the recent events of directly attached devices that
+// keep a log: CAN frames, GPS sentences, WS2812 frames and BLE HCI traffic.
+// The timed 1-Wire/DHT/HC-SR04 models expose state, not a transaction log, so
+// they are only listed in the Board devices card.
+func deviceLogLines(snap MachineState) []string {
+	var out []string
+	if _, frames, ok := emu.CANInfo(); ok {
+		limit := max(len(frames)-50, 0)
+		for i := limit; i < len(frames); i++ {
+			f := frames[i]
+			typ := "STD"
+			if f.Ext {
+				typ = "EXT"
+			}
+			out = append(out, fmt.Sprintf("CAN %8.2f ms %03X %s % X", float64(f.Time)/150_000,
+				f.ID, typ, f.Data))
+		}
+	}
+	if g := emu.GPSInfo(); g != nil {
+		out = append(out, fmt.Sprintf("GPS fix=%v lat=%.6f lon=%.6f sentences=%d",
+			g.Fix, g.Lat, g.Lon, g.Sentences))
+		if g.Last != "" {
+			out = append(out, "NMEA "+g.Last)
+		}
+	}
+	if len(snap.WSColors) > 0 {
+		for i, c := range snap.WSColors {
+			out = append(out, fmt.Sprintf("WS2812 %d #%02x%02x%02x", i, c.R, c.G, c.B))
+		}
+	}
+	if snap.BLE != nil {
+		limit := max(len(snap.BLE.Events)-50, 0)
+		out = append(out, snap.BLE.Events[limit:]...)
+	}
+	return out
+}
+
 func busPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
 		plugins := emu.Plugins()
 		infos := emu.BusBridges()
 		boardDevs := boardDevices(selectedBoard)
+		deviceLogs := deviceLogLines(snap)
 		var parts []string
 		if len(boardDevs) > 0 {
 			parts = append(parts, "board devices")
+		}
+		if len(deviceLogs) > 0 {
+			parts = append(parts, "device logs")
 		}
 		if len(plugins) > 0 {
 			parts = append(parts, "scripted plugins")
@@ -3110,6 +3151,26 @@ func busPanel(snap MachineState) {
 				})
 				Label("Attached by the board model; the device tabs show their live state.",
 					FontSize(11), TextColor(220, 6, 62, 1))
+			})
+		}
+		if len(deviceLogs) > 0 {
+			Container(Attrs(Grow(1), Expand, Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
+				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
+				Container(Attrs(Row, CrossMid, Gap(8)), func() {
+					Label("Device logs", FontSize(12), FontWeight(700))
+					Filler(1)
+					if Button(NoIcon, "Copy") {
+						RequestTextCopy(strings.Join(deviceLogs, "\n"))
+					}
+				})
+				Container(Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
+					Background(220, 12, 8, 1), Corners(4)), func() {
+					ScrollOnInput()
+					ScrollBars()
+					for _, line := range deviceLogs {
+						Label(line, Fonts(Monospace...), FontSize(10), TextColor(220, 6, 68, 1))
+					}
+				})
 			})
 		}
 		if len(plugins) > 0 {
