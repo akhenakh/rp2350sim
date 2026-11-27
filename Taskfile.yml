@@ -99,6 +99,7 @@ tasks:
       - firmware:gps
       - firmware:can
       - firmware:lab
+      - firmware:itm
       - c:build
       - firmware:ch9120
       - firmware:wifi
@@ -314,6 +315,12 @@ tasks:
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/lab.elf -seconds 4 -onewire 2:22.5 -dht 3:dht22:45:23 -ultrasonic 5:6:100 -gps 1 -can 13:14:0x123 -itm'
 
+  run:itm:
+    desc: Print a TinyGo ITM stimulus line
+    deps: [build, firmware:itm]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/itm.elf -seconds 1 -quiet -itm'
+
   run:gps:
     desc: Run the NMEA GPS example on UART1
     deps: [build, firmware:gps]
@@ -514,6 +521,15 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/lab.elf .'
+
+  firmware:itm:
+    desc: Build the TinyGo ITM stimulus example
+    dir: firmware/itm
+    sources: [main.go, go.mod]
+    generates: ['../../{{.BUILD}}/itm.elf']
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/itm.elf .'
 
   firmware:gps:
     desc: Build the NMEA GPS example

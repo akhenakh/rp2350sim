@@ -276,6 +276,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:echo` | echo injected console input through USB CDC |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task run:hid`, `run:hidgamepad` | log decoded USB HID keyboard/mouse or gamepad reports |
+| `task run:itm` | print a TinyGo ITM stimulus line |
 | `task run:w5500` | run the W5500 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task run:w6300` | run the W6300 example (TCP client, UDP, TCP server) against `tools/ethhost` |
 | `task lcd` | build/run the ST7789 example and export `build/lcd.png` |

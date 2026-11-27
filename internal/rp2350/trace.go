@@ -12,6 +12,7 @@ type TraceEvent struct {
 }
 
 const (
+	demcr   = 0xE000EDFC
 	itmBase = 0xE0000000
 	itmTER  = 0xE0000E00
 	itmTPR  = 0xE0000E40
@@ -56,6 +57,8 @@ func (c *Chip) traceRead32Core(coreArg int, addr uint32) (uint32, bool) {
 			return c.dwtCYCVal[core], true
 		}
 		return uint32(c.Cycles - c.dwtCYCBase[core]), true
+	case addr == demcr:
+		return c.demcr[core], true
 	case addr == dwtPCSR:
 		if core == 1 {
 			return c.CPU1.R[15], true
@@ -127,6 +130,9 @@ func (c *Chip) traceWrite32Core(coreArg int, addr, v uint32) bool {
 	case addr == itmLAR || addr == dwtLAR:
 		return true
 	case addr == itmLSR || addr == dwtLSR:
+		return true
+	case addr == demcr:
+		c.demcr[core] = v
 		return true
 	case addr == dwtCTRL:
 		old := c.dwtCTRL[core]

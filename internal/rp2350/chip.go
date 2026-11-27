@@ -194,6 +194,7 @@ type Chip struct {
 	OnUART1 func(b byte)
 	// ITM/DWT trace state and sink. The registers are core-local.
 	itmTER, itmTPR, itmTCR, dwtCTRL [2]uint32
+	demcr                           [2]uint32
 	dwtCYCBase                      [2]uint64
 	dwtCYCVal                       [2]uint32
 	dwtCYCRun                       [2]bool
@@ -1105,6 +1106,7 @@ func (c *Chip) Reset() {
 	c.itmTPR = [2]uint32{}
 	c.itmTCR = [2]uint32{}
 	c.dwtCTRL = [2]uint32{}
+	c.demcr = [2]uint32{}
 	c.dwtCYCBase = [2]uint64{}
 	c.dwtCYCVal = [2]uint32{}
 	c.dwtCYCRun = [2]bool{}

@@ -848,10 +848,18 @@ and `PCSR` returns the current PC.
 rp2350sim -fw firmware/c/build/itmdemo.elf -seconds 1 -quiet -itm
 ```
 
-The C fixture writes a string to ITM stimulus port 0 without UART or USB
-stdio. The chip exposes the same events through `Chip.OnTrace`; the UI Trace
-tab groups them into lines (`task ui:trace`, `ui:trace:png`). SWO pin decoding
-is a separate follow-up.
+The C fixture `firmware/c/itmdemo` writes a string to ITM stimulus port 0
+without UART or USB stdio. The TinyGo fixture `firmware/itm` does the same with
+`runtime/volatile` byte stores:
+
+```sh
+rp2350sim -fw build/itm.elf -seconds 1 -quiet -itm
+task run:itm
+```
+
+The chip exposes the same events through `Chip.OnTrace`; the UI Trace tab
+groups them into lines (`task ui:trace`, `ui:trace:png`). SWO pin decoding is
+a separate follow-up.
 
 ## LCD sensor lab
 

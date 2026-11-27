@@ -118,3 +118,15 @@ func TestResetHooks(t *testing.T) {
 		t.Fatalf("reset hooks = %d, want 2", count)
 	}
 }
+
+func TestDEMCRAccess(t *testing.T) {
+	c := New()
+	c.Write32(demcr, 1<<24)
+	if got := c.Read32(demcr); got != 1<<24 {
+		t.Fatalf("DEMCR = %#x", got)
+	}
+	c.traceWrite32Core(1, demcr, 1<<24)
+	if got, _ := c.traceRead32Core(1, demcr); got != 1<<24 {
+		t.Fatalf("core 1 DEMCR = %#x", got)
+	}
+}
