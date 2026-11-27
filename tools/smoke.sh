@@ -398,8 +398,14 @@ out=$("$EMU" -fw "$BUILD/pluginlcd.elf" -seconds 2 -quiet \
 contains "Touch-LCD-2 plugin dashboard" "pluginlcd t=" "$out"
 contains "UART air sensor values" "pm=" "$out"
 
-# --- virtual CYW43 BLE controller -------------------------------------------
-if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
+# --- CYW43439 gSPI radio bring-up ------------------------------------------
+if [ -f "$BUILD/pico2w.elf" ]; then
+	out=$("$EMU" -fw "$BUILD/pico2w.elf" -cyw43439 -seconds 4 2>&1)
+	contains "CYW43439 firmware download and init" "pico2w: radio ready" "$out"
+	contains "CYW43439 WL_GPIO0 LED" "pico2w: led on" "$out"
+fi
+
+# --- virtual CYW43 BLE controller -------------------------------------------if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
 	rm -f "$BUILD/ble.pcapng"
 	out=$("$EMU" -fw "$BUILD/ble-c/ble_temp_reader.elf" -ble -seconds 2 -quiet \
 		-ble-hci-log "$BUILD/ble.pcapng" 2>&1)

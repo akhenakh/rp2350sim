@@ -23,6 +23,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/deviceplugin"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/devices/ble"
+	"github.com/akhenakh/rp2350sim/internal/devices/cyw43439"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/gdb"
 	"github.com/akhenakh/rp2350sim/internal/hang"
@@ -207,6 +208,12 @@ func main() {
 		w6300Flag    = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag   = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
 		bleFlag      = flag.Bool("ble", false, "attach the virtual CYW43 BLE controller (Pico W HCI transport)")
+		cywFlag      = flag.Bool("cyw43439", false, "attach the CYW43439 gSPI radio (Pico W wiring)")
+		cywRegOn     = flag.Int("cyw43439-reg-on", 23, "CYW43439 WL_REG_ON GPIO")
+		cywData      = flag.Int("cyw43439-data", 24, "CYW43439 WL_D GPIO")
+		cywCS        = flag.Int("cyw43439-cs", 25, "CYW43439 WL_CS GPIO")
+		cywCLK       = flag.Int("cyw43439-clk", 29, "CYW43439 WL_CLK GPIO")
+		cywMAC       = flag.String("cyw43439-mac", "02:11:22:33:44:55", "CYW43439 station MAC address")
 		bleAddr      = flag.String("ble-addr", "C0:DE:12:34:56:78", "advertised BLE peer address")
 		bleHostWake  = flag.Int("ble-host-wake", 24, "CYW43 HOST_WAKE GPIO")
 		bleSeed      = flag.Int64("ble-seed", 42, "BLE controller PRNG seed")
@@ -512,6 +519,28 @@ func main() {
 			log.Error("unsupported flash image", slog.String("path", *flashIn), slog.Any("err", err))
 			exit(1)
 		}
+	}
+	var cyw *cyw43439.Device
+	if *cywFlag {
+		if *bleFlag {
+			log.Error("-ble and -cyw43439 are mutually exclusive")
+			exit(2)
+		}
+		mac, merr := net.ParseMAC(*cywMAC)
+		if merr != nil || len(mac) != 6 {
+			log.Error("cyw43439 mac", slog.String("value", *cywMAC), slog.Any("err", merr))
+			exit(2)
+		}
+		var macArr [6]byte
+		copy(macArr[:], mac)
+		cyw = cyw43439.Attach(c, cyw43439.Config{
+			Logger: log,
+			RegOn:  *cywRegOn,
+			Data:   *cywData,
+			CS:     *cywCS,
+			CLK:    *cywCLK,
+			MAC:    macArr,
+		})
 	}
 	if *bootsel {
 		c.SetBootsel(true)
@@ -1604,6 +1633,11 @@ func main() {
 		if err := card.Sync(); err != nil {
 			log.Warn("sd sync", slog.Any("err", err))
 		}
+	}
+	if cyw != nil && !*quiet {
+		log.Info("cyw43439",
+			slog.Bool("firmware_up", cyw.FirmwareUp()),
+			slog.Bool("led", cyw.LED()))
 	}
 	if !*quiet && (otpSeeded > 0 || c.OTPWrites() > 0) {
 		log.Info("otp",

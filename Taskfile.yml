@@ -142,6 +142,7 @@ tasks:
       - firmware:lcd
       - firmware:touchlcd
       - firmware:piotest
+      - firmware:pico2w
       - firmware:ws2812
       - firmware:cores
       - firmware:assigncore
@@ -462,6 +463,25 @@ tasks:
     deps: [build, firmware:piotest]
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/piotest.elf -seconds 0.3'
+
+  firmware:pico2w:
+    desc: Build the Pico 2 W CYW43439 bring-up example
+    dir: firmware/pico2w
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/pico2w.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/pico2w.elf .'
+
+  run:pico2w:
+    desc: Initialize the CYW43439 over gSPI and toggle WL_GPIO0
+    deps: [build, firmware:pico2w]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/pico2w.elf -cyw43439 -seconds 4'
 
   firmware:echo:
     desc: Build the console echo firmware
