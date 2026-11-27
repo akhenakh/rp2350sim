@@ -397,7 +397,9 @@ func (n *NVIC) ExceptionEntered(exc uint32) {
 	}
 }
 
-// ReturnException deactivates an exception left through EXC_RETURN.
+// ReturnException deactivates an exception left through EXC_RETURN and
+// re-evaluates the level-sensitive peripheral line, as hardware does when the
+// source is still active.
 func (n *NVIC) ReturnException(exc uint32) {
 	if n.activeCount > 0 {
 		n.activeCount--
@@ -408,6 +410,9 @@ func (n *NVIC) ReturnException(exc uint32) {
 	}
 	if irq := int(exc) - 16; irq >= 0 && irq < 64 {
 		n.activeIRQ[irq/32] &^= 1 << uint(irq%32)
+		if n.chip != nil {
+			n.chip.rependIRQ(irq)
+		}
 	}
 }
 

@@ -308,6 +308,13 @@ func (u *uartBlock) updateInterruptsLocked(c *Chip) {
 	}
 }
 
+// repend re-evaluates the masked UART line after an exception return.
+func (u *uartBlock) repend(c *Chip) {
+	u.rxMu.Lock()
+	u.updateInterruptsLocked(c)
+	u.rxMu.Unlock()
+}
+
 // tick moves queued RX interrupts onto the NVIC from the emulator thread.
 func (u *uartBlock) tick() {
 	// The common case is no host byte waiting; a plain load is much cheaper

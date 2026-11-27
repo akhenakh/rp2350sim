@@ -759,6 +759,19 @@ func (s *sioBlock) syncFIFOIRQ(c *Chip, core int) {
 	c.clearCorePendingIRQ(core, sioIRQFIFO)
 }
 
+// repend re-evaluates the per-core FIFO and doorbell lines after an exception
+// return.
+func (s *sioBlock) repend(c *Chip) {
+	for core := range 2 {
+		s.syncFIFOIRQ(c, core)
+		if s.doorbellIn[core] != 0 {
+			c.pendCoreIRQ(core, sioIRQBell)
+		} else {
+			c.clearCorePendingIRQ(core, sioIRQBell)
+		}
+	}
+}
+
 // inputWord builds a 32-bit GPIO input value for the given base pin.
 func (p *PinState) inputWord(base int) uint32 {
 	var v uint32

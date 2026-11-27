@@ -1071,6 +1071,50 @@ func (c *Chip) clearCorePendingIRQ(core, irq int) {
 	c.ppb[core].ClearPending(irq)
 }
 
+// rependIRQ re-evaluates the level-sensitive peripheral line that just
+// returned from its handler. Hardware re-asserts a line whose source is still
+// active, so an ISR that returns without clearing it is entered again.
+func (c *Chip) rependIRQ(irq int) {
+	switch {
+	case irq >= 0 && irq < 8:
+		c.tmr[irq/4].pend()
+	case irq == pwmIRQ0 || irq == pwmIRQ1:
+		if c.pwm != nil {
+			c.pwm.syncIRQ()
+		}
+	case irq >= 10 && irq <= 13:
+		if c.dma != nil {
+			c.dma.syncIRQ()
+		}
+	case irq == usbIRQ:
+		if c.usb != nil {
+			c.usb.syncIRQ(c)
+		}
+	case irq >= 15 && irq <= 20:
+		if p := c.pio[(irq-15)/2]; p != nil {
+			p.updateIRQ()
+		}
+	case irq == sioIRQFIFO || irq == sioIRQBell:
+		c.sio.repend(c)
+	case irq == uartRXIRQ || irq == uartRXIRQ+1:
+		if u := c.uart[irq-uartRXIRQ]; u != nil {
+			u.repend(c)
+		}
+	case irq == adcIRQ:
+		if c.adc != nil {
+			c.adc.syncIRQ()
+		}
+	case irq == trngIRQ:
+		if c.trng != nil {
+			c.trng.syncIRQ(c)
+		}
+	case irq == powmanIRQ:
+		if c.powman != nil {
+			c.powman.syncIRQ(c)
+		}
+	}
+}
+
 // SetBootsel drives the QSPI chip-select line low when held, matching the
 // BOOTSEL button. It is visible to firmware as SIO_GPIO_HI_IN.QSPI_CSN. Chip
 // reset does not clear it: the real bootrom samples the line during reset.
