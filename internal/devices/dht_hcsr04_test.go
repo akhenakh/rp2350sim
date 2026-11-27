@@ -216,7 +216,11 @@ func TestDHTResetHook(t *testing.T) {
 	d.bit = 17
 	d.data[0] = 0xFF
 	c.Reset()
-	if d.state != dhtIdle || d.bit != 0 || d.data[0] != 0 {
-		t.Fatalf("DHT state survived reset: state=%d bit=%d data=% X", d.state, d.bit, d.data)
+	if d.state != dhtIdle || d.bit != 0 {
+		t.Fatalf("DHT state survived reset: state=%d bit=%d", d.state, d.bit)
+	}
+	// The configured reading must survive a reset (the UI resets after attach).
+	if want := [5]byte{0x01, 0xC2, 0x00, 0xE6, 0xA9}; d.data != want {
+		t.Fatalf("DHT frame after reset = % X, want % X", d.data, want)
 	}
 }

@@ -36,6 +36,12 @@ const (
 	itmStim0 = 0xE0000000
 	itmTER   = 0xE0000E00
 	itmTCR   = 0xE0000E80
+
+	// echoEvery paces the HC-SR04. The echo pulse is timed by spinning on
+	// the pin (up to 30 ms), which the emulator runs instruction by
+	// instruction; a 2 Hz reading keeps the dashboard live at a fifth of
+	// the cost of reading on every 100 ms loop.
+	echoEvery = 500 * time.Millisecond
 )
 
 var (
@@ -260,24 +266,24 @@ func readDHT() bool {
 		if !dhtWait(true, 100) {
 			return false
 		}
-		n := 0
-		for dhtPin.Get() && n < 100000 {
-			n++
-		}
-		bit := byte(0)
-		if n > 1000 {
-			bit = 1
-		}
-		data[i/8] |= bit << uint(i%8)
+		// Classify the bit by its high time (26-28 us = 0, 70 us = 1)
+		// rather than by a loop count, which depends on how many cycles
+		// an iteration takes and read every bit as 0 in the UI.
+		rise := time.Now()
 		if !dhtWait(false, 100) {
 			return false
+		}
+		if time.Since(rise) > 48*time.Microsecond {
+			data[i/8] |= 1 << uint(i%8)
 		}
 	}
 	var sum byte
 	for _, b := range data[:4] {
 		sum += b
 	}
-	if data[4]&0x7f != sum&0x7f {
+	// An all-zero frame passes the checksum but means no bit was read as 1;
+	// report it as a failed read instead of 0 % / 0 C.
+	if data[4]&0x7f != sum&0x7f || data == [5]byte{} {
 		return false
 	}
 	dhtHum = int(uint16(data[0])<<8 | uint16(data[1]))
@@ -438,6 +444,45 @@ func canExchange() bool {
 
 // --- LCD -------------------------------------------------------------------
 
+// tile is an off-screen RGB565 (big-endian) region at screen position (x, y).
+// Values are drawn into it with screen coordinates and sent in one SPI burst:
+// tinyfont on the panel itself costs a window set and a transfer per pixel.
+type tile struct {
+	x, y, w, h int16
+	buf        []byte
+}
+
+var tileBuf [142 * 38 * 2]byte // the largest value region
+
+func (t *tile) Size() (int16, int16) { return 320, 240 }
+func (t *tile) Display() error       { return nil }
+
+func rgb565(c color.RGBA) (byte, byte) {
+	v := uint16(c.R&0xF8)<<8 | uint16(c.G&0xFC)<<3 | uint16(c.B)>>3
+	return byte(v >> 8), byte(v)
+}
+
+func (t *tile) SetPixel(x, y int16, c color.RGBA) {
+	x, y = x-t.x, y-t.y
+	if x < 0 || y < 0 || x >= t.w || y >= t.h {
+		return
+	}
+	i := (int(y)*int(t.w) + int(x)) * 2
+	t.buf[i], t.buf[i+1] = rgb565(c)
+}
+
+// paint fills the region with bgc, lets draw render into it, and blits it.
+func paint(d *st7789.Device, x, y, w, h int16, bgc color.RGBA, draw func(t *tile)) {
+	t := tile{x: x, y: y, w: w, h: h, buf: tileBuf[:int(w)*int(h)*2]}
+	hi, lo := rgb565(bgc)
+	t.buf[0], t.buf[1] = hi, lo
+	for n := 2; n < len(t.buf); n *= 2 {
+		copy(t.buf[n:], t.buf[:n])
+	}
+	draw(&t)
+	_ = d.DrawRGBBitmap8(x, y, t.buf, w, h)
+}
+
 func drawStatic(d *st7789.Device) {
 	_ = d.FillRectangle(0, 0, 320, 240, bg)
 	_ = d.FillRectangle(0, 0, 320, 3, accent)
@@ -454,8 +499,9 @@ func drawStatic(d *st7789.Device) {
 }
 
 func row(d *st7789.Device, x, y, w int16, text string, c color.RGBA, bgc color.RGBA) {
-	_ = d.FillRectangle(x, y-14, w, 18, bgc)
-	tinyfont.WriteLine(d, &freesans.Regular9pt7b, x, y, text, c)
+	paint(d, x, y-14, w, 18, bgc, func(t *tile) {
+		tinyfont.WriteLine(t, &freesans.Regular9pt7b, x, y, text, c)
+	})
 }
 
 func drawOneWire(d *st7789.Device) {
@@ -463,13 +509,14 @@ func drawOneWire(d *st7789.Device) {
 		return
 	}
 	drawnOneOK, drawnOneTemp = oneOK, oneTemp
-	_ = d.FillRectangle(12, 62, 142, 36, panel)
-	if oneOK {
-		tinyfont.WriteLine(d, &freesans.Bold24pt7b, 12, 94, f2(oneTemp), white)
-		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 132, 92, "C", accent)
-	} else {
-		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 12, 88, "n/a", amber)
-	}
+	paint(d, 12, 62, 142, 36, panel, func(t *tile) {
+		if oneOK {
+			tinyfont.WriteLine(t, &freesans.Bold24pt7b, 12, 94, f2(oneTemp), white)
+			tinyfont.WriteLine(t, &freesans.Regular9pt7b, 132, 92, "C", accent)
+		} else {
+			tinyfont.WriteLine(t, &freesans.Regular9pt7b, 12, 88, "n/a", amber)
+		}
+	})
 }
 
 func drawDHT(d *st7789.Device) {
@@ -489,13 +536,14 @@ func drawDistance(d *st7789.Device) {
 		return
 	}
 	drawnEchoOK, drawnDistance = echoOK, distance
-	_ = d.FillRectangle(12, 166, 142, 38, panel)
-	if echoOK {
-		tinyfont.WriteLine(d, &freesans.Bold18pt7b, 12, 194, fmt.Sprintf("%d", distance), white)
-		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 100, 192, "cm", accent)
-	} else {
-		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 12, 188, "n/a", amber)
-	}
+	paint(d, 12, 166, 142, 38, panel, func(t *tile) {
+		if echoOK {
+			tinyfont.WriteLine(t, &freesans.Bold18pt7b, 12, 194, fmt.Sprintf("%d", distance), white)
+			tinyfont.WriteLine(t, &freesans.Regular9pt7b, 100, 192, "cm", accent)
+		} else {
+			tinyfont.WriteLine(t, &freesans.Regular9pt7b, 12, 188, "n/a", amber)
+		}
+	})
 }
 
 func drawGPS(d *st7789.Device) {
@@ -505,15 +553,18 @@ func drawGPS(d *st7789.Device) {
 	}
 	drawnGPSOK, drawnGPSLat, drawnGPSLon, drawnGPSSats =
 		position.ok, position.lat, position.lon, position.sats
-	row(d, 240, 54, 70, "", panel2, panel2)
 	if position.ok {
-		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 245, 54,
-			fmt.Sprintf("%d SAT", position.sats), green)
+		paint(d, 240, 40, 70, 18, panel2, func(t *tile) {
+			tinyfont.WriteLine(t, &freesans.Regular9pt7b, 245, 54,
+				fmt.Sprintf("%d SAT", position.sats), green)
+		})
 		row(d, 173, 78, 140, fmt.Sprintf("LAT %.4f", position.lat), white, panel2)
 		row(d, 173, 96, 140, fmt.Sprintf("LON %.4f", position.lon), white, panel2)
 		row(d, 173, 114, 140, "FIX  GGA/RMC", green, panel2)
 	} else {
-		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 245, 54, "NO FIX", amber)
+		paint(d, 240, 40, 70, 18, panel2, func(t *tile) {
+			tinyfont.WriteLine(t, &freesans.Regular9pt7b, 245, 54, "NO FIX", amber)
+		})
 		row(d, 173, 78, 140, "waiting for", muted, panel2)
 		row(d, 173, 96, 140, "NMEA sentences", muted, panel2)
 		row(d, 173, 114, 140, "", muted, panel2)
@@ -539,11 +590,20 @@ func drawCAN(d *st7789.Device) {
 	}
 }
 
+var drawnFoot = -1
+
+// drawFoot blinks the footer once a second; it only touches the panel when
+// the phase changes.
 func drawFoot(d *st7789.Device, tick int) {
-	_ = d.FillRectangle(0, 236, 320, 4, panel)
-	if tick%2 == 0 {
-		_ = d.FillRectangle(0, 236, 320, 4, accent)
+	if tick%2 == drawnFoot {
+		return
 	}
+	drawnFoot = tick % 2
+	c := panel
+	if drawnFoot == 0 {
+		c = accent
+	}
+	_ = d.FillRectangle(0, 236, 320, 4, c)
 }
 
 func main() {
@@ -610,6 +670,7 @@ func main() {
 	lastOne := time.Now()
 	lastCAN := time.Now()
 	lastLog := time.Now()
+	lastEcho := time.Now()
 	tick := 0
 	for {
 		now := time.Now()
@@ -633,8 +694,11 @@ func main() {
 			canOK = canExchange()
 			drawCAN(&display)
 		}
-		echoOK = readDistance()
-		drawDistance(&display)
+		if now.Sub(lastEcho) >= echoEvery {
+			lastEcho = now
+			echoOK = readDistance()
+			drawDistance(&display)
+		}
 		drawFoot(&display, tick)
 		if now.Sub(lastLog) >= time.Second {
 			lastLog = now

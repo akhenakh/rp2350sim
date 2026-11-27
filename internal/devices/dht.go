@@ -62,7 +62,9 @@ func NewDHT(w *Wire, cfg DHTConfig) *DHT {
 func (d *DHT) onReset() {
 	d.state = dhtIdle
 	d.bit = 0
-	d.data = [5]byte{}
+	// Keep the configured reading: the UI resets the chip after attaching
+	// devices, and a cleared frame made every later read return 0 % / 0 C.
+	d.encode()
 	d.fallAt = 0
 	d.w.Release()
 }
