@@ -138,5 +138,9 @@ func (s *spiBlock) rawInterruptStatus() uint32 {
 
 // AddSPI attaches a PL022 SPI controller.
 func (c *Chip) AddSPI(base uint32, id int) {
-	c.addRegBlock(newSPI(c, base, id).block)
+	s := newSPI(c, base, id)
+	if id >= 0 && id < len(c.spi) {
+		c.spi[id] = s
+	}
+	c.addRegBlock(s.block)
 }

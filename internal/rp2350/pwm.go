@@ -11,6 +11,9 @@ type pwmBlock struct {
 	slices  [pwmSlices]pwmSliceState
 	enabled uint16
 	intr    uint32 // raw wrap flags, write-1-to-clear
+	// wrapPulse is the one-cycle DREQ pulse, cleared at the start of each tick
+	// and set by a wrap before the DMA scheduler runs for that cycle.
+	wrapPulse uint32
 }
 
 type pwmSliceState struct {
@@ -243,6 +246,7 @@ func (p *pwmBlock) busy() bool {
 
 // tick advances every enabled slice once for this system clock.
 func (p *pwmBlock) tick() {
+	p.wrapPulse = 0
 	mask := p.enabled
 	for mask != 0 {
 		slice := bits.TrailingZeros16(mask)
@@ -330,9 +334,13 @@ func (p *pwmBlock) advance(slice int) bool {
 // raiseWrap latches the slice's raw wrap flag and updates both IRQ lines.
 func (p *pwmBlock) raiseWrap(slice int) {
 	p.intr |= 1 << uint(slice)
+	p.wrapPulse |= 1 << uint(slice)
 	p.block.regs[pwmIntrOffset/4] = p.intr
 	p.syncIRQ()
 }
+
+// dreq reports this cycle's wrap pulse for a slice (DREQ_PWM_WRAP0..11).
+func (p *pwmBlock) dreq(slice int) bool { return p.wrapPulse&(1<<uint(slice)) != 0 }
 
 // syncIRQ recomputes PWM_IRQ_WRAP_0/1 from the raw/forced state.
 func (p *pwmBlock) syncIRQ() {

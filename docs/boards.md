@@ -244,7 +244,7 @@ output or bit timing.
   distribution checks.
 - SHA-256 at `0x400F8000`: START/BSWAP, WDATA (word/byte/halfword writes,
   including DMA_SIZE_8), SUM0-7. The pico-examples `sha/sha256` vector and
-  1 MB NIST test pass with and without DMA. DREQ pacing is still absent.
+  1 MB NIST test pass with and without DMA. `DREQ_SHA256` is paced.
 - POWMAN at `0x40100000`: the AON 1 kHz millisecond timer, set/read time,
   alarm and timer IRQ (45). `firmware/c/aontimer` exercises `pico_aon_timer`;
   deep-sleep power state sequencing is not modelled.
@@ -342,11 +342,12 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   endpoints are not supported.
 - **DMA:** round-robin one-transfer-per-cycle scheduling, live/reload counts,
   pause/abort, chaining, AL1/AL2/AL3 aliases, ring/reverse/BSWAP addressing and
-  completion interrupts. General DREQ pacing is not modelled; HSTX FIFO-full
-  backpressure is the exception.
+  completion interrupts. DREQ pacing covers PIO TX/RX, SPI, UART, I2C, PWM
+  wrap, ADC, HSTX and SHA-256; the DMA pacing timers and the XIP/coresight
+  requests are not modelled.
 - **Timers:** the 64-bit read pair is latched and PAUSE/SOURCE/LOCKED/DBGPAUSE
-  are honoured, but writes to TIMEHW/TIMELW are ignored; firmware cannot set
-  the timer.
+  are honoured. TIMEHW/TIMELW writes set the counter (TIMELW is latched until
+  TIMEHW is written).
 - **ADC:** conversions complete immediately in a one-shot model. Free-running
   pacing, the sample FIFO, overrun/error flags, DREQ and ADC interrupt delivery
   are not modelled.

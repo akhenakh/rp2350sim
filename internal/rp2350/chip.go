@@ -145,6 +145,7 @@ type Chip struct {
 	adc    *adcBlock
 	i2c    [2]*i2cBlock
 	pio    [3]*pioBlock
+	spi    [2]*spiBlock
 	uart   [2]*uartBlock
 	dma    *dmaBlock
 	otp    *otpBlock

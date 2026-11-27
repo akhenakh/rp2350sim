@@ -394,14 +394,69 @@ func (d *dmaBlock) tick() {
 			continue
 		}
 		d.next = uint8((ch + 1) & 15)
-		if treq := (d.ch[ch].ctrl >> 17) & 0x3F; treq == 48 {
-			// DREQ_ADC: do not consume the FIFO until a conversion is ready.
-			if d.chip.adc == nil || !d.chip.adc.dreq() {
-				continue
-			}
+		if !d.dreq(ch) {
+			continue
 		}
 		d.step(ch, &d.ch[ch])
 		return
+	}
+}
+
+// dreq reports whether the channel's selected TREQ/peripheral DREQ is
+// asserted. Unmodelled requests stay ready, which preserves the previous
+// one-transfer-per-cycle pace for them.
+func (d *dmaBlock) dreq(ch int) bool {
+	treq := int((d.ch[ch].ctrl >> 17) & 0x3F)
+	c := d.chip
+	switch {
+	case treq < 24: // PIO0/1/2 TX0-3 then RX0-3
+		p := c.pio[treq/8]
+		if p == nil {
+			return false
+		}
+		rem := treq & 7
+		sm := &p.sm[rem&3]
+		if rem < 4 {
+			return !sm.txFull()
+		}
+		return sm.rxN > 0
+	case treq < 28: // SPI0/1 TX then RX; the emulator's TX is immediate
+		s := c.spi[(treq-24)/2]
+		if s == nil {
+			return false
+		}
+		if treq&1 == 0 {
+			return true
+		}
+		return len(s.rx) > 0
+	case treq < 32: // UART0/1 TX then RX; the emulator's TX is immediate
+		u := c.uart[(treq-28)/2]
+		if u == nil {
+			return false
+		}
+		if (treq-28)&1 == 0 {
+			return true
+		}
+		return len(u.rx) > 0
+	case treq < 44: // PWM wrap pulse
+		return c.pwm != nil && c.pwm.dreq(treq-32)
+	case treq < 48: // I2C0/1 TX then RX
+		i := c.i2c[(treq-44)/2]
+		if i == nil {
+			return false
+		}
+		if (treq-44)&1 == 0 {
+			return len(i.tx) < i2cFIFODepth
+		}
+		return len(i.rx) > 0
+	case treq == 48:
+		return c.adc != nil && c.adc.dreq()
+	case treq == 52:
+		return c.hstx != nil && c.hstx.fifoLevel < hstxFIFODepth
+	case treq == 54:
+		return c.sha != nil && c.sha.ready
+	default:
+		return true
 	}
 }
 
