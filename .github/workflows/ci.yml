@@ -27,7 +27,7 @@ jobs:
 
       - name: Install TinyGo
         run: |
-          version=0.43.0
+          version=0.44.0
           curl -fsSL "https://github.com/tinygo-org/tinygo/releases/download/v${version}/tinygo${version}.linux-amd64.tar.gz" \
             | sudo tar -xz -C /opt
           echo "/opt/tinygo/bin" >> "$GITHUB_PATH"
