@@ -222,12 +222,14 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 			c.loadExclusive(addr, rt, 1)
 		case 0x5F: // LDREXH
 			c.loadExclusive(addr, rt, 2)
+		// Load-acquire instructions are not exclusive: only LDREX* and
+		// LDAEX* arm the local monitor.
 		case 0x8F: // LDAB
-			c.loadExclusive(addr, rt, 1)
+			c.R[rt] = uint32(c.Bus.Read8(addr))
 		case 0x9F: // LDAH
-			c.loadExclusive(addr, rt, 2)
+			c.R[rt] = uint32(c.Bus.Read16(addr))
 		case 0xAF: // LDA
-			c.loadExclusive(addr, rt, 4)
+			c.R[rt] = c.Bus.Read32(addr)
 		case 0xCF: // LDAEXB
 			c.loadExclusive(addr, rt, 1)
 		case 0xDF: // LDAEXH
