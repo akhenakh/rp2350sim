@@ -65,7 +65,14 @@ tasks:
 
   lint:
     desc: Static gates (golangci-lint with modernize, go fix diff) for every module
-    deps: [lint:root, lint:simui, lint:ch9120, lint:w6300]
+    # golangci-lint holds a cache lock and refuses parallel runs, so the module
+    # gates run in sequence. The lint group still runs beside the tests and the
+    # smoke suite.
+    cmds:
+      - task: lint:root
+      - task: lint:simui
+      - task: lint:ch9120
+      - task: lint:w6300
 
   lint:root:
     cmds:

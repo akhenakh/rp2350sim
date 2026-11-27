@@ -103,7 +103,8 @@ Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end. See the
   and `pico2w-lcd`. The smoke suite covers CYW firmware/join/LED, HCI Reset,
   Wi-Fi DHCP/NTP and the clock LCD.
 - `task ci` runs lint, the unit tests and the smoke suite concurrently. Lint is
-  split per module, the tests run as independent tasks, and the smoke suite is
+  split per module and the module gates run in sequence (golangci-lint holds a
+  cache lock), the tests run as independent tasks, and the smoke suite is
   nine slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`): the network
   checks stay together because they share host ports, and the Pico SDK C
   examples and pico-examples are built once and reused. Each slice writes its
