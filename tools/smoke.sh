@@ -148,6 +148,9 @@ port_busy() {
 }
 
 # --- W5500 Ethernet against the host helper --------------------------------
+# ethhost drives its two server checks on wall time (1 s boot, then 300 ms
+# apart); keep the virtual run long enough that a fast emulator does not exit
+# before the second check is attempted.
 if port_busy 9000; then
 	echo "FAIL: port 9000 is already in use; kill any leftover ethhost first" >&2
 	exit 1
@@ -156,7 +159,7 @@ fi
 host=$!
 trap 'kill "$host" 2>/dev/null' EXIT
 sleep 0.5
-out=$("$EMU" -fw "$BUILD/w5500.elf" -seconds 6 -eth 2>&1)
+out=$("$EMU" -fw "$BUILD/w5500.elf" -seconds 12 -eth 2>&1)
 kill "$host" 2>/dev/null || true
 trap - EXIT
 log=$(cat "$BUILD/ethhost-w5500.log")
@@ -175,7 +178,7 @@ fi
 host=$!
 trap 'kill "$host" 2>/dev/null' EXIT
 sleep 0.5
-out=$("$EMU" -fw "$BUILD/w6300.elf" -seconds 6 -w6300 2>&1)
+out=$("$EMU" -fw "$BUILD/w6300.elf" -seconds 12 -w6300 2>&1)
 log=$(cat "$BUILD/ethhost-smoke.log")
 contains "W6300 TCP echo" "tcp echo:" "$out"
 contains "W6300 UDP" "udp: ok" "$out"
