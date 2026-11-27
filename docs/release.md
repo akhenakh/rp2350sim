@@ -83,6 +83,11 @@ See the [What's New #5](videos.md#whats-new-5) tour.
   corrected, and extended CAN IDs are covered. Device models reset with the
   chip through a reset hook. GPS has explicit fix/no-fix and standards-shaped
   `ddmm.mmmm`/`dddmm.mmmm` output.
+- Performance: the UI logic analyzer samples only while its tab is open or a
+  trigger is armed, digital traces read a bit-parallel level mask, and timer
+  IRQ resynchronisation and hang sampling were trimmed. A 20 s Touch-LCD-2 run
+  with a WASM UART plugin went from 19 s to 9 s in the UI and from 9.8 s to
+  6.8 s headless.
 
 ## v0.4 highlights
 
