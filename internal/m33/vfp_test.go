@@ -152,6 +152,22 @@ func TestVFPDoubleRegisterBounds(t *testing.T) {
 	}
 }
 
+// TestVFPDoubleMoveUndefined checks that VMOV.F64 Dd, Dm halts even for
+// D0-D15: FPv5-SP has no double-precision data processing, and a D16-D31
+// encoding used to index past S[31] and panic the host.
+func TestVFPDoubleMoveUndefined(t *testing.T) {
+	for _, hw2 := range []uint16{0x0B41, 0x5B61} { // vmov.f64 d0,d1 / d5,d17
+		cpu := New(newExecBus())
+		cpu.exec32Coproc(0xEEB0, hw2)
+		if !cpu.Halted {
+			t.Fatalf("%04x: undefined VMOV.F64 did not halt", hw2)
+		}
+		if cpu.HaltReason != "undefined VFP double register" {
+			t.Fatalf("%04x: halt reason = %q", hw2, cpu.HaltReason)
+		}
+	}
+}
+
 // TestVFPBlockOddStart guards the VMOV Dm,Rt,Rt2 dispatch mask: the
 // non-writeback VSTMIA/VLDMIA forms starting at an odd single register
 // (ECC0/ECD0) used to be mistaken for the double core transfer.

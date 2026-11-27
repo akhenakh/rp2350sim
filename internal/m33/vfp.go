@@ -105,10 +105,10 @@ func (c *CPU) vfpExecute(hw1, hw2 uint16) {
 	op := hw1 & 0xF
 	switch {
 	case a == 0xEE80 && b == 0x0B40 && op == 0:
-		dd := int((hw2>>12)&0xF) | int((hw1>>6)&1)<<4
-		dm := (hw2 & 0xF) | (hw2>>5)&1<<4
-		c.S[2*dd] = c.S[2*int(dm)]
-		c.S[2*dd+1] = c.S[2*int(dm)+1]
+		// VMOV.F64 Dd, Dm needs the double-precision extension. The M33's
+		// FPv5-SP has no FP64 state, so this encoding is UNDEFINED. Halting
+		// also keeps D16-D31 from indexing past the S register file.
+		c.Halt("undefined VFP double register")
 	case a == 0xEE80 && b == 0x0A40 && op == 0:
 		c.vfpSetS(sd, c.vfpS(sm)) // VMOV Sd, Sm
 	case a == 0xEE80 && b == 0x0AC0 && op == 0:
