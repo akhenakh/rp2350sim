@@ -46,7 +46,18 @@ release page consistent without retroactively editing the tagged commit.
 
 ## Next release (unreleased)
 
-Working notes for changes after v0.5 go here.
+- `task ci` runs lint, the unit tests and the smoke suite concurrently. Lint is
+  split per module, the tests run as independent tasks, and the smoke suite is
+  nine slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`): the network
+  checks stay together because they share host ports, and the Pico SDK C
+  examples and pico-examples are built once and reused. Each slice writes its
+  own `build/smoke-<slice>.log`. On a 24-core host the warm full run drops from
+  2:18 to 36 s at about 4× CPU; `bash tools/smoke.sh` still runs the whole
+  suite sequentially.
+- The cores scheduler affinity API is covered: `firmware/assigncore` pins one
+  goroutine to each core with `machine.AssignCore` and verifies `CurrentCore`
+  after sleeps and channel wakeups. `task run:assigncore` runs it, and the
+  smoke suite asserts both cores report `ok=true`.
 
 ## v0.5 highlights
 
