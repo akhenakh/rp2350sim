@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,13 +198,35 @@ type BLEDevice struct {
 	Seed     int64  `yaml:"seed"`
 }
 
-// WifiDevice is the virtual Wi-Fi transport: a host-backed serial netdev.
-// The CYW43439 radio itself is not emulated.
+// WifiDevice is either the CH9120 UART netdev (kind empty or ch9120) or the// on-board CYW43439 radio modelled at the gSPI pins (kind cyw43439).
 type WifiDevice struct {
+	Kind string `yaml:"kind"`
+
+	// CH9120 transport.
 	UART  int `yaml:"uart"`
 	CFG0  int `yaml:"cfg0"`
 	RST   int `yaml:"rst"`
 	TCPCS int `yaml:"tcpcs"`
+
+	// CYW43439 gSPI wiring.
+	RegOn int    `yaml:"reg_on"`
+	Data  int    `yaml:"data"`
+	CS    int    `yaml:"cs"`
+	CLK   int    `yaml:"clk"`
+	MAC   string `yaml:"mac"`
+}
+
+func parseMAC(s string) ([6]byte, error) {
+	var out [6]byte
+	if s == "" {
+		return out, nil
+	}
+	m, err := net.ParseMAC(s)
+	if err != nil || len(m) != 6 {
+		return out, fmt.Errorf("invalid MAC %q", s)
+	}
+	copy(out[:], m)
+	return out, nil
 }
 
 type LCDDevice struct {
@@ -908,11 +931,27 @@ func LoadBoards() ([]BoardDef, error) {
 			}
 		}
 		if w := b.Wifi; w != nil {
-			if w.UART < 0 || w.UART > 1 {
-				return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
-			}
-			if err := claimUART(w.UART, "wifi"); err != nil {
-				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			switch w.Kind {
+			case "", "ch9120":
+				if w.UART < 0 || w.UART > 1 {
+					return nil, fmt.Errorf("boards: %s: wifi uart must be 0 or 1", b.ID)
+				}
+				if err := claimUART(w.UART, "wifi"); err != nil {
+					return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+				}
+			case "cyw43439":
+				for name, pin := range map[string]int{
+					"reg_on": w.RegOn, "data": w.Data, "cs": w.CS, "clk": w.CLK,
+				} {
+					if pin < 0 || pin > maxPin {
+						return nil, fmt.Errorf("boards: %s: cyw43439 %s pin %d must be 0..%d", b.ID, name, pin, maxPin)
+					}
+				}
+				if _, err := parseMAC(w.MAC); err != nil {
+					return nil, fmt.Errorf("boards: %s: cyw43439 mac: %w", b.ID, err)
+				}
+			default:
+				return nil, fmt.Errorf("boards: %s: unknown wifi kind %q", b.ID, w.Kind)
 			}
 		}
 		if p := b.PSRAM; p != nil {

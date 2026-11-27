@@ -371,15 +371,28 @@ boards:
 
   - id: pico2w
     name: Raspberry Pi Pico 2 W (virtual Wi-Fi)
-    description: Host-backed virtual Wi-Fi netdev · CYW43439 and Bluetooth are not emulated
+    description: Host-backed virtual Wi-Fi netdev over a CH9120 UART module
     scope: [20, 21]
     wifi:
+      kind: ch9120
       uart: 1
       cfg0: 18
       rst: 19
       tcpcs: 17
     logic:
       uart: { bus: 1, tx: 21, rx: 20, baud: 115200 }
+
+  - id: pico2w-cyw
+    name: Raspberry Pi Pico 2 W (CYW43439 gSPI)
+    description: On-board CYW43439 at the gSPI pins · firmware download, WLC init and WL_GPIO0 LED
+    scope: [24, 25, 29]
+    wifi:
+      kind: cyw43439
+      reg_on: 23
+      data: 24
+      cs: 25
+      clk: 29
+      mac: 02:11:22:33:44:55
 
   - id: pico2-analog
     name: RP2350 + analog + protocols

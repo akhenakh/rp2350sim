@@ -20,6 +20,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/deviceplugin"
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/devices/ble"
+	"github.com/akhenakh/rp2350sim/internal/devices/cyw43439"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/hang"
 	"github.com/akhenakh/rp2350sim/internal/midi"
@@ -85,6 +86,7 @@ type MachineState struct {
 	OTP       *OTPState
 	HID       []HIDDeviceState
 	BLE       *BLEState
+	CYW       *CYWState
 	Hang      string
 
 	// Inputs is a copy of the interactive board-control state, keyed by
@@ -120,6 +122,14 @@ type BLEState struct {
 	Notifications bool
 	Pending       int
 	Events        []string
+}
+
+// CYWState is the CYW43439 bring-up state shown in the Wi-Fi panel.
+type CYWState struct {
+	FirmwareUp bool
+	LED        bool
+	MAC        string
+	Pins       string
 }
 
 // TouchState is the last reported touch point in panel coordinates.
@@ -254,6 +264,7 @@ type Emu struct {
 	w5500   *devices.W5500
 	w6300   *devices.W6300
 	ch9120  *devices.CH9120
+	cyw     *cyw43439.Device
 	gpsDev  *devices.GPS
 	canBus  *devices.CANBus
 	canDev  *devices.MCP2515
@@ -1295,6 +1306,9 @@ func (e *Emu) resetChip() {
 	if e.ch9120 != nil {
 		e.ch9120.Close()
 	}
+	if e.cyw != nil {
+		e.cyw.Close()
+	}
 	if e.w5500 != nil {
 		e.w5500.Close()
 	}
@@ -1302,6 +1316,7 @@ func (e *Emu) resetChip() {
 		e.w6300.Close()
 	}
 	e.ch9120 = nil
+	e.cyw = nil
 	e.ethKind = ""
 	e.w5500 = nil
 	e.w6300 = nil
@@ -1380,13 +1395,24 @@ func (e *Emu) resetChip() {
 			}
 		}
 		if w := b.Wifi; w != nil {
-			ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)
-			ch.Logger = logEth
-			ch.OnByte = func(v byte) {
-				e.addUART(w.UART, c.Cycles, false, v)
+			if w.Kind == "cyw43439" {
+				mac, _ := parseMAC(w.MAC)
+				e.cyw = cyw43439.Attach(c, cyw43439.Config{
+					RegOn: w.RegOn,
+					Data:  w.Data,
+					CS:    w.CS,
+					CLK:   w.CLK,
+					MAC:   mac,
+				})
+			} else {
+				ch := devices.NewCH9120(c, w.UART, w.CFG0, w.RST, w.TCPCS)
+				ch.Logger = logEth
+				ch.OnByte = func(v byte) {
+					e.addUART(w.UART, c.Cycles, false, v)
+				}
+				e.ch9120 = ch
+				e.ethKind = "wifi"
 			}
-			e.ch9120 = ch
-			e.ethKind = "wifi"
 		}
 		if d := b.Ethernet; d != nil {
 			e.ethKind = d.Kind
@@ -3179,6 +3205,16 @@ func (e *Emu) Snapshot() MachineState {
 			Notifications: st.Notifications,
 			Pending:       st.Pending,
 			Events:        append([]string(nil), e.bleEvents...),
+		}
+	}
+	if e.cyw != nil && e.board != nil && e.board.Wifi != nil {
+		w := e.board.Wifi
+		s.CYW = &CYWState{
+			FirmwareUp: e.cyw.FirmwareUp(),
+			LED:        e.cyw.LED(),
+			MAC:        w.MAC,
+			Pins: fmt.Sprintf("WL_REG_ON GP%d · WL_D GP%d · WL_CS GP%d · WL_CLK GP%d",
+				w.RegOn, w.Data, w.CS, w.CLK),
 		}
 	}
 	s.EthLog = e.ethLog.snapshot()

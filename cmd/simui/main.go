@@ -311,7 +311,11 @@ func boardBadges(b *BoardDef) []string {
 		out = append(out, "TCP BUS")
 	}
 	if b.Wifi != nil {
-		out = append(out, "WIFI (VIRTUAL)")
+		if b.Wifi.Kind == "cyw43439" {
+			out = append(out, "CYW43439")
+		} else {
+			out = append(out, "WIFI (VIRTUAL)")
+		}
 	}
 	if len(out) == 0 {
 		out = append(out, "GPIO")
@@ -1859,7 +1863,12 @@ func ethPanel(snap MachineState) {
 			}
 			Label(title, FontSize(16), FontWeight(700))
 			if w := selectedBoard.Wifi; w != nil {
-				Label(fmt.Sprintf("Wi-Fi (virtual) · UART%d · host-backed serial netdev", w.UART), FontSize(12))
+				if w.Kind == "cyw43439" {
+					Label(fmt.Sprintf("CYW43439 · gSPI · REG_ON GP%d · DATA GP%d · CS GP%d · CLK GP%d",
+						w.RegOn, w.Data, w.CS, w.CLK), FontSize(12))
+				} else {
+					Label(fmt.Sprintf("Wi-Fi (virtual) · UART%d · host-backed serial netdev", w.UART), FontSize(12))
+				}
 			} else if d := selectedBoard.Ethernet; d != nil {
 				if d.Kind == "ch9120" {
 					Label(fmt.Sprintf("CH9120 · UART%d · CFG0 GP%d · RST GP%d · TCPCS GP%d",
@@ -1871,6 +1880,29 @@ func ethPanel(snap MachineState) {
 			Filler(1)
 			Label(fmt.Sprintf("%d events", len(snap.EthLog)), FontSize(11))
 		})
+		if c := snap.CYW; c != nil {
+			Container(Attrs(Gap(4), Pad(12), Corners(6), Background(220, 12, 8, 1),
+				BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+				Container(Attrs(Row, CrossMid, Gap(12)), func() {
+					Label("CYW43439", FontSize(13), FontWeight(700))
+					state := "waiting for WL_REG_ON"
+					if c.FirmwareUp {
+						state = "firmware running · control channel ready"
+					}
+					Label(state, FontSize(12), TextColor(140, 35, 70, 1))
+					Filler(1)
+					led := "LED off"
+					if c.LED {
+						led = "LED on"
+					}
+					Label(led, FontSize(12), FontWeight(600))
+					if c.MAC != "" {
+						Label(c.MAC, Fonts(Monospace...), FontSize(11), TextColor(220, 6, 68, 1))
+					}
+				})
+				Label(c.Pins, FontSize(11), TextColor(220, 6, 62, 1))
+			})
+		}
 		if n := snap.Network; n != nil {
 			networkCard(n)
 		}
@@ -3070,7 +3102,11 @@ func boardDevices(b *BoardDef) []boardBusDevice {
 		add(strings.ToUpper(d.Kind), where)
 	}
 	if d := b.Wifi; d != nil {
-		add("CH9120 Wi-Fi", fmt.Sprintf("UART%d", d.UART))
+		if d.Kind == "cyw43439" {
+			add("CYW43439", fmt.Sprintf("gSPI · CS GP%d · CLK GP%d", d.CS, d.CLK))
+		} else {
+			add("CH9120 Wi-Fi", fmt.Sprintf("UART%d", d.UART))
+		}
 	}
 	if d := b.WS2812; d != nil {
 		add("WS2812B", fmt.Sprintf("GP%d", d.Pin))
