@@ -37,14 +37,17 @@ func TestOTPECCRoundTrip(t *testing.T) {
 	}
 }
 
-// TestOTPECCDoubleError makes sure two flipped data bits are reported as
-// uncorrectable (the RP2350 Hamming code has distance four).
+// TestOTPECCDoubleError makes sure two flipped bits anywhere in the 16 data
+// bits or the six ECC bits are reported as uncorrectable. Bits 22:23 are the
+// BRP marker, not part of the Hamming word.
 func TestOTPECCDoubleError(t *testing.T) {
-	raw := otpEncodeRow(0x1234)
-	for a := range 16 {
-		for b := a + 1; b < 16; b++ {
-			if _, ok := otpDecodeRow(raw ^ 1<<a ^ 1<<b); ok {
-				t.Fatalf("two-bit error at %d,%d reported as correctable", a, b)
+	for _, v := range []uint16{0x0000, 0x1234, 0xffff, 0xaaaa, 0x5555} {
+		raw := otpEncodeRow(v)
+		for a := range 22 {
+			for b := a + 1; b < 22; b++ {
+				if _, ok := otpDecodeRow(raw ^ 1<<a ^ 1<<b); ok {
+					t.Fatalf("%#04x: two-bit error at %d,%d reported as correctable", v, a, b)
+				}
 			}
 		}
 	}
