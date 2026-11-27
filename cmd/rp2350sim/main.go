@@ -28,6 +28,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/hang"
 	"github.com/akhenakh/rp2350sim/internal/logging"
 	"github.com/akhenakh/rp2350sim/internal/m33"
+	"github.com/akhenakh/rp2350sim/internal/otpfile"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
@@ -465,11 +466,13 @@ func main() {
 	}
 	otpSeeded := 0
 	if *otpIn != "" {
-		otpSeeded, err = loadOTP(c, *otpIn)
+		var rows []otpfile.SeedRow
+		rows, err = otpfile.Load(*otpIn)
 		if err != nil {
 			log.Error("otp load", slog.String("path", *otpIn), slog.Any("err", err))
 			exit(1)
 		}
+		otpSeeded = otpfile.Apply(c, rows)
 		if !*quiet {
 			log.Info("otp seeded", slog.String("path", *otpIn), slog.Int("rows", otpSeeded))
 		}
@@ -1608,7 +1611,7 @@ func main() {
 			slog.Uint64("writes", c.OTPWrites()))
 	}
 	if *otpOut != "" {
-		if err := dumpOTP(c, *otpOut); err != nil {
+		if err := otpfile.Save(c, *otpOut); err != nil {
 			log.Error("otp dump", slog.String("path", *otpOut), slog.Any("err", err))
 			if exitCode == 0 {
 				exitCode = 1
