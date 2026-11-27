@@ -246,6 +246,26 @@ wifi:
   tcpcs: 17
 ```
 
+## `ble`
+
+Attaches the virtual CYW43 BLE controller. The firmware must be an ELF with a
+symbol table; the emulator binds the CYW43 HCI symbols by name.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `addr` | string | `C0:DE:12:34:56:78` | advertised peer address |
+| `host_wake` | GPIO | `24` | CYW43 HOST_WAKE pin (Pico W wiring) |
+| `seed` | int | `42` | controller PRNG seed |
+
+```yaml
+ble:
+  addr: "C0:DE:12:34:56:78"
+  host_wake: 24
+  seed: 42
+```
+
+See [ble.md](ble.md) for the stock firmware, flags and pcapng capture.
+
 ## `ws2812`
 
 A WS2812B data line decoded from the PIO/GPIO wire timing.

@@ -40,6 +40,17 @@ boards:
     logic:
       uart: { tx: 0, rx: 1, baud: 115200 }
 
+  - id: pico2-w-ble
+    name: Pico 2 W · BLE
+    description: RP2350A · virtual CYW43 BLE controller · HOST_WAKE GP24
+    scope: [0, 1]
+    logic:
+      uart: { tx: 0, rx: 1, baud: 115200 }
+    ble:
+      addr: "C0:DE:12:34:56:78"
+      host_wake: 24
+      seed: 42
+
   - id: pico2-inputs
     name: RP2350 + user controls
     description: Pico 2 header with a pushbutton, slide switch, rotary encoder, ADC pot and BOOTSEL

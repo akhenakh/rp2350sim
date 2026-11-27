@@ -396,6 +396,26 @@ out=$("$EMU" -fw "$BUILD/pluginlcd.elf" -seconds 2 -quiet \
 contains "Touch-LCD-2 plugin dashboard" "pluginlcd t=" "$out"
 contains "UART air sensor values" "pm=" "$out"
 
+# --- virtual CYW43 BLE controller -------------------------------------------
+if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
+	rm -f "$BUILD/ble.pcapng"
+	out=$("$EMU" -fw "$BUILD/ble-c/ble_temp_reader.elf" -ble -seconds 2 -quiet \
+		-ble-hci-log "$BUILD/ble.pcapng" 2>&1)
+	contains "BLE scan, connect and GATT notifications" "Read temp 23.45 degc" "$out"
+	if [ -s "$BUILD/ble.pcapng" ]; then
+		ok "BLE HCI pcapng capture"
+	else
+		bad "BLE HCI pcapng capture"
+	fi
+	if (cd cmd/simui && go run . --board pico2-w-ble --tab ble --run 1 \
+		--png "../../$BUILD/ble-ui-smoke.png" "../../$BUILD/ble-c/ble_temp_reader.elf" >/dev/null 2>&1) &&
+		"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ble-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
+		ok "UI BLE tab"
+	else
+		bad "UI BLE tab" "$(cat "$SMOKE_LOG")"
+	fi
+fi
+
 if (cd cmd/simui && go run . --board pico2-plugins --tab bus --run 0.5 \
 	--png "../../$BUILD/ui-plugins-smoke.png" "../../$BUILD/presets.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-plugins-smoke.png" >>"$SMOKE_LOG" 2>&1; then

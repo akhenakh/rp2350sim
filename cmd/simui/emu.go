@@ -19,6 +19,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/deviceplugin"
 	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/devices/ble"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/hang"
 	"github.com/akhenakh/rp2350sim/internal/midi"
@@ -81,6 +82,7 @@ type MachineState struct {
 	SD        *SDState
 	OTP       *OTPState
 	HID       []HIDDeviceState
+	BLE       *BLEState
 	Hang      string
 
 	// Inputs is a copy of the interactive board-control state, keyed by
@@ -98,6 +100,17 @@ type InputValue struct {
 	Volts float32
 	// Phase is the quadrature phase (0..3) of a rotary encoder.
 	Phase uint8
+}
+
+// BLEState is the virtual controller view for the BLE tab.
+type BLEState struct {
+	Address       string
+	Connected     bool
+	Peer          string
+	MTU           uint16
+	Notifications bool
+	Pending       int
+	Events        []string
 }
 
 // TouchState is the last reported touch point in panel coordinates.
@@ -158,6 +171,8 @@ type Emu struct {
 	audio     *devices.AudioDecoder
 	img       *firmware.Image
 	debugInfo *debug.Info
+	ble       *ble.Controller
+	bleEvents []string
 	debugger  *rp2350.Debugger
 	fwPath    string
 	flashPath string
@@ -1158,6 +1173,9 @@ func (e *Emu) FlashUF2(name string, data []byte) error {
 	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
+	if err := e.attachBLELocked(); err != nil {
+		return err
+	}
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount = e.lastBoots
 	e.flashWrites = 0
@@ -1174,6 +1192,8 @@ func (e *Emu) resetChip() {
 	if e.board != nil && e.board.Package == "qfn80" {
 		c.SetPackage(rp2350.PackageQFN80)
 	}
+	e.ble = nil
+	e.bleEvents = nil
 	e.debugger.Reset()
 	c.Debug = e.debugger
 	if e.sd != nil {
@@ -2233,6 +2253,48 @@ func (e *Emu) flushMIDILocked() {
 	}
 }
 
+// attachBLELocked binds the virtual controller to the loaded image. It runs
+// after Boot so the CYW43 hooks sit on top of the final firmware image.
+func (e *Emu) attachBLELocked() error {
+	if e.board == nil || e.board.BLE == nil || e.debugInfo == nil {
+		return nil
+	}
+	d := e.board.BLE
+	addr, err := ble.ParseAddress(d.Addr)
+	if err != nil {
+		return err
+	}
+	ctrl := ble.New(e.chip, ble.Options{
+		HostWake: d.HostWake,
+		Address:  addr,
+		Seed:     d.Seed,
+	})
+	if err := ble.BindCYW43(e.chip, e.debugInfo, ctrl); err != nil {
+		return err
+	}
+	ctrl.SetObserver(func(dir string, pkt []byte) {
+		if len(pkt) == 0 {
+			return
+		}
+		what := "HCI"
+		switch pkt[0] {
+		case 0x01:
+			what = fmt.Sprintf("cmd %#04x", uint16(pkt[1])|uint16(pkt[2])<<8)
+		case 0x04:
+			what = fmt.Sprintf("evt %#02x", pkt[1])
+		case 0x02:
+			what = "acl"
+		}
+		e.bleEvents = append(e.bleEvents, fmt.Sprintf("%8.2f ms %s %s (%d B)",
+			float64(e.chip.Cycles)/150_000, dir, what, len(pkt)))
+		if len(e.bleEvents) > 500 {
+			e.bleEvents = e.bleEvents[len(e.bleEvents)-500:]
+		}
+	})
+	e.ble = ctrl
+	return nil
+}
+
 func (e *Emu) loadLocked() error {
 	var backing []byte
 	if e.flashPath != "" {
@@ -2274,6 +2336,9 @@ func (e *Emu) loadLocked() error {
 	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
+	if err := e.attachBLELocked(); err != nil {
+		return err
+	}
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount = e.lastBoots
 	e.flashWrites = 0
@@ -2297,6 +2362,9 @@ func (e *Emu) rebootLocked() {
 	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
+	if err := e.attachBLELocked(); err != nil {
+		e.errText = err.Error()
+	}
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount++
 	e.lastChipFW = e.chip.FlashWrites()
@@ -2394,6 +2462,9 @@ func (e *Emu) loadFlash(path string, start, preservePause bool) error {
 	e.applyInputsLocked()
 	e.chip.Boot()
 	e.applyInputsLocked()
+	if err := e.attachBLELocked(); err != nil {
+		return err
+	}
 	e.lastBoots = e.chip.BootCount()
 	e.bootCount = e.lastBoots
 	e.flashWrites = 0
@@ -2768,6 +2839,10 @@ func (e *Emu) recordTrace(ev rp2350.TraceEvent) {
 	e.traceMu.Unlock()
 }
 
+func formatBLEAddr(a [6]byte) string {
+	return fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X", a[0], a[1], a[2], a[3], a[4], a[5])
+}
+
 func (e *Emu) Snapshot() MachineState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -2926,6 +3001,18 @@ func (e *Emu) Snapshot() MachineState {
 			info.Kind = "Wi-Fi (virtual)"
 		}
 		s.Network = &info
+	}
+	if e.ble != nil {
+		st := e.ble.Status()
+		s.BLE = &BLEState{
+			Address:       formatBLEAddr(st.Address),
+			Connected:     st.Connected,
+			Peer:          formatBLEAddr(st.Peer),
+			MTU:           st.MTU,
+			Notifications: st.Notifications,
+			Pending:       st.Pending,
+			Events:        append([]string(nil), e.bleEvents...),
+		}
 	}
 	s.EthLog = e.ethLog.snapshot()
 	s.Serial = append([]string(nil), e.bridgeErrs...)

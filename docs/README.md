@@ -59,6 +59,7 @@ The desktop UI also runs in the browser as a
 | [ci.md](ci.md) | running firmware in CI, injecting input, asserting output and signals, capturing artifacts |
 | [tinygo.md](tinygo.md) | installing, building with TinyGo, drop-in Taskfile/Makefile targets, dev loop |
 | [c.md](c.md) | C firmware with the Pico SDK: build, examples, console, current gaps |
+| [ble.md](ble.md) | virtual CYW43 BLE controller: stock Pico W BTstack firmware, GATT peer, pcapng capture |
 | [zephyr.md](zephyr.md) | Zephyr: SDK install, `rpi_pico2/rp2350a/m33` builds, validated samples and tests |
 | [release.md](release.md) | release archives, GoReleaser, supported platforms |
 

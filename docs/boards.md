@@ -28,6 +28,7 @@ and reference firmware. In short:
 | `touch-lcd2-plugins` | `-touch-lcd2` plus `-i2c-plugin` / `-uart-plugin` |
 | `pico2-w5500` | `-eth` |
 | `poe-eth` | `-w6300` |
+| `pico2-w-ble` | `-ble` (virtual CYW43 BLE controller) |
 | `rp2350-eth` | `-ch9120` |
 | `pico2w` | `-ch9120` (virtual Wi-Fi transport) |
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` |
@@ -283,8 +284,10 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   bootrom is a synthetic service subset, not executable ROM code. PT25 is the
   emulator's custom A/B table format; signed picobin, secure boot and rollback
   are not implemented.
-- **CYW43439 / Bluetooth:** not emulated; the Pico 2 W uses the virtual Wi-Fi
-  described above.
+- **CYW43439:** not emulated. The Pico 2 W uses the virtual Wi-Fi described
+  above. A logical BLE controller is available with `-ble`: stock Pico W
+  BTstack firmware runs against it through symbol hooks on the CYW43 HCI
+  transport, and `pico2-w-ble` exposes it in the UI. See [ble.md](ble.md).
 - **Core 1:** works with `-scheduler=cores` (SIO launch, WFE/SEV, tasks on both
   cores). The default TinyGo tasks scheduler is single-core. `machine.AssignCore`
   keeps a goroutine pinned to a core across sleeps and channel wakeups (see
@@ -383,6 +386,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/hidgamepad` | USB HID gamepad reports |
 | `firmware/cores` | `-scheduler=cores` and core 1 |
 | `firmware/assigncore` | `machine.AssignCore` pins goroutines to both cores |
+| `firmware/c/ble` | stock Pico W BTstack GATT client on the virtual BLE controller |
 | `firmware/echo` | USB CDC console input |
 | `firmware/uart` | UART output for the logic analyzer |
 | `firmware/onewire` | bit-banged DS18B20 |

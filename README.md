@@ -274,6 +274,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
 | `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
 | `task run:assigncore` | pin goroutines to both cores with `machine.AssignCore` |
+| `task run:ble` | run the stock Pico W BTstack BLE client against the virtual CYW43 controller |
 | `task run:echo` | echo injected console input through USB CDC |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task run:hid`, `run:hidgamepad` | log decoded USB HID keyboard/mouse or gamepad reports |

@@ -45,6 +45,7 @@ type BoardDef struct {
 	SPIPlugins  []SPIPluginDef     `yaml:"spi_plugins"`
 	UARTPlugins []UARTPluginDef    `yaml:"serial_plugins"`
 	Wifi        *WifiDevice        `yaml:"wifi"`
+	BLE         *BLEDevice         `yaml:"ble"`
 	Audio       *AudioDevice       `yaml:"audio"`
 	MIDI        *MIDIDevice        `yaml:"midi"`
 	// Package selects the RP2350 variant: qfn60 (RP2350A, 30 GPIOs) or
@@ -184,6 +185,13 @@ type UARTPluginDef struct {
 	PluginDef `yaml:",inline"`
 	UART      int            `yaml:"uart"`
 	Pins      map[string]int `yaml:"pins"`
+}
+
+// BLEDevice attaches the virtual CYW43 BLE controller.
+type BLEDevice struct {
+	Addr     string `yaml:"addr"`
+	HostWake int    `yaml:"host_wake"`
+	Seed     int64  `yaml:"seed"`
 }
 
 // WifiDevice is the virtual Wi-Fi transport: a host-backed serial netdev.

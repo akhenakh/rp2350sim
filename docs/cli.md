@@ -168,6 +168,11 @@ every UI board to its flags and demo firmware. The flags are:
 | `-eth` | W5500 on SPI0 (CS GP17) |
 | `-w6300` | W6300 on SPI0 (CS GP17) |
 | `-ch9120` | CH9120 on UART1 (GP20/21), CFG0 GP18, RST GP19, TCPCS GP17 |
+| `-ble` | virtual CYW43 BLE controller (Pico W HCI transport; see [ble.md](ble.md)) |
+| `-ble-addr ADDR` | advertised BLE peer address (default `C0:DE:12:34:56:78`) |
+| `-ble-host-wake GPIO` | CYW43 HOST_WAKE pin (default 24) |
+| `-ble-seed N` | BLE controller PRNG seed (default 42) |
+| `-ble-hci-log PATH` | write HCI traffic to a pcapng file |
 | `-ws2812 GPIO` | decode a WS2812B strip driven on that pin |
 | `-otp PATH` | seed the OTP array from a JSON dump before boot |
 | `-otp-dump PATH` | write every programmed OTP row to a JSON file at exit |

@@ -221,6 +221,10 @@ type Chip struct {
 	rom      *bootROM
 	booted   bool
 
+	// symbolHooks replace selected firmware functions by entry address. They
+	// are installed after an ELF is loaded; see InstallSymbolHook.
+	symbolHooks map[uint32]SymbolHook
+
 	// Flash programming counters and reset bookkeeping for OTA self-updates.
 	flashWrites        uint64
 	boots              uint64
@@ -880,6 +884,14 @@ func (c *Chip) stepCore(cpu *m33.CPU) {
 	pc := cpu.R[15]
 	if c.Debug != nil && c.Debug.checkPC(c.core, pc, c.Cycles) {
 		return
+	}
+	if len(c.symbolHooks) != 0 {
+		if fn := c.symbolHooks[pc&^1]; fn != nil {
+			c.writeCore = c.core
+			fn(cpu)
+			c.writeCore = -1
+			return
+		}
 	}
 	c.writeCore = c.core
 	if c.booted && pc < ROMSize {

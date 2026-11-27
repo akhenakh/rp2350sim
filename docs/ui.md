@@ -132,6 +132,7 @@ reserved BOOTSEL id.
 | `serial_plugins` | list of `{uart, file, url, config}` (Lua/WASM serial target) | Console |
 | `gps` | `uart`, `lat`, `lon`, `altitude`, `speed_knots`, `course`, `satellites`, `fix`, `rate_ms` | GPS |
 | `can` | `bus`, `cs`, `int`, `peer_id`, `reply_id` | CAN |
+| `ble` | `addr`, `host_wake`, `seed` | BLE |
 
 `listen` defaults to `127.0.0.1:0` (a free port). `connect: host:port` makes the
 emulator dial an external device server instead of listening.
@@ -516,6 +517,17 @@ controller; the board's simulated peer answers a matching request.
 `task ui:can` opens it with `firmware/can`; `ui:can:png` renders it.
 
 ![CAN tab](images/can.png)
+
+### BLE
+
+The BLE tab shows the virtual CYW43 controller attached to the `pico2-w-ble`
+board: advertised address, connection state, peer, negotiated ATT MTU,
+notification state and the HCI packets crossing the transport. `>` is
+host-to-controller, `<` is controller-to-host. **Copy** copies the state and
+visible packets as plain text. The same traffic can be captured as pcapng with
+the headless `-ble-hci-log` flag. See [ble.md](ble.md).
+
+`task ui:ble` opens it with the stock Pico W BTstack client fixture.
 
 ### Trace
 

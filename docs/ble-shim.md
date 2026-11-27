@@ -1,9 +1,13 @@
 # BLE controller shim — design spike (M0)
 
-Status: **design only, not implemented**. There is no CYW43439 radio model and
-no BLE support in the emulator yet. This page records the seam, the exact
-symbols to bind and the HCI subset the controller must implement before any
-code lands.
+Status: **M1–M3 implemented, plus the M5 HCI log and BLE tab.** The virtual
+controller, CYW43 symbol binding, temperature peer, CLI flow, pcapng capture
+and `pico2-w-ble` UI board are in place. There is still no CYW43439 radio
+model: the seam is HCI, and the controller is logical. M4
+(pairing/bonding/multiple connections) and M6 (two-chip scenario) remain open.
+
+This page records the seam, the exact symbols to bind and the HCI subset the
+controller implements.
 
 ## Scope
 
@@ -45,7 +49,9 @@ hci_power_control(HCI_POWER_ON)
 
 `cyw43_driver_init()` initialises `cyw43_state` and installs the HOST_WAKE
 falling-edge IRQ, but does not touch the bus. The first bus traffic is
-`cyw43_ensure_up()`, reached from the HCI transport open.
+`cyw43_ensure_up()`, reached from the HCI transport open. After the bus-init
+hook, `CYW43_USE_OTP_MAC=1` makes `cyw43_ensure_up()` call
+`cyw43_ll_wifi_get_mac()`, so that symbol is part of the hook set as well.
 
 Hooking the three public `cyw43_bluetooth_hci_*` wrappers would leave
 `cyw43_state.bt_loaded` false; `cyw43_poll_func()` only calls
@@ -64,6 +70,7 @@ they survive `-O2` but not LTO.
 |---|---|---|
 | `cyw43_ll_bus_init` | `int(cyw43_ll_t *, const uint8_t *)` | return 0; skip chip reset/test register |
 | `cyw43_ll_bus_sleep` | `void(cyw43_ll_t *, bool)` | no-op |
+| `cyw43_ll_wifi_get_mac` | `int(cyw43_ll_t *, uint8_t *)` | copy the board MAC; `CYW43_USE_OTP_MAC=1` otherwise reads the backplane |
 | `cyw43_btbus_init` | `int(cyw43_ll_t *)` | return 0; no BT firmware download |
 | `cyw43_btbus_write` | `int(uint8_t *, uint32_t)` | parse HCI at `buf+4`, type at `buf[3]` |
 | `cyw43_btbus_read` | `int(uint8_t *, uint32_t, uint32_t *)` | fill header + HCI event, set `*size` |

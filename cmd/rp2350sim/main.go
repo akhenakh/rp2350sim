@@ -22,6 +22,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/debug"
 	"github.com/akhenakh/rp2350sim/internal/deviceplugin"
 	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/devices/ble"
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/gdb"
 	"github.com/akhenakh/rp2350sim/internal/hang"
@@ -38,10 +39,17 @@ var version = "dev"
 // the profile explicitly.
 var stopCPUProfile func()
 
+// bleHCIFile is closed explicitly because exit skips deferred calls.
+var bleHCIFile *os.File
+
 func exit(code int) {
 	if stopCPUProfile != nil {
 		stopCPUProfile()
 		stopCPUProfile = nil
+	}
+	if bleHCIFile != nil {
+		_ = bleHCIFile.Close()
+		bleHCIFile = nil
 	}
 	os.Exit(code)
 }
@@ -197,6 +205,11 @@ func main() {
 		ethFlag      = flag.Bool("eth", false, "attach a W5500 Ethernet controller on SPI0 (breadboard wiring, CS GP17)")
 		w6300Flag    = flag.Bool("w6300", false, "attach a W6300 Ethernet controller on SPI0 (RP2350-POE-ETH wiring)")
 		ch9120Flag   = flag.Bool("ch9120", false, "attach a CH9120 UART-Ethernet module (RP2350-ETH wiring)")
+		bleFlag      = flag.Bool("ble", false, "attach the virtual CYW43 BLE controller (Pico W HCI transport)")
+		bleAddr      = flag.String("ble-addr", "C0:DE:12:34:56:78", "advertised BLE peer address")
+		bleHostWake  = flag.Int("ble-host-wake", 24, "CYW43 HOST_WAKE GPIO")
+		bleSeed      = flag.Int64("ble-seed", 42, "BLE controller PRNG seed")
+		bleHCILog    = flag.String("ble-hci-log", "", "write HCI traffic to this pcapng file")
 		wsPin        = flag.Int("ws2812", -1, "decode a WS2812B strip driven on this GPIO")
 		inputStr     = flag.String("input", "", "send these bytes to USB CDC and UART0 after boot")
 		inputFile    = flag.String("input-file", "", "send the contents of this file at -input-at")
@@ -501,6 +514,39 @@ func main() {
 		c.SetBootsel(true)
 	}
 	c.Boot()
+	var bleCtrl *ble.Controller
+	if *bleFlag {
+		addr, berr := ble.ParseAddress(*bleAddr)
+		if berr != nil {
+			log.Error("ble address", slog.Any("err", berr))
+			exit(1)
+		}
+		bleCtrl = ble.New(c, ble.Options{
+			HostWake: *bleHostWake,
+			Address:  addr,
+			Seed:     *bleSeed,
+		})
+		if berr := ble.BindCYW43(c, dbgInfo, bleCtrl); berr != nil {
+			log.Error("ble binding failed", slog.Any("err", berr))
+			exit(1)
+		}
+		if *bleHCILog != "" {
+			f, ferr := os.Create(*bleHCILog)
+			if ferr != nil {
+				log.Error("ble hci log", slog.Any("err", ferr))
+				exit(1)
+			}
+			bleHCIFile = f
+			if berr := bleCtrl.SetHCILog(f); berr != nil {
+				log.Error("ble hci log", slog.Any("err", berr))
+				exit(1)
+			}
+		}
+		if !*quiet {
+			log.Info("ble controller attached", slog.String("addr", *bleAddr), slog.Int("host_wake", *bleHostWake))
+		}
+	}
+	_ = bleCtrl
 	if *itmFlag {
 		c.OnTrace = func(ev rp2350.TraceEvent) {
 			if ev.Kind == "itm" {

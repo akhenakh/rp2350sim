@@ -91,6 +91,7 @@ const (
 	tabBootsel
 	tabGPS
 	tabCAN
+	tabBLE
 	tabTrace
 	tabConsole
 )
@@ -214,6 +215,8 @@ func RootView() {
 				gpsPanel()
 			case tabCAN:
 				canPanel()
+			case tabBLE:
+				blePanel(snap)
 			case tabTrace:
 				tracePanel()
 			case tabHID:
@@ -566,6 +569,10 @@ func setTab(name string) {
 		if selectedBoard != nil && selectedBoard.CAN != nil {
 			activeTab = tabCAN
 		}
+	case "ble", "bluetooth":
+		if selectedBoard != nil && selectedBoard.BLE != nil {
+			activeTab = tabBLE
+		}
 	case "debug", "dbg":
 		activeTab = tabDebug
 	case "profile", "prof", "coverage":
@@ -626,6 +633,9 @@ func tabsBar(snap MachineState) {
 		}
 		if selectedBoard.CAN != nil {
 			tabButton("CAN", tabCAN)
+		}
+		if selectedBoard.BLE != nil {
+			tabButton("BLE", tabBLE)
 		}
 		if len(snap.HID) > 0 || activeTab == tabHID {
 			tabButton("HID", tabHID)
@@ -3361,7 +3371,7 @@ func main() {
 		return nil
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
-	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, profile, hid, bootsel, console")
+	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, profile, hid, ble, bootsel, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
 	gdbFlag := flag.String("gdb", "", "start the GDB remote server on this address (e.g. 127.0.0.1:3333)")

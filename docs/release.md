@@ -54,6 +54,14 @@ release page consistent without retroactively editing the tagged commit.
   own `build/smoke-<slice>.log`. On a 24-core host the warm full run drops from
   2:18 to 36 s at about 4× CPU; `bash tools/smoke.sh` still runs the whole
   suite sequentially.
+- A virtual CYW43 BLE controller runs stock Pico W BTstack firmware against a
+  deterministic link layer and a scripted Environmental Sensing peer. The
+  emulator binds the CYW43 HCI symbols in the ELF, so `ble_temp_reader`
+  advertises, connects, discovers GATT, enables notifications and prints
+  `Read temp 23.45 degc` without a source shim. `-ble`, `-ble-hci-log`
+  (pcapng for Wireshark) and the `pico2-w-ble` UI board expose it; see
+  [ble.md](ble.md). One connection is modelled; pairing/bonding, LESC,
+  extended advertising and Classic are out of scope.
 - The cores scheduler affinity API is covered: `firmware/assigncore` pins one
   goroutine to each core with `machine.AssignCore` and verifies `CurrentCore`
   after sleeps and channel wakeups. `task run:assigncore` runs it, and the

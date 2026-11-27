@@ -162,6 +162,7 @@ tasks:
       - firmware:lab
       - firmware:itm
       - c:build
+      - firmware:ble
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
@@ -1175,6 +1176,20 @@ tasks:
     cmds:
       - go run . --board pico2-can --tab can '../../{{.BUILD}}/can.elf'
 
+  ui:ble:
+    desc: Run the UI on the virtual BLE controller
+    deps: [firmware:ble]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-w-ble --tab ble '../../{{.BUILD}}/ble-c/ble_temp_reader.elf'
+
+  ui:ble:png:
+    desc: Render the BLE tab to build/ui-ble.png
+    deps: [firmware:ble]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2-w-ble --tab ble --run 2 --png '../../{{.BUILD}}/ui-ble.png' '../../{{.BUILD}}/ble-c/ble_temp_reader.elf'
+
   ui:can:png:
     desc: Render the CAN tab to build/ui-can.png
     deps: [firmware:can]
@@ -1260,6 +1275,19 @@ tasks:
     cmds:
       - rm -f '../../{{.BUILD}}/ui-ota-flash.bin'
       - go run . --board pico2 --flash '../../{{.BUILD}}/ui-ota-flash.bin' --run 0.5 --width 1920 --height 1080 --png '../../{{.BUILD}}/ui-ota.png' '../../firmware/c/build/ota.elf'
+
+  firmware:ble:
+    desc: Build the Pico W BTstack BLE client fixture (requires PICO_SDK_PATH)
+    cmds:
+      - test -n "$PICO_SDK_PATH" || (echo "PICO_SDK_PATH is not set" >&2; exit 1)
+      - cmake -S firmware/c/ble -B {{.BUILD}}/ble-c -G Ninja -DPICO_BOARD=pico2_w -DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release -DPICO_NO_PICOTOOL=1
+      - cmake --build {{.BUILD}}/ble-c
+
+  run:ble:
+    desc: Run the stock Pico W BTstack BLE client against the virtual controller
+    deps: [build, firmware:ble]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/ble-c/ble_temp_reader.elf -ble -seconds 3'
 
   c:build:
     desc: Build the Pico SDK C examples (requires PICO_SDK_PATH)
