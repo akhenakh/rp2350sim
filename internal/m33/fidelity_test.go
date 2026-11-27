@@ -174,7 +174,6 @@ func TestWideHintIsNotABranch(t *testing.T) {
 
 func TestUnsupportedDSPHalts(t *testing.T) {
 	cases := [][2]uint16{
-		{0xF381, 0x0008}, // usat r0, #8, r1
 		{0xFA82, 0xF081}, // qadd r0, r1, r2
 		{0xFA91, 0x02F0}, // sadd16 r0, r1, r2
 		{0xFA81, 0x42F0}, // uadd8 r0, r1, r2

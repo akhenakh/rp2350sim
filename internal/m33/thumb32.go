@@ -67,6 +67,8 @@ func isSystem32(hw1, hw2 uint16) bool {
 		return true
 	case hw1&0xFFF0 == 0xF3B0: // barriers / CLREX
 		return true
+	case hw2&0x8000 == 0 && (hw1&0xFFD0 == 0xF300 || hw1&0xFFD0 == 0xF380): // SSAT/USAT
+		return true
 	case hw2&0x8000 == 0 && (hw1&0xFFF0 == 0xF340 || // SBFX
 		hw1&0xFFF0 == 0xF360 || // BFI / BFC
 		hw1&0xFFF0 == 0xF3C0): // UBFX
@@ -874,6 +876,8 @@ func (c *CPU) exec32System(hw1, hw2 uint16) {
 		lsb := uint32(hw2>>12&7)<<2 | uint32(hw2>>6&3)
 		width := uint32(hw2&0x1F) + 1
 		c.R[rd] = (c.R[rn] >> lsb) & uint32((uint64(1)<<width)-1)
+	case hw2&0x8000 == 0 && (hw1&0xFFD0 == 0xF300 || hw1&0xFFD0 == 0xF380): // SSAT/USAT
+		c.execSaturate(hw1, hw2)
 	case hw1&0xFFF0 == 0xF340: // SBFX
 		rn := uint32(hw1 & 0xF)
 		rd := uint32(hw2 >> 8 & 0xF)
@@ -897,6 +901,52 @@ func (c *CPU) exec32System(hw1, hw2 uint16) {
 		}
 		c.Halt("unimplemented system instruction")
 	}
+}
+
+// execSaturate implements SSAT/USAT: shift Rn, clamp to a signed or unsigned
+// range, set APSR.Q when the value was clamped.
+func (c *CPU) execSaturate(hw1, hw2 uint16) {
+	usat := hw1&0x0080 != 0
+	rn := uint32(hw1 & 0xF)
+	rd := uint32(hw2 >> 8 & 0xF)
+	imm2 := uint32(hw2>>6) & 3
+	v := c.R[rn]
+	if hw1&0x0020 != 0 { // ASR, with 0 meaning 32
+		n := imm2
+		if n == 0 {
+			n = 32
+		}
+		if n >= 32 {
+			v = uint32(int32(v) >> 31)
+		} else {
+			v = uint32(int32(v) >> n)
+		}
+	} else {
+		v <<= imm2
+	}
+	signed := int64(int32(v))
+	out := signed
+	if usat {
+		max := int64(1)<<(hw2&0x1F) - 1
+		if signed < 0 {
+			out = 0
+		} else if signed > max {
+			out = max
+		}
+	} else {
+		sat := int64(hw2&0x1F) + 1
+		min := -(int64(1) << (sat - 1))
+		max := int64(1)<<(sat-1) - 1
+		if signed < min {
+			out = min
+		} else if signed > max {
+			out = max
+		}
+	}
+	if out != signed {
+		c.APSR |= flagQ
+	}
+	c.R[rd] = uint32(out)
 }
 
 func (c *CPU) readSpecialReg(sysm uint32) uint32 {
@@ -1046,8 +1096,8 @@ func (c *CPU) exec32Unary(hw1, hw2 uint16) {
 			// modelled. Halting is better than silently doing nothing.
 			c.Halt("unimplemented parallel DSP instruction")
 		}
-	case 0xFAA0: // SEL
-		c.R[rd] = c.R[rm]
+	case 0xFAA0: // SEL needs APSR.GE, which the DSP group does not model
+		c.Halt("unimplemented SEL (APSR.GE)")
 	case 0xFAB0: // CLZ
 		if op == 0x8 {
 			c.R[rd] = uint32(clz32(c.R[rm]))

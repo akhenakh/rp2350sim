@@ -333,8 +333,8 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   disabled, because TinyGo's `SetX`/`SetY` rely on it. Treat this as more
   permissive than hardware when porting hand-written PIO.
 - **VFP/DSP:** VFMA/VFMS are separate multiply/add (up to 1 ulp from fused
-  hardware); `SEL` does not model the GE flags. Unsigned-saturating and
-  parallel DSP instructions (USAT/SSAT, QADD, SADD/UADD16, ...) halt rather
+  hardware). `SEL` halts rather than selecting without GE tracking; SSAT/USAT
+  are implemented, while QADD and the parallel SADD/UADD16 family halt rather
   than execute.
 - **USB host:** the emulated host enumerates the device from its configuration
   descriptor, follows the DPRAM buffer addresses in `EP_CONTROL`, and pumps
