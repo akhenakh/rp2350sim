@@ -77,6 +77,22 @@ var (
 	canOK     bool
 	canTried  bool
 	drawCount uint32
+
+	drawnOneOK    bool
+	drawnOneTemp  int
+	drawnDhtOK    bool
+	drawnDhtHum   int
+	drawnDhtTemp  int
+	drawnEchoOK   bool
+	drawnDistance int
+	drawnGPSOK    bool
+	drawnGPSLat   float64
+	drawnGPSLon   float64
+	drawnGPSSats  int
+	drawnCANOK    bool
+	drawnCANTried bool
+	drawnCANID    uint32
+	drawnCANData  byte
 )
 
 func logf(format string, args ...any) {
@@ -443,6 +459,10 @@ func row(d *st7789.Device, x, y, w int16, text string, c color.RGBA, bgc color.R
 }
 
 func drawOneWire(d *st7789.Device) {
+	if oneOK == drawnOneOK && oneTemp == drawnOneTemp {
+		return
+	}
+	drawnOneOK, drawnOneTemp = oneOK, oneTemp
 	_ = d.FillRectangle(12, 62, 142, 36, panel)
 	if oneOK {
 		tinyfont.WriteLine(d, &freesans.Bold24pt7b, 12, 94, f2(oneTemp), white)
@@ -453,6 +473,10 @@ func drawOneWire(d *st7789.Device) {
 }
 
 func drawDHT(d *st7789.Device) {
+	if dhtOK == drawnDhtOK && dhtHum == drawnDhtHum && dhtTemp == drawnDhtTemp {
+		return
+	}
+	drawnDhtOK, drawnDhtHum, drawnDhtTemp = dhtOK, dhtHum, dhtTemp
 	if dhtOK {
 		row(d, 12, 140, 142, fmt.Sprintf("%s %%  %s C", f1(dhtHum), f1(dhtTemp)), white, panel)
 	} else {
@@ -461,6 +485,10 @@ func drawDHT(d *st7789.Device) {
 }
 
 func drawDistance(d *st7789.Device) {
+	if echoOK == drawnEchoOK && distance == drawnDistance {
+		return
+	}
+	drawnEchoOK, drawnDistance = echoOK, distance
 	_ = d.FillRectangle(12, 166, 142, 38, panel)
 	if echoOK {
 		tinyfont.WriteLine(d, &freesans.Bold18pt7b, 12, 194, fmt.Sprintf("%d", distance), white)
@@ -471,6 +499,12 @@ func drawDistance(d *st7789.Device) {
 }
 
 func drawGPS(d *st7789.Device) {
+	if position.ok == drawnGPSOK && position.lat == drawnGPSLat &&
+		position.lon == drawnGPSLon && position.sats == drawnGPSSats {
+		return
+	}
+	drawnGPSOK, drawnGPSLat, drawnGPSLon, drawnGPSSats =
+		position.ok, position.lat, position.lon, position.sats
 	row(d, 240, 54, 70, "", panel2, panel2)
 	if position.ok {
 		tinyfont.WriteLine(d, &freesans.Regular9pt7b, 245, 54,
@@ -487,6 +521,12 @@ func drawGPS(d *st7789.Device) {
 }
 
 func drawCAN(d *st7789.Device) {
+	if canOK == drawnCANOK && canTried == drawnCANTried &&
+		canID == drawnCANID && canData == drawnCANData {
+		return
+	}
+	drawnCANOK, drawnCANTried, drawnCANID, drawnCANData =
+		canOK, canTried, canID, canData
 	if canOK {
 		row(d, 173, 190, 135, fmt.Sprintf("0x%03X -> 0x%03X", 0x123, canID), white, panel)
 		row(d, 173, 208, 135, fmt.Sprintf("data 0x%02X", canData), green, panel)
@@ -532,7 +572,11 @@ func main() {
 	canInit()
 
 	drawStatic(&display)
-	tinyfont.WriteLine(&display, &freesans.Regular9pt7b, 12, 88, "reading sensors", muted)
+	// Force the first value draw even when a sensor is absent.
+	drawnOneTemp, drawnDhtHum, drawnDhtTemp = -1<<30, -1, -1<<30
+	drawnDistance, drawnGPSSats = -1, -1
+	drawnGPSLat, drawnGPSLon = 999, 999
+	drawnCANID, drawnCANData = ^uint32(0), 0xFF
 	pumpGPS()
 
 	dhtOK = readDHT()
