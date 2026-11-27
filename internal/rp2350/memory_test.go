@@ -19,18 +19,23 @@ func TestFlashIs16MiB(t *testing.T) {
 	}
 }
 
-// TestXIPAliases checks the RP2350 nocache/maintenance/notranslate windows all
-// read the same flash and that maintenance writes are accepted as no-ops.
+// TestXIPAliases checks the RP2350 nocache/notranslate windows read the same
+// flash. The maintenance window is not a data view: reads return zero and
+// writes are cache operations, not flash accesses.
 func TestXIPAliases(t *testing.T) {
 	c := New()
 	const off = 0x1234
 	c.LoadSegment(FlashBase+off, []byte{0x11, 0x22, 0x33, 0x44})
-	for _, base := range []uint32{XIPNoCacheBase, XIPMaintenanceBase, XIPNoTranslateBase} {
+	for _, base := range []uint32{XIPNoCacheBase, XIPNoTranslateBase} {
 		if got := c.Read32(base + off); got != 0x44332211 {
 			t.Fatalf("alias %#x read %#x", base, got)
 		}
 	}
+	if got := c.Read32(XIPMaintenanceBase + off); got != 0 {
+		t.Fatalf("maintenance read = %#x, want 0", got)
+	}
 	c.Write32(XIPMaintenanceBase+off, 0)
+	c.Write32(XIPMaintenanceBase+FlashSize-4, 0) // top of the window
 	if got := c.Read32(FlashBase + off); got != 0x44332211 {
 		t.Fatalf("maintenance write changed flash: %#x", got)
 	}

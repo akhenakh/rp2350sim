@@ -1418,8 +1418,6 @@ func flashAlias(addr uint32) (uint32, bool) {
 	switch {
 	case addr >= XIPNoCacheBase && addr < XIPNoCacheBase+XIPDeviceWindow:
 		return addr - XIPNoCacheBase, true
-	case addr >= XIPMaintenanceBase && addr < XIPMaintenanceBase+XIPDeviceWindow:
-		return addr - XIPMaintenanceBase, true
 	case addr >= XIPNoTranslateBase && addr < XIPNoTranslateBase+XIPDeviceWindow:
 		return addr - XIPNoTranslateBase, true
 	}
