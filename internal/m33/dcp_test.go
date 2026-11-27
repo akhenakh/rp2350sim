@@ -52,7 +52,7 @@ func runDCPConversion(t *testing.T, value float64, rounded, unsigned bool) uint3
 	if unsigned {
 		readOpc2 = 1 // RDUC
 	}
-	cpu.dcpMRC(0, readOpc2<<5|3)
+	cpu.dcpMRC(0, readOpc2<<5|3, false)
 	if cpu.Halted {
 		t.Fatalf("DCP conversion halted: %s", cpu.HaltReason)
 	}
