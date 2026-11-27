@@ -26,8 +26,15 @@ func TestDWTCycleCounter(t *testing.T) {
 	if got := c.Read32(dwtCYCC); got != 12345 {
 		t.Fatalf("CYCCNT = %d", got)
 	}
-	if got := c.Read32(dwtPCSR); got != c.CPU0.R[15] {
+	c.CPU0.R[15] = 0x10001234
+	if got := c.Read32(dwtPCSR); got != 0x10001234 {
 		t.Fatalf("PCSR = %#x", got)
+	}
+	if got := c.Read8(dwtPCSR); got != 0x34 {
+		t.Fatalf("PCSR byte = %#x", got)
+	}
+	if got := c.Read16(dwtPCSR + 2); got != 0x1000 {
+		t.Fatalf("PCSR halfword = %#x", got)
 	}
 }
 
