@@ -38,7 +38,7 @@ func (b *fakeBus) transfer(d *Device, cmd uint32, write []uint32, readWords int)
 	}
 	readBits := func(n int) uint32 {
 		var v uint32
-		for i := 0; i < n; i++ {
+		for range n {
 			d.setCLK(false)
 			v = v << 1
 			if b.out {
@@ -48,7 +48,7 @@ func (b *fakeBus) transfer(d *Device, cmd uint32, write []uint32, readWords int)
 		}
 		return v
 	}
-	for i := 0; i < readWords; i++ {
+	for range readWords {
 		words = append(words, readBits(32))
 	}
 	_ = readBits(32) // status word

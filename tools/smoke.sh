@@ -405,7 +405,8 @@ if [ -f "$BUILD/pico2w.elf" ]; then
 	contains "CYW43439 WL_GPIO0 LED" "pico2w: led on" "$out"
 fi
 
-# --- virtual CYW43 BLE controller -------------------------------------------if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
+# --- virtual CYW43 BLE controller -------------------------------------------
+if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
 	rm -f "$BUILD/ble.pcapng"
 	out=$("$EMU" -fw "$BUILD/ble-c/ble_temp_reader.elf" -ble -seconds 2 -quiet \
 		-ble-hci-log "$BUILD/ble.pcapng" 2>&1)
