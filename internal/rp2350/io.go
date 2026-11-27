@@ -745,7 +745,7 @@ func (s *sioBlock) launchStep(c *Chip, v uint32) {
 		c.CPU1.MSP = s.launchSP
 		c.CPU1.R[13] = s.launchSP
 		c.CPU1.R[15] = s.launchEntry &^ 1
-		c.CPU1.R[14] = 0
+		c.CPU1.R[14] = bootromParkLoop | 1
 	}
 }
 

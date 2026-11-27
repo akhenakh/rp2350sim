@@ -28,6 +28,7 @@ const (
 	bootromSyntheticStride   = 4
 	bootromDataBase          = 0x7800
 	bootromFuncTableData     = 0x7c00
+	bootromParkLoop          = 0x7ff0     // b . ; core 1 returns here and parks
 	bootromMagic             = 0x0002754d // 'M', 'u', 0x02
 	bootromVersion           = 3
 	sysInfoChipInfo          = 0x0001
@@ -76,6 +77,9 @@ func installBootROM(c *Chip) *bootROM {
 	write16 := func(off int, v uint16) { c.ROM[off] = byte(v); c.ROM[off+1] = byte(v >> 8) }
 	write16(bootromFuncTablePtr, uint16(bootromFuncTableData))
 	write16(bootromLookupPtr, uint16(lookupAddr|1))
+	// A core 1 entry that returns lands in the bootrom launch routine's exit
+	// path on hardware; park it instead of executing address zero.
+	write16(bootromParkLoop, 0xE7FE)
 	put32 := func(off int, v uint32) {
 		c.ROM[off] = byte(v)
 		c.ROM[off+1] = byte(v >> 8)
@@ -179,6 +183,13 @@ func romCode(code string) uint32 { return uint32(code[0]) | uint32(code[1])<<8 }
 
 // exec runs a synthetic ROM call. It reports whether pc was handled.
 func (b *bootROM) exec(c *Chip, cpu *m33.CPU, pc uint32) bool {
+	if pc == bootromParkLoop {
+		// A core 1 entry that returns lands here. Park the core instead of
+		// executing the table bytes, matching the bootrom's exit path.
+		cpu.Parked = true
+		cpu.Cycles++
+		return true
+	}
 	stub, ok := b.hooks[pc]
 	if !ok {
 		return false

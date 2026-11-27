@@ -118,6 +118,9 @@ func TestCore1LaunchResyncsPrefix(t *testing.T) {
 		t.Fatalf("launch state VTOR=%#x MSP=%#x SP=%#x PC=%#x",
 			c.CPU1.VTOR, c.CPU1.MSP, c.CPU1.R[13], c.CPU1.R[15])
 	}
+	if c.CPU1.R[14] != bootromParkLoop|1 {
+		t.Fatalf("core 1 LR = %#x, want the bootrom park loop", c.CPU1.R[14])
+	}
 }
 
 // TestPSMResetCore1 checks multicore_reset_core1(): FRCE_OFF.PROC1 resets
