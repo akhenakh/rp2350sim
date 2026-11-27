@@ -318,8 +318,8 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   is not generated.
 - **Peripheral interrupts:** NVIC lines are wired for DMA (10-13), both timers
   (0-7), UART RX (33/34), USB (14), PIO (15-20), TRNG (39), POWMAN (45), SIO
-  FIFO (25) and doorbell (26). SPI, I2C, ADC, GPIO-edge, PWM-wrap and UART TX
-  interrupt lines are not delivered yet.
+  FIFO (25), doorbell (26) and PWM wrap (8/9). SPI, I2C, ADC, GPIO-edge and
+  UART TX interrupt lines are not delivered yet.
 - **BOOTSEL:** the Board tab's BOOTSEL control (and a YAML `bootsel` input)
   pulls the QSPI chip-select line low. It latches so it can stay held through a
   Reset; the board diagram button is momentary. Firmware reads the line through

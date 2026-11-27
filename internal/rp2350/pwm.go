@@ -10,6 +10,7 @@ type pwmBlock struct {
 	block   *regBlock
 	slices  [pwmSlices]pwmSliceState
 	enabled uint16
+	intr    uint32 // raw wrap flags, write-1-to-clear
 }
 
 type pwmSliceState struct {
@@ -37,6 +38,16 @@ const (
 	pwmCSRBInv    = 1 << 3
 	pwmCSRPhRet   = 1 << 6
 	pwmCSRPhAdv   = 1 << 7
+
+	pwmIRQ0       = 8
+	pwmIRQ1       = 9
+	pwmIntrOffset = 0xF4
+	pwmInte0      = 0xF8
+	pwmIntf0      = 0xFC
+	pwmInts0      = 0x100
+	pwmInte1      = 0x104
+	pwmIntf1      = 0x108
+	pwmInts1      = 0x10C
 )
 
 func newPWM(c *Chip) *pwmBlock {
@@ -63,6 +74,7 @@ func (p *pwmBlock) reset() {
 	clear(p.block.regs)
 	p.slices = [pwmSlices]pwmSliceState{}
 	p.enabled = 0
+	p.intr = 0
 	for slice := range pwmSlices {
 		p.block.regs[(slice*pwmStride+0x04)/4] = 0x10
 		p.block.regs[(slice*pwmStride+0x10)/4] = 0xFFFF
@@ -71,8 +83,17 @@ func (p *pwmBlock) reset() {
 }
 
 func (p *pwmBlock) read(c *Chip, off uint32) (uint32, bool) {
-	if off == pwmGlobalEN {
+	switch off {
+	case pwmGlobalEN:
 		return uint32(p.enabled), true
+	case pwmIntrOffset:
+		return p.intr, true
+	case pwmInte0, pwmIntf0, pwmInte1, pwmIntf1:
+		return p.block.regs[off/4], true
+	case pwmInts0:
+		return (p.intr | p.block.regs[pwmIntf0/4]) & p.block.regs[pwmInte0/4], true
+	case pwmInts1:
+		return (p.intr | p.block.regs[pwmIntf1/4]) & p.block.regs[pwmInte1/4], true
 	}
 	if off >= pwmGlobalEN {
 		return 0, false
@@ -106,6 +127,20 @@ func (p *pwmBlock) write(c *Chip, off, v uint32) {
 		}
 		p.block.regs[off/4] = uint32(p.enabled)
 		return
+	}
+	if off == pwmIntrOffset { // raw wrap flags are write-1-to-clear
+		p.intr &^= v & 0xFFF
+		p.block.regs[off/4] = p.intr
+		p.syncIRQ()
+		return
+	}
+	switch off {
+	case pwmInte0, pwmIntf0, pwmInte1, pwmIntf1:
+		p.block.regs[off/4] = v & 0xFFF
+		p.syncIRQ()
+		return
+	case pwmInts0, pwmInts1:
+		return // read-only masked status
 	}
 	if off >= pwmGlobalEN {
 		return
@@ -241,18 +276,24 @@ func (p *pwmBlock) tick() {
 			p.block.regs[slice*pwmStride/4] &^= pwmCSRPhRet
 			continue
 		}
-		p.advance(slice)
+		if p.advance(slice) {
+			p.raiseWrap(slice)
+		}
 	}
 }
 
-func (p *pwmBlock) advance(slice int) {
+// advance clocks one slice counter and reports whether it wrapped. In
+// phase-correct mode the wrap point is the return to 0, not the top.
+func (p *pwmBlock) advance(slice int) bool {
 	s := &p.slices[slice]
 	csr := p.block.regs[slice*pwmStride/4]
+	wrapped := false
 	if csr&pwmCSRCorrect == 0 {
 		if s.ctr >= s.top {
 			s.ctr = 0
 			s.cc = p.block.regs[slice*pwmStride/4+3]
 			s.top = uint16(p.block.regs[slice*pwmStride/4+4])
+			wrapped = true
 		} else {
 			s.ctr++
 		}
@@ -277,11 +318,34 @@ func (p *pwmBlock) advance(slice int) {
 		s.ctr--
 		if s.ctr == 0 {
 			s.phaseHold = true
+			wrapped = true
 		}
 	} else {
 		s.phaseHold = true
 	}
 	p.block.regs[slice*pwmStride/4+2] = uint32(s.ctr)
+	return wrapped
+}
+
+// raiseWrap latches the slice's raw wrap flag and updates both IRQ lines.
+func (p *pwmBlock) raiseWrap(slice int) {
+	p.intr |= 1 << uint(slice)
+	p.block.regs[pwmIntrOffset/4] = p.intr
+	p.syncIRQ()
+}
+
+// syncIRQ recomputes PWM_IRQ_WRAP_0/1 from the raw/forced state.
+func (p *pwmBlock) syncIRQ() {
+	if (p.intr|p.block.regs[pwmIntf0/4])&p.block.regs[pwmInte0/4] != 0 {
+		p.chip.PendIRQ(pwmIRQ0)
+	} else {
+		p.chip.ClearPendingIRQ(pwmIRQ0)
+	}
+	if (p.intr|p.block.regs[pwmIntf1/4])&p.block.regs[pwmInte1/4] != 0 {
+		p.chip.PendIRQ(pwmIRQ1)
+	} else {
+		p.chip.ClearPendingIRQ(pwmIRQ1)
+	}
 }
 
 func (p *pwmBlock) pwmBLevel(slice int) bool {

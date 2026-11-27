@@ -222,3 +222,75 @@ func TestADCTemperatureRoundRobin(t *testing.T) {
 		})
 	}
 }
+
+// TestPWMWrapInterrupt checks the shared wrap flag and both IRQ banks.
+func TestPWMWrapInterrupt(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+
+	// Slice 0: TOP=3, run, IRQ0 enabled.
+	c.Write32(pwmBase+0x10, 3)
+	c.Write32(pwmBase, 1)
+	c.Write32(pwmBase+pwmInte0, 1)
+	for range 3 {
+		c.Step()
+	}
+	if got := c.Read32(pwmBase + pwmIntrOffset); got != 0 {
+		t.Fatalf("wrap fired early: INTR=%#x", got)
+	}
+	c.Step()
+	if got := c.Read32(pwmBase + pwmIntrOffset); got&1 == 0 {
+		t.Fatalf("wrap did not set INTR: %#x", got)
+	}
+	if got := c.Read32(pwmBase + pwmInts0); got != 1 {
+		t.Fatalf("INTS0 = %#x", got)
+	}
+	if got := c.Read32(pwmBase + pwmInts1); got != 0 {
+		t.Fatalf("INTS1 = %#x", got)
+	}
+	if c.ppb[0].pending[0]&(1<<pwmIRQ0) == 0 {
+		t.Fatal("PWM_IRQ_WRAP_0 not pending")
+	}
+
+	c.Write32(pwmBase+pwmIntrOffset, 1)
+	if c.ppb[0].pending[0]&(1<<pwmIRQ0) != 0 {
+		t.Fatal("clearing INTR left the IRQ pending")
+	}
+
+	// Slice 9 through the second bank.
+	slice9 := uint32(pwmBase + 9*pwmStride)
+	c.Write32(slice9+0x10, 1)
+	c.Write32(slice9, 1)
+	c.Write32(pwmBase+pwmInte1, 1<<9)
+	for range 2 {
+		c.Step()
+	}
+	if got := c.Read32(pwmBase + pwmInts1); got != 1<<9 {
+		t.Fatalf("INTS1 = %#x, want %#x", got, 1<<9)
+	}
+	if c.ppb[0].pending[0]&(1<<pwmIRQ1) == 0 {
+		t.Fatal("PWM_IRQ_WRAP_1 not pending")
+	}
+}
+
+// TestPWMWrapPhaseCorrect checks that phase-correct mode raises the wrap when
+// the counter returns to zero, not at the top.
+func TestPWMWrapPhaseCorrect(t *testing.T) {
+	c := New()
+	c.CPU0.Parked = true
+	c.CPU1.Parked = true
+	c.Write32(pwmBase+0x10, 3)
+	c.Write32(pwmBase, 1|pwmCSRCorrect)
+	c.Write32(pwmBase+pwmInte0, 1)
+	for range 6 {
+		c.Step()
+	}
+	if got := c.Read32(pwmBase + pwmIntrOffset); got != 0 {
+		t.Fatalf("phase-correct wrap fired at the top: %#x", got)
+	}
+	c.Step() // counter reaches 0
+	if got := c.Read32(pwmBase + pwmIntrOffset); got&1 == 0 {
+		t.Fatalf("phase-correct wrap did not fire: %#x", got)
+	}
+}
