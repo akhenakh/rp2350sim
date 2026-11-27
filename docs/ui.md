@@ -547,7 +547,9 @@ everything the board model attaches directly — LCD, touch, IMU, SD, CAN,
 1-Wire, DHT, ultrasonic, GPS, Ethernet, Wi-Fi, WS2812 and BLE — with the bus,
 chip select or GPIO it uses. A **Device logs** card below it shows the
 transaction log of the timed wire devices that have no tab of their own:
-1-Wire DS18B20 reads, DHT22 conversions and HC-SR04 measurements. CAN frames,
+1-Wire DS18B20 reads, DHT22 conversions and HC-SR04 measurements. Each line
+keeps the decoded value and adds the raw payload (the nine scratchpad bytes,
+the five DHT bytes, or the echo pulse width in hex microseconds). CAN frames,
 GPS sentences, WS2812 frames and BLE HCI traffic stay in their dedicated tabs.
 When the board has no scripted, preset or TCP-bridged target, the tab still
 keeps a stable position and explains that those timed devices are modelled

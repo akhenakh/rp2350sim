@@ -1418,26 +1418,26 @@ func (e *Emu) resetChip() {
 			w := devices.NewWire(c, d.Pin)
 			devices.NewDS18B20(w, devices.DS18B20Config{
 				TemperatureC: d.Temperature,
-				OnRead: func(temperature float64) {
-					e.addDeviceLog(fmt.Sprintf("%8.2f ms 1-Wire DS18B20 %.2f C",
-						float64(e.chip.Cycles)/150_000, temperature))
+				OnRead: func(temperature float64, raw []byte) {
+					e.addDeviceLog(fmt.Sprintf("%8.2f ms 1-Wire DS18B20 %.2f C raw=% X",
+						float64(e.chip.Cycles)/150_000, temperature, raw))
 				},
 			})
 		}
 		for _, d := range b.DHT {
 			devices.NewDHT(devices.NewWire(c, d.Pin), devices.DHTConfig{
 				Kind: d.Kind, Humidity: d.Humidity, Temperature: d.Temperature,
-				OnRead: func(kind string, humidity, temperature float64) {
-					e.addDeviceLog(fmt.Sprintf("%8.2f ms %s %.1f %% %.1f C",
-						float64(e.chip.Cycles)/150_000, strings.ToUpper(kind), humidity, temperature))
+				OnRead: func(kind string, humidity, temperature float64, raw []byte) {
+					e.addDeviceLog(fmt.Sprintf("%8.2f ms %s %.1f %% %.1f C raw=% X",
+						float64(e.chip.Cycles)/150_000, strings.ToUpper(kind), humidity, temperature, raw))
 				},
 			})
 		}
 		for _, d := range b.Ultrasonic {
 			us := devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
-			us.OnMeasure = func(distance float64) {
-				e.addDeviceLog(fmt.Sprintf("%8.2f ms HC-SR04 %.0f cm",
-					float64(e.chip.Cycles)/150_000, distance))
+			us.OnMeasure = func(distance float64, echoUS uint64) {
+				e.addDeviceLog(fmt.Sprintf("%8.2f ms HC-SR04 %.0f cm raw=0x%X (%d us)",
+					float64(e.chip.Cycles)/150_000, distance, echoUS, echoUS))
 			}
 		}
 		pluginSelects := e.attachPlugins(c, b, attachSPI)

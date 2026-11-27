@@ -12,8 +12,9 @@ type DHTConfig struct {
 	Humidity    float64
 	Temperature float64
 	BadChecksum bool
-	// OnRead is called when the host starts a conversion.
-	OnRead func(kind string, humidity, temperature float64)
+	// OnRead is called when the host starts a conversion, with the decoded
+	// values and the raw five-byte frame.
+	OnRead func(kind string, humidity, temperature float64, raw []byte)
 }
 
 // DHT is a DHT11/DHT22 model. The host pulls the line low for at least 1 ms,
@@ -31,7 +32,7 @@ type DHT struct {
 	data   [5]byte
 	action *rp2350.Deadline
 	fallAt uint64
-	onRead func(kind string, humidity, temperature float64)
+	onRead func(kind string, humidity, temperature float64, raw []byte)
 }
 
 const (
@@ -89,7 +90,7 @@ func (d *DHT) onEdge(level bool) {
 
 func (d *DHT) start() {
 	if d.onRead != nil {
-		d.onRead(d.kind, d.hum, d.temp)
+		d.onRead(d.kind, d.hum, d.temp, d.data[:])
 	}
 	d.state = dhtResponseLow
 	d.w.DriveLow()
