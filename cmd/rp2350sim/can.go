@@ -43,7 +43,7 @@ func attachCAN(c *rp2350.Chip, raw string) (*devices.MCP2515, int, error) {
 		return nil, 0, err
 	}
 	bus := devices.NewCANBus(c)
-	devices.NewCANPeer(bus, peer, reply, false)
+	devices.NewCANPeer(bus, peer, reply, peer > 0x7FF || reply > 0x7FF)
 	m := devices.NewMCP2515(c, bus, cs, intPin)
 	c.Pins.AddChangeListener(func(pin int, level bool) {
 		if pin == cs && !level {

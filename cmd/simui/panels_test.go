@@ -32,3 +32,20 @@ func TestCANMode(t *testing.T) {
 		}
 	}
 }
+
+func TestTraceLinesPartialAndCap(t *testing.T) {
+	events := []rp2350.TraceEvent{{Cycle: 1, Port: 0, Kind: "itm", Text: "partial"}}
+	lines := traceLines(events)
+	if len(lines) != 1 || lines[0].text != "partial" {
+		t.Fatalf("partial lines = %+v", lines)
+	}
+	var long []byte
+	for range maxTraceLine + 10 {
+		long = append(long, 'x')
+	}
+	events = []rp2350.TraceEvent{{Cycle: 2, Port: 0, Kind: "itm", Text: string(long)}}
+	lines = traceLines(events)
+	if len(lines) != 1 || len(lines[0].text) != maxTraceLine {
+		t.Fatalf("capped line length = %d", len(lines))
+	}
+}

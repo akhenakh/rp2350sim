@@ -10,6 +10,8 @@ import (
 	. "go.hasen.dev/shirei/widgets"
 )
 
+const maxTraceLine = 4096
+
 type traceLine struct {
 	cycle uint64
 	port  int
@@ -72,7 +74,12 @@ func traceLines(events []rp2350.TraceEvent) []traceLine {
 			if current.port == -1 {
 				current.cycle, current.port = ev.Cycle, ev.Port
 			}
-			current.text += ev.Text
+			if len(current.text) < maxTraceLine {
+				current.text += ev.Text
+				if len(current.text) > maxTraceLine {
+					current.text = current.text[:maxTraceLine]
+				}
+			}
 			if strings.HasSuffix(current.text, "\n") {
 				current.text = strings.TrimRight(current.text, "\r\n")
 				flush()

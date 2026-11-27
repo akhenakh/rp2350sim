@@ -373,6 +373,15 @@ func TestBoardsValidateGeometryAndOwnership(t *testing.T) {
 		 audio: { kind: pwm, pin: 25 }`,
 		`analog: [{ pin: 26 }]
 		 audio: { kind: pwm, pin: 26 }`,
+		`onewire: [{ pin: 40 }]`,
+		`dht: [{ pin: 40 }]`,
+		`ultrasonic: [{ trig: 40, echo: 41 }]`,
+		`can: { bus: 0, cs: 40 }`,
+		`serial_plugins: [{ file: foo.lua, uart: 0, pins: { x: 40 } }]`,
+		`onewire: [{ pin: 17 }]
+		 lcd: { spi: 0, cs: 18, dc: 16, rst: 20, width: 240, height: 135 }`,
+		`serial_plugins: [{ file: foo.lua, uart: 0, pins: { x: 17 } }]
+		 lcd: { spi: 0, cs: 18, dc: 16, rst: 20, width: 240, height: 135 }`,
 	}
 	for _, snippet := range bad {
 		writeBoards(t, "boards:\n  - id: t\n    "+snippet+"\n")
@@ -480,5 +489,24 @@ func TestBoardsValidatePlugins(t *testing.T) {
 `)
 	if _, err := LoadBoards(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGPSFixPointer(t *testing.T) {
+	writeBoards(t, `boards:
+  - id: gps
+    gps: { uart: 1, lat: 45.5, lon: -73.5 }
+  - id: nofix
+    gps: { uart: 1, lat: 45.5, lon: -73.5, fix: false }
+`)
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boards[0].GPS.Fix != nil {
+		t.Fatal("omitted GPS fix did not stay unset")
+	}
+	if boards[1].GPS.Fix == nil || *boards[1].GPS.Fix {
+		t.Fatal("explicit GPS fix:false was not preserved")
 	}
 }

@@ -266,6 +266,8 @@ func main() {
 	flag.StringVar(&gpsSpec, "gps", "", "attach an NMEA GPS on UART[:LAT:LON]")
 	var canSpec string
 	flag.StringVar(&canSpec, "can", "", "attach an MCP2515 on CS[:INT[:PEER_ID]]")
+	var canBus int
+	flag.IntVar(&canBus, "can-bus", 0, "SPI controller for -can (0 or 1)")
 	flag.Parse()
 	if *listPresets {
 		printBusPresets()
@@ -673,12 +675,20 @@ func main() {
 	}
 	var spi0, spi1 []spiDev
 	if canSpec != "" {
+		if canBus != 0 && canBus != 1 {
+			log.Error("can-bus", slog.Int("bus", canBus), slog.String("err", "must be 0 or 1"))
+			exit(2)
+		}
 		m, cs, err := attachCAN(c, canSpec)
 		if err != nil {
 			log.Error("can", slog.Any("err", err))
 			exit(2)
 		}
-		spi0 = append(spi0, spiDev{cs, m.Transfer})
+		if canBus == 1 {
+			spi1 = append(spi1, spiDev{cs, m.Transfer})
+		} else {
+			spi0 = append(spi0, spiDev{cs, m.Transfer})
+		}
 	}
 	if w6300 != nil {
 		spi0 = append(spi0, spiDev{17, w6300.Transfer})
@@ -728,6 +738,12 @@ func main() {
 		}
 	}
 	pluginSelects := map[int]func(bool){}
+	var loadedPlugins []*deviceplugin.Plugin
+	defer func() {
+		for _, p := range loadedPlugins {
+			_ = p.Close()
+		}
+	}()
 	loadPlugins := func(kind string, specs []string) {
 		for _, raw := range specs {
 			spec, err := parsePluginSpec(kind, raw)
@@ -740,6 +756,7 @@ func main() {
 				log.Error("plugin", slog.String("spec", raw), slog.Any("err", err))
 				exit(2)
 			}
+			loadedPlugins = append(loadedPlugins, p)
 			switch kind {
 			case "i2c":
 				c.AttachI2C(spec.bus, uint8(spec.addr), deviceplugin.NewI2C(p, uint8(spec.addr)))

@@ -1305,7 +1305,8 @@ func (e *Emu) resetChip() {
 			dev := devices.NewGPS(c, g.UART, devices.GPSConfig{
 				Lat: g.Lat, Lon: g.Lon, Altitude: g.Altitude,
 				SpeedKnots: g.SpeedKnots, Course: g.Course,
-				Satellites: g.Satellites, Fix: g.Fix,
+				Satellites: g.Satellites,
+				Fix:        g.Fix != nil && *g.Fix, FixSet: g.Fix != nil,
 				Rate: time.Duration(g.RateMS) * time.Millisecond,
 			})
 			c.AttachUART(g.UART, dev)
@@ -1314,7 +1315,8 @@ func (e *Emu) resetChip() {
 		if b.CAN != nil {
 			can := b.CAN
 			bus := devices.NewCANBus(c)
-			devices.NewCANPeer(bus, can.PeerID, can.ReplyID, false)
+			ext := can.PeerID > 0x7FF || can.ReplyID > 0x7FF
+			devices.NewCANPeer(bus, can.PeerID, can.ReplyID, ext)
 			m := devices.NewMCP2515(c, bus, can.CS, can.INT)
 			attachSPI(can.Bus, can.CS, m.Transfer)
 			c.Pins.AddChangeListener(func(pin int, level bool) {
@@ -1337,27 +1339,6 @@ func (e *Emu) resetChip() {
 		}
 		for _, d := range b.Ultrasonic {
 			devices.NewHCSR04(devices.NewWire(c, d.Trig), devices.NewWire(c, d.Echo), d.DistanceCM)
-		}
-		if can := b.CAN; can != nil {
-			bus := devices.NewCANBus(c)
-			devices.NewCANPeer(bus, can.PeerID, can.ReplyID, false)
-			m := devices.NewMCP2515(c, bus, can.CS, can.INT)
-			attachSPI(can.Bus, can.CS, m.Transfer)
-			c.Pins.AddChangeListener(func(pin int, level bool) {
-				if pin == can.CS && !level {
-					m.Select()
-				}
-			})
-		}
-		if g := b.GPS; g != nil {
-			cfg := devices.GPSConfig{
-				Lat: g.Lat, Lon: g.Lon, Altitude: g.Altitude,
-				SpeedKnots: g.SpeedKnots, Course: g.Course,
-				Satellites: g.Satellites, Fix: g.Fix,
-				Rate: time.Duration(g.RateMS) * time.Millisecond,
-			}
-			dev := devices.NewGPS(c, g.UART, cfg)
-			c.AttachUART(g.UART, dev)
 		}
 		pluginSelects := e.attachPlugins(c, b, attachSPI)
 		if len(pluginSelects) > 0 {

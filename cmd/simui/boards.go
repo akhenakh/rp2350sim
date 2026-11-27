@@ -128,7 +128,7 @@ type GPSDevice struct {
 	SpeedKnots float64 `yaml:"speed_knots"`
 	Course     float64 `yaml:"course"`
 	Satellites int     `yaml:"satellites"`
-	Fix        bool    `yaml:"fix"`
+	Fix        *bool   `yaml:"fix"`
 	RateMS     int     `yaml:"rate_ms"`
 }
 
@@ -668,11 +668,16 @@ func LoadBoards() ([]BoardDef, error) {
 		default:
 			return nil, fmt.Errorf("boards: %s: unknown package %q (qfn60 or qfn80)", b.ID, b.Package)
 		}
+		maxPin := 29
+		if b.Package == "qfn80" {
+			maxPin = 47
+		}
+		pinInPackage := func(pin int) bool { return pin >= 0 && pin <= maxPin }
 		seenOneWire := map[int]bool{}
 		for i := range b.OneWire {
 			d := &b.OneWire[i]
-			if d.Pin < 0 || d.Pin > 47 {
-				return nil, fmt.Errorf("boards: %s: onewire pin must be 0..47", b.ID)
+			if !pinInPackage(d.Pin) {
+				return nil, fmt.Errorf("boards: %s: onewire pin must be 0..%d", b.ID, maxPin)
 			}
 			if d.Type != "" && d.Type != "ds18b20" {
 				return nil, fmt.Errorf("boards: %s: unknown onewire device %q", b.ID, d.Type)
@@ -710,8 +715,11 @@ func LoadBoards() ([]BoardDef, error) {
 			if can.Bus != 0 && can.Bus != 1 {
 				return nil, fmt.Errorf("boards: %s: can bus must be 0 or 1", b.ID)
 			}
-			if can.CS < 0 || can.CS > 47 {
-				return nil, fmt.Errorf("boards: %s: can CS must be 0..47", b.ID)
+			if !pinInPackage(can.CS) {
+				return nil, fmt.Errorf("boards: %s: can CS must be 0..%d", b.ID, maxPin)
+			}
+			if can.INT >= 0 && !pinInPackage(can.INT) {
+				return nil, fmt.Errorf("boards: %s: can INT must be 0..%d", b.ID, maxPin)
 			}
 			if can.PeerID == 0 {
 				can.PeerID = 0x123
@@ -722,8 +730,8 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 		for i := range b.DHT {
 			d := &b.DHT[i]
-			if d.Pin < 0 || d.Pin > 47 {
-				return nil, fmt.Errorf("boards: %s: dht pin must be 0..47", b.ID)
+			if !pinInPackage(d.Pin) {
+				return nil, fmt.Errorf("boards: %s: dht pin must be 0..%d", b.ID, maxPin)
 			}
 			if d.Kind == "" {
 				d.Kind = "dht22"
@@ -741,7 +749,7 @@ func LoadBoards() ([]BoardDef, error) {
 		seenUltrasonic := map[int]bool{}
 		for i := range b.Ultrasonic {
 			d := &b.Ultrasonic[i]
-			if d.Trig < 0 || d.Trig > 47 || d.Echo < 0 || d.Echo > 47 || d.Trig == d.Echo {
+			if !pinInPackage(d.Trig) || !pinInPackage(d.Echo) || d.Trig == d.Echo {
 				return nil, fmt.Errorf("boards: %s: invalid ultrasonic pins", b.ID)
 			}
 			if seenUltrasonic[d.Trig] || seenUltrasonic[d.Echo] {
@@ -853,6 +861,16 @@ func LoadBoards() ([]BoardDef, error) {
 			if err := claimUART(d.UART, "plugin "+d.Name); err != nil {
 				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
 			}
+			pluginPins := map[int]string{}
+			for name, pin := range d.Pins {
+				if !pinInPackage(pin) {
+					return nil, fmt.Errorf("boards: %s: uart plugin %s pin %q must be 0..%d", b.ID, d.Name, name, maxPin)
+				}
+				if prev, ok := pluginPins[pin]; ok {
+					return nil, fmt.Errorf("boards: %s: uart plugin %s pins %s and %s both use GP%d", b.ID, d.Name, prev, name, pin)
+				}
+				pluginPins[pin] = name
+			}
 		}
 		if w := b.Wifi; w != nil {
 			if w.UART < 0 || w.UART > 1 {
@@ -873,11 +891,6 @@ func LoadBoards() ([]BoardDef, error) {
 				return nil, fmt.Errorf("boards: %s: psram latency must not be negative", b.ID)
 			}
 		}
-		maxPin := 29
-		if b.Package == "qfn80" {
-			maxPin = 47
-		}
-		pinInPackage := func(pin int) bool { return pin >= 0 && pin <= maxPin }
 		if len(b.Scope) > devices.MaxTraceChannels {
 			return nil, fmt.Errorf("boards: %s: scope supports at most %d pins", b.ID, devices.MaxTraceChannels)
 		}
@@ -1004,6 +1017,27 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 		for _, p := range b.SPIPresets {
 			addDevicePin("preset "+p.Preset+" cs", p.CS)
+		}
+		for _, d := range b.OneWire {
+			addDevicePin("onewire", d.Pin)
+		}
+		for _, d := range b.DHT {
+			addDevicePin("dht", d.Pin)
+		}
+		for _, d := range b.Ultrasonic {
+			addDevicePin("ultrasonic trig", d.Trig)
+			addDevicePin("ultrasonic echo", d.Echo)
+		}
+		if can := b.CAN; can != nil {
+			addDevicePin("can cs", can.CS)
+			if can.INT >= 0 {
+				addDevicePin("can int", can.INT)
+			}
+		}
+		for _, d := range b.UARTPlugins {
+			for name, pin := range d.Pins {
+				addDevicePin("uart plugin "+d.Name+" "+name, pin)
+			}
 		}
 		if d := b.Battery; d != nil {
 			addDevicePin("battery", d.Pin)

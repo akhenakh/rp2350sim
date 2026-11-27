@@ -103,8 +103,7 @@ func loadPlugin(kind string, spec pluginSpec, c *rp2350.Chip, log *slog.Logger) 
 	default:
 		name = fmt.Sprintf("uart%d %s", spec.uart, spec.path)
 	}
-	uart := spec.uart
-	p, err := deviceplugin.Load(deviceplugin.Config{
+	cfg := deviceplugin.Config{
 		Name:   name,
 		Lang:   lang,
 		Source: source,
@@ -115,11 +114,17 @@ func loadPlugin(kind string, spec pluginSpec, c *rp2350.Chip, log *slog.Logger) 
 			return 0
 		},
 		GPIOWrite: func(pin int, level bool) { c.Pins.SetExternal(pin, level) },
-		UARTWrite: func(data []byte) { c.SendUART(uart, data) },
 		Log: func(line string) {
 			log.Info("plugin", slog.String("name", name), slog.String("line", line))
 		},
-	})
+	}
+	// Only a UART plugin owns a UART. I2C/SPI plugins keep the same ABI but
+	// must not be able to inject bytes into UART0 through uart_send.
+	if kind == "uart" {
+		uart := spec.uart
+		cfg.UARTWrite = func(data []byte) { c.SendUART(uart, data) }
+	}
+	p, err := deviceplugin.Load(cfg)
 	if err != nil {
 		return nil, err
 	}
