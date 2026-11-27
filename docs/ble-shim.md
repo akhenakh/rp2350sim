@@ -2,9 +2,11 @@
 
 Status: **M1–M3 implemented, plus the M5 HCI log and BLE tab.** The virtual
 controller, CYW43 symbol binding, temperature peer, CLI flow, pcapng capture
-and `pico2-w-ble` UI board are in place. There is still no CYW43439 radio
-model: the seam is HCI, and the controller is logical. M4
-(pairing/bonding/multiple connections) and M6 (two-chip scenario) remain open.
+and `pico2-w-ble` UI board are in place. The CYW43439's Wi-Fi side now has its
+own gSPI model (`internal/devices/cyw43439`, see [boards.md](boards.md)); the
+BLE controller still uses symbol hooks and is not carried over that transport
+yet. M4 (pairing/bonding/multiple connections) and M6 (two-chip scenario)
+remain open.
 
 This page records the seam, the exact symbols to bind and the HCI subset the
 controller implements.
@@ -30,7 +32,9 @@ existing virtual Wi-Fi is a CH9120 UART netdev, not a CYW43439.
 
 **Use symbol hooks at the CYW43 low-level bus boundary (option A), not at the
 `cyw43_bluetooth_hci_*` wrappers.** A paravirtual MMIO transport (option B)
-stays as the wasm/CI fallback; gSPI (option C) is out of scope.
+stays as the wasm/CI fallback. The Wi-Fi side now has a real gSPI model
+(`internal/devices/cyw43439`); moving BLE onto that transport is deferred until
+the Wi-Fi data path is complete.
 
 The stock Pico W example calls `cyw43_arch_init()` before `btstack_main()`.
 That path is:
@@ -224,6 +228,6 @@ above is source-derived; M2 replaces it with the captured sequence.
   any new one must fail loudly, not hang.
 - **The controller silently accepts an unknown HCI command.** Return an error
   status and log the opcode.
-- **Scope creep into gSPI.** Option C is explicitly out of v1. The bthci UART
-  path (`cyw43_bthci_uart.c`) is a separate transport and is not used by the
-  Pico W.
+- **Scope creep into gSPI.** The Wi-Fi gSPI model is separate; BLE over that
+  transport is deferred. The bthci UART path (`cyw43_bthci_uart.c`) is a
+  different transport and is not used by the Pico W.

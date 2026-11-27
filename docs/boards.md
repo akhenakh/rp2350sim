@@ -30,7 +30,8 @@ and reference firmware. In short:
 | `poe-eth` | `-w6300` |
 | `pico2-w-ble` | `-ble` (virtual CYW43 BLE controller) |
 | `rp2350-eth` | `-ch9120` |
-| `pico2w` | `-ch9120` (virtual Wi-Fi transport) |
+| `pico2w` | `-ch9120` (legacy virtual Wi-Fi transport) |
+| `pico2w-cyw` | `-cyw43439` (on-board CYW43439 gSPI radio) |
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` |
 | `pico2-presets` | `-i2c-preset`, `-spi-preset` |
@@ -174,26 +175,32 @@ to.
 - The emulator's module proxies TCP/UDP client/server sockets to the host
   network stack; TCPCS and the status line are visible in the UI.
 
-## Raspberry Pi Pico 2 W (virtual Wi-Fi)
+## Raspberry Pi Pico 2 W (CYW43439 gSPI)
 
-**This is a fake, not a CYW43439 emulation.** The real board's Infineon
-CYW43439 uses a gSPI transport, a firmware/NVRAM download, WLC IOCTLs,
-SDPCM/BDC frames and a Bluetooth stack. Emulating that faithfully is out of
-scope, and `soypat/cyw43439` firmware does not run here.
+The on-board Infineon CYW43439 is modelled at its host pins: GP23 `WL_REG_ON`,
+GP24 `WL_D` (bidirectional, also `HOST_WAKE`), GP25 `WL_CS` and GP29 `WL_CLK`.
+`internal/devices/cyw43439` speaks the gSPI command/status protocol, so the
+stock `github.com/soypat/cyw43439` driver (PIO `spi3w` + DMA) runs unmodified.
 
-What works instead:
+What works today:
 
-- The `pico2w` UI board (and the same wiring as the CH9120 above) attaches a
-  host-backed serial netdev.
-- `drivers/ch9120.NetDevice` implements a one-socket `netdev.Netdever`
-  (`Socket`/`Bind`/`Connect`/`Listen`/`Accept`/`Send`/`Recv`).
-- Firmware calls `netdev.UseNetdev` and then uses TinyGo's `net` package
-  normally; `firmware/wifi` dials a host TCP echo, writes a line every 500 ms
-  and prints each reply as `wifi echo: hello wifi`.
-- Bluetooth (LE/Classic) is **not** modelled.
+- Reset through `WL_REG_ON`, the bus test registers, backplane windowing and
+  chip identity.
+- Firmware and CLM/NVRAM download into the emulated SOCRAM, the core
+  reset/clock sequence and the ALP/HT clock handshake.
+- SDPCM/CDC control requests: the WLC init sequence (`cur_etheraddr`, CLM
+  chunks, `bus:txglom`, power management, …) and `gpioout`, which drives the
+  on-board `WL_GPIO0` LED.
+- `firmware/pico2w` runs the bring-up and toggles the LED; `task run:pico2w`
+  executes it, and the `pico2w-cyw` UI board shows the radio state in the
+  Wi-Fi tab.
 
-If you need CYW43439 fidelity, that is a separate, firmware-level emulation
-project.
+Join/scan events and the Ethernet data path (DHCP/DNS/NAT) are the next slice.
+The legacy `pico2w` board still uses the CH9120 serial netdev for TinyGo `net`
+socket offload; Bluetooth stays on the separate `-ble` virtual controller.
+
+CLI: `-cyw43439` with `-cyw43439-{reg-on,data,cs,clk,mac}` overriding the Pico
+W wiring.
 
 ## Breadboard W5500
 
@@ -288,10 +295,13 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
   bootrom is a synthetic service subset, not executable ROM code. PT25 is the
   emulator's custom A/B table format; signed picobin, secure boot and rollback
   are not implemented.
-- **CYW43439:** not emulated. The Pico 2 W uses the virtual Wi-Fi described
-  above. A logical BLE controller is available with `-ble`: stock Pico W
-  BTstack firmware runs against it through symbol hooks on the CYW43 HCI
-  transport, and `pico2-w-ble` exposes it in the UI. See [ble.md](ble.md).
+- **CYW43439:** the gSPI host interface, firmware download, WLC control and
+  `WL_GPIO0` are emulated (`-cyw43439`, board `pico2w-cyw`). The Ethernet data
+  path (join, DHCP/DNS/NAT) is still in progress; the legacy `pico2w` board
+  keeps the CH9120 netdev. A logical BLE controller is available with `-ble`:
+  stock Pico W BTstack firmware runs against it through symbol hooks on the
+  CYW43 HCI transport, and `pico2-w-ble` exposes it in the UI. See
+  [ble.md](ble.md).
 - **Core 1:** works with `-scheduler=cores` (SIO launch, WFE/SEV, tasks on both
   cores). The default TinyGo tasks scheduler is single-core. `machine.AssignCore`
   keeps a goroutine pinned to a core across sleeps and channel wakeups (see
@@ -409,4 +419,5 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/w6300` | W6300 TCP client/server and UDP |
 | `firmware/ch9120` | CH9120 TCP client |
 | `firmware/wifi` | virtual Wi-Fi through `netdev` |
+| `firmware/pico2w` | CYW43439 gSPI bring-up (`soypat/cyw43439`) |
 | `firmware/c/*` | Pico SDK C examples (see [c.md](c.md)) |
