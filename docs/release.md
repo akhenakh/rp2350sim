@@ -46,6 +46,43 @@ release page consistent without retroactively editing the tagged commit.
 
 ## Next release (unreleased)
 
+- The Pico 2 W's CYW43439 is modelled at the gSPI pins, so the stock TinyGo
+  `soypat/cyw43439` driver runs unmodified: reset, firmware/CLM/NVRAM
+  download, WLC control, join/async events and the `WL_GPIO0` LED. `-cyw43439`
+  and the `pico2w-cyw` board select it; `firmware/pico2w` covers bring-up and
+  join, and `firmware/pico2wnet` gets DHCP, resolves a name and echoes over
+  TCP. The legacy `pico2w` CH9120 netdev board is unchanged. See
+  [boards.md](boards.md).
+- The CYW43439 Ethernet data path is a virtual AP: DHCP (`10.0.2.15/24`), ARP,
+  DNS (`10.0.2.3`, board `hosts` or the host resolver), NTP, and gVisor TCP/UDP
+  NAT (gateway `10.0.2.2` maps to the host loopback). gVisor is pinned to its
+  `go` branch and its clock runs on chip virtual time. `-cyw43439-host`,
+  `-cyw43439-no-net` and `-cyw43439-pcap` control it; the Wi-Fi tab lists
+  live/recent NAT flows and saves the Ethernet capture as pcapng.
+- Bluetooth runs over the same gSPI transport: the CYW43439 shared-memory
+  host2bt/bt2host rings carry HCI into the virtual controller.
+  `firmware/pico2wble` downloads the BT firmware, sends HCI Reset and reads
+  BD_ADDR; `-cyw43439-ble-*` and `-cyw43439-ble-log` expose it. The stock Pico
+  SDK BTstack firmware still uses the `-ble` symbol-hook controller. See
+  [ble.md](ble.md).
+- `firmware/wificlock` and `ui:wificlock` run a Pico 2 W with a 320×240 ST7789:
+  DHCP, `pool.ntp.org` resolution, an NTP-derived UTC clock, and a 4 fps UI.
+  The clock redraws only the digit cells that changed, leaving the background
+  and static labels untouched; the board is `pico2w-lcd`.
+- UI: Plugins and UART are separate tabs, and the UART log groups up to 64
+  bytes per line with the clear text and hex on the same line, keeps the last
+  1000 lines and follows the newest byte (the wheel pauses following; the
+  Follow button resumes). Ethernet and Wi-Fi moved next to Bus so the device
+  tabs sit together; `--fps` caps the UI rebuild rate. See [ui.md](ui.md).
+- PIO fidelity: a forced OUT that needs a refill while the SM is halted now
+  completes (piolib's `SetX`/`SetY`), an autopull OUT resumes once the TX FIFO
+  is filled, side-set applies on the resumed cycle, and a latched PIO
+  pindir/output is applied when FUNCSEL switches to a PIO function — the
+  pico-sdk cyw43 driver sets pindirs before selecting the PIO function.
+- New demo tasks and boards: `run:pico2w`, `run:pico2wnet`, `run:pico2wble`,
+  `run:wificlock`, `ui:wificlock` and `ui:wificlock:png`; boards `pico2w-cyw`
+  and `pico2w-lcd`. The smoke suite covers CYW firmware/join/LED, HCI Reset,
+  Wi-Fi DHCP/NTP and the clock LCD.
 - `task ci` runs lint, the unit tests and the smoke suite concurrently. Lint is
   split per module, the tests run as independent tasks, and the smoke suite is
   nine slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`): the network
