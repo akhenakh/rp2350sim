@@ -1706,6 +1706,12 @@ func main() {
 		}
 	}
 
+	// Flush a CPU profile on a successful run too. exit() also stops it, but
+	// main must return normally so the deferred plugin and bridge cleanup runs.
+	if stopCPUProfile != nil {
+		stopCPUProfile()
+		stopCPUProfile = nil
+	}
 	if exitCode != 0 {
 		exit(exitCode)
 	}
