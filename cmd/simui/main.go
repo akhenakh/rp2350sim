@@ -35,6 +35,7 @@ var (
 	pendingBoardPicker bool
 	inputArgs          []string
 	activeTab          = tabBoard
+	frameTab           = -1
 	scopePins          []int
 	scopeZoom          = 1.0
 	scopeRangeIdx      = 4
@@ -149,6 +150,12 @@ func RootView() {
 	// The logic sampler runs at 2 MHz; only pay for it while its tab is on
 	// screen. A trigger armed from the UI or the command line overrides this.
 	emu.SetLogicTabActive(activeTab == tabLogic)
+	if frameTab != activeTab {
+		frameTab = activeTab
+		every := webFrameInterval(activeTab)
+		emu.SetFrameInterval(every)
+		webSetFrameInterval(every)
+	}
 	if emu.Booted() {
 		updateTouchInput()
 	}

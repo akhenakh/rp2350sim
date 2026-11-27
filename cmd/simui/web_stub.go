@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 )
 
 // webBoot reports the browser demo configuration; a desktop build takes the
@@ -49,3 +50,10 @@ func webYield() { runtime.Gosched() }
 
 // webChunk is the emulator step size on a desktop build: 1 ms of virtual time.
 func webChunk() uint64 { return 150_000 }
+
+// webFrameInterval keeps the desktop UI at display rate; it runs on its own
+// thread, so a slow tab does not starve the emulator.
+func webFrameInterval(int) time.Duration { return 16 * time.Millisecond }
+
+// webSetFrameInterval is a no-op on desktop.
+func webSetFrameInterval(time.Duration) {}

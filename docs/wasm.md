@@ -41,7 +41,10 @@ Limitations of the demo build:
   used).
 - **One thread**: the emulator shares the page's thread and yields to the
   browser every few milliseconds, so the UI stays responsive at the cost of
-  throughput.
+  throughput. Shirei normally rebuilds its whole widget tree on every animation
+  frame; `tools/webframe.js` paces that loop by tab — 10 fps for Board/OTP,
+  5 fps for the other static tabs, display rate for LCD/scope/logic, and an
+  immediate frame for pointer/key events.
 
 Speed difference: the browser is much slower than the desktop for compute-bound
 firmware, because Go's WebAssembly backend runs the interpreter at about 3.2M
@@ -54,8 +57,9 @@ emulated cycles per second against ~36M natively (same benchmark):
 | sleep-heavy firmware (blinky and friends) | 1.0× | ~1.0× |
 
 The status line shows the achieved ratio and turns the virtual clock red when it
-is below 0.95×. The gap is the Go wasm backend and the single page thread, not
-the UI: the same firmware runs at full speed in the desktop window.
+is below 0.95×. Most of the gap is the Go wasm backend and the single page
+thread; the frame shim keeps static tabs from adding another 2–6× slowdown.
+The same firmware runs at full speed in the desktop window.
 
 ## Build and serve
 

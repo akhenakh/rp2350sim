@@ -169,6 +169,9 @@ type Emu struct {
 	lastChipFW  uint64
 	errText     string
 	running     bool
+	// frameEvery is the visible tab's UI rebuild period. The browser loop
+	// yields at least this often so the page can paint and sample input.
+	frameEvery time.Duration
 	// picker* preserves the user's execution state while the board picker owns
 	// the window, so selecting a board again resumes exactly as before.
 	pickerResume bool
@@ -2573,7 +2576,7 @@ func (e *Emu) loop() {
 	// A render request makes the UI thread take the emulator lock for a full
 	// snapshot. Asking once per chunk (hundreds of times a second) starves
 	// stepping without making the picture smoother, so cap repaints at
-	// display rate.
+	// display rate. The browser page shim paces its own rAF loop by tab.
 	const frameInterval = 16 * time.Millisecond
 	var frameAt time.Time
 	var lastYield time.Time
@@ -2590,6 +2593,7 @@ func (e *Emu) loop() {
 		// stop (GDB breakpoint/watchpoint) also parks the chip.
 		stopped := e.chip != nil && e.chip.Debug != nil && e.chip.Debug.Stopped
 		running := e.running && e.runnableLocked() && !e.chip.Halted && !stopped
+		frameEvery := e.frameEvery
 		boots := e.lastBoots
 		var sleepFor time.Duration
 		if running {
@@ -2624,6 +2628,10 @@ func (e *Emu) loop() {
 			saveFlash = true
 		}
 		e.mu.Unlock()
+		yieldEvery := min(frameEvery, 50*time.Millisecond)
+		if yieldEvery <= 16*time.Millisecond {
+			yieldEvery = 8 * time.Millisecond
+		}
 		if running && time.Since(frameAt) >= frameInterval {
 			frameAt = time.Now()
 			shirei.RequestNextFrame()
@@ -2640,7 +2648,7 @@ func (e *Emu) loop() {
 			// Paused, halted, or the board picker: nothing to step, so idle
 			// instead of spinning.
 			time.Sleep(2 * time.Millisecond)
-		case time.Since(lastYield) >= 8*time.Millisecond:
+		case time.Since(lastYield) >= yieldEvery:
 			// Hand control back regularly. On a desktop this just yields the
 			// goroutine; in the browser the runtime must return to the page's
 			// event loop or nothing paints.
@@ -2693,6 +2701,13 @@ func (e *Emu) paceLocked(cycles uint64, started time.Time) time.Duration {
 		return 0
 	}
 	return paceSleep(virtual, wall)
+}
+
+// SetFrameInterval records the visible tab's UI rebuild period.
+func (e *Emu) SetFrameInterval(d time.Duration) {
+	e.mu.Lock()
+	e.frameEvery = d
+	e.mu.Unlock()
 }
 
 // SetTurbo disables real-time pacing: the machine runs as fast as the host

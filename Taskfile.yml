@@ -752,6 +752,19 @@ tasks:
       - mkdir -p {{.BUILD}}/web/plugins/examples
       - cp plugins/examples/*.lua plugins/examples/*.wasm {{.BUILD}}/web/plugins/examples/
       - cd cmd/simui && go run go.hasen.dev/shirei/cmd/shirei_web -webcompiler=go -o ../../{{.BUILD}}/web .
+      # Pace Shirei's rAF loop: the browser emulator and UI share one thread,
+      # so a static tab must not rebuild its widget tree at display rate.
+      - cp tools/webframe.js {{.BUILD}}/web/webframe.js
+      - |
+        python3 - <<'PY'
+        import pathlib
+        p = pathlib.Path("{{.BUILD}}/web/index.html")
+        s = p.read_text()
+        if "webframe.js" not in s:
+            tag = '<script src="wasm_exec.js"></script>'
+            s = s.replace(tag, '<script src="webframe.js"></script>\n  ' + tag, 1)
+            p.write_text(s)
+        PY
       # Optional: wasm-opt shrinks the module (~8%) and buys about 10% throughput.
       - |
         if command -v wasm-opt >/dev/null 2>&1; then

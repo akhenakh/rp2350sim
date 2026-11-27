@@ -222,6 +222,35 @@ func webYield() {
 // the desktop build.
 func webChunk() uint64 { return 600_000 }
 
+// webFrameInterval paces the browser UI. The emulator and renderer share one
+// thread, so only the waveform tabs need display-rate repaints. Board and
+// OTP repaint at 10 fps, other static tabs at 5 fps; clicks and typing still
+// request their own frames immediately.
+func webFrameInterval(tab int) time.Duration {
+	switch tab {
+	case tabScope, tabLogic, tabLCD:
+		return 16 * time.Millisecond
+	case tabBoard, tabOTP:
+		return 100 * time.Millisecond
+	case tabConsole:
+		return 33 * time.Millisecond
+	default:
+		return 200 * time.Millisecond
+	}
+}
+
+// webSetFrameInterval asks the page's rAF shim (tools/webframe.js) to rebuild
+// frames at d. The shim still wakes immediately for pointer and key events.
+func webSetFrameInterval(d time.Duration) {
+	if d < time.Millisecond {
+		d = time.Millisecond
+	}
+	set := js.Global().Get("shireiSetFrameInterval")
+	if set.Type() == js.TypeFunction {
+		set.Invoke(float64(d / time.Millisecond))
+	}
+}
+
 // webFetch loads a URL as bytes. The calling goroutine blocks while the browser
 // fetch resolves; Go's js runtime returns to the page event loop whenever every
 // goroutine is blocked, so this is safe before the UI starts.
