@@ -3066,23 +3066,12 @@ func boardDevices(b *BoardDef) []boardBusDevice {
 }
 
 // deviceLogLines returns the recent events of directly attached devices that
-// keep a log: CAN frames, GPS sentences, WS2812 frames and BLE HCI traffic.
-// The timed 1-Wire/DHT/HC-SR04 models expose state, not a transaction log, so
-// they are only listed in the Board devices card.
+// do not have their own log tab: GPS sentences, WS2812 frames and BLE HCI
+// traffic. CAN keeps its frames in the dedicated CAN tab and is intentionally
+// absent here. The timed 1-Wire/DHT/HC-SR04 models expose state, not a
+// transaction log, so they are only listed in the Board devices card.
 func deviceLogLines(snap MachineState) []string {
 	var out []string
-	if _, frames, ok := emu.CANInfo(); ok {
-		limit := max(len(frames)-50, 0)
-		for i := limit; i < len(frames); i++ {
-			f := frames[i]
-			typ := "STD"
-			if f.Ext {
-				typ = "EXT"
-			}
-			out = append(out, fmt.Sprintf("CAN %8.2f ms %03X %s % X", float64(f.Time)/150_000,
-				f.ID, typ, f.Data))
-		}
-	}
 	if g := emu.GPSInfo(); g != nil {
 		out = append(out, fmt.Sprintf("GPS fix=%v lat=%.6f lon=%.6f sentences=%d",
 			g.Fix, g.Lat, g.Lon, g.Sentences))
