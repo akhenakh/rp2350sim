@@ -79,6 +79,29 @@ func NewGPS(c *rp2350.Chip, uart int, cfg GPSConfig) *GPS {
 	return g
 }
 
+// SetConfig replaces the simulated position and motion values. The next
+// sentence uses them; the already emitted history is left untouched.
+func (g *GPS) SetConfig(lat, lon, altitude, speedKnots, course float64) error {
+	if lat < -90 || lat > 90 {
+		return fmt.Errorf("latitude must be between -90 and 90")
+	}
+	if lon < -180 || lon > 180 {
+		return fmt.Errorf("longitude must be between -180 and 180")
+	}
+	if altitude < -1000 || altitude > 10000 {
+		return fmt.Errorf("altitude must be between -1000 and 10000 m")
+	}
+	if speedKnots < 0 || speedKnots > 1000 {
+		return fmt.Errorf("speed must be between 0 and 1000 kn")
+	}
+	if course < 0 || course >= 360 {
+		return fmt.Errorf("course must be between 0 and 360")
+	}
+	g.cfg.Lat, g.cfg.Lon = lat, lon
+	g.cfg.Altitude, g.cfg.SpeedKnots, g.cfg.Course = altitude, speedKnots, course
+	return nil
+}
+
 // TX accepts host bytes; the GPS is output-only.
 func (g *GPS) TX(byte) {}
 

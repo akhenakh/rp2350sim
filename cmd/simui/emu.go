@@ -2830,6 +2830,16 @@ func (e *Emu) GPSInfo() *devices.GPSInfo {
 	return &info
 }
 
+// SetGPSConfig updates the simulated GPS position and motion.
+func (e *Emu) SetGPSConfig(lat, lon, altitude, speedKnots, course float64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.gpsDev == nil {
+		return fmt.Errorf("no GPS attached")
+	}
+	return e.gpsDev.SetConfig(lat, lon, altitude, speedKnots, course)
+}
+
 // CANInfo returns the controller and recent bus frames, if attached.
 func (e *Emu) CANInfo() (devices.MCP2515Info, []devices.CANFrame, bool) {
 	e.mu.Lock()

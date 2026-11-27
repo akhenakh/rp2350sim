@@ -502,7 +502,9 @@ same data is available headlessly through `-coverage`, `-profile-out` and
 
 The GPS tab shows the attached NMEA 0183 source: fix state, latitude,
 longitude, satellites, altitude, speed and course, plus the **NMEA log** with
-the recent GGA/RMC sentences (**Copy** exports them). The sentences also
+the recent GGA/RMC sentences (**Copy** exports them). Double-click latitude,
+longitude, altitude, speed or course to edit it; the value applies live, Enter
+commits and Escape restores the previous value. The sentences also
 arrive on the configured UART receive FIFO, so the Logic tab or a firmware
 parser sees exactly the same stream. `task ui:gps` opens it on `pico2-gps` with
 `firmware/gps`; `ui:gps:png` renders it.
