@@ -214,3 +214,38 @@ func TestChunkedRunMatchesStepWhenBusy(t *testing.T) {
 		t.Fatalf("PIO SM0 ADDR: chunked %d, stepped %d, want %d", a, b, 100%3)
 	}
 }
+
+// TestStalledPIOAllowsIdleSkip covers a PTY-style peripheral that leaves an
+// enabled state machine blocked on an empty FIFO while the cores sleep.
+func TestStalledPIOAllowsIdleSkip(t *testing.T) {
+	c := New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	p := c.pio[0]
+	if p == nil {
+		t.Fatal("PIO0 missing")
+	}
+	s := &p.sm[0]
+	s.enabled = true
+	p.refreshActive()
+	s.stalled = true
+	s.stallKind = pioStallPull
+	s.txN = 0
+	if !c.canIdleSkip() {
+		t.Fatal("empty TX FIFO stall refused the fast-forward")
+	}
+	s.txN = 1
+	if c.canIdleSkip() {
+		t.Fatal("a pending TX word refused the fast-forward")
+	}
+	s.txN = 0
+	s.stallKind = pioStallWait
+	if c.canIdleSkip() {
+		t.Fatal("a WAIT stall refused the fast-forward")
+	}
+	s.stalled = false
+	s.stallKind = pioStallNone
+	if c.canIdleSkip() {
+		t.Fatal("a running state machine refused the fast-forward")
+	}
+}

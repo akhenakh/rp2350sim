@@ -496,6 +496,34 @@ func (p *pioBlock) refreshActive() {
 	}
 }
 
+// idleStalled reports that every enabled state machine is blocked on a FIFO
+// that cannot change while the cores are idle (no CPU writer and no DMA). A
+// WAIT/IRQ stall is not included: a peripheral or pin edge can still wake it.
+func (p *pioBlock) idleStalled() bool {
+	for i := range p.sm {
+		s := &p.sm[i]
+		if !s.enabled {
+			continue
+		}
+		if !s.stalled {
+			return false
+		}
+		switch s.stallKind {
+		case pioStallPull, pioStallOutRefill:
+			if s.txN != 0 {
+				return false
+			}
+		case pioStallPush, pioStallInPush:
+			if !s.rxFull() {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (p *pioBlock) fstat() uint32 {
 	var v uint32
 	for i := range p.sm {

@@ -731,7 +731,11 @@ func (c *Chip) canIdleSkip() bool {
 		return false
 	}
 	if c.pioActive != 0 {
-		return false
+		for _, p := range c.pio {
+			if p != nil && p.active != 0 && !p.idleStalled() {
+				return false
+			}
+		}
 	}
 	if c.usb != nil && !c.usb.idleForSkip() {
 		return false
