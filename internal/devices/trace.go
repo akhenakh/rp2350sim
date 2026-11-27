@@ -37,6 +37,9 @@ func (s TraceSample) Bit(ch int) bool {
 type Trace struct {
 	Chip     *rp2350.Chip
 	Interval uint64
+	// Digital makes the sampler read the resolved logic level instead of the
+	// analog voltage. Protocol capture never needs the analog path.
+	Digital bool
 
 	pins        []int
 	samples     []TraceSample
@@ -73,6 +76,13 @@ func (t *Trace) SetPins(pins []int) {
 		pins = pins[:MaxTraceChannels]
 	}
 	t.pins = append([]int(nil), pins...)
+	t.Reset()
+}
+
+// Reset clears the ring and restarts the sampling grid at the current cycle.
+// A resumed sampler starts from a clean window instead of decoding across a
+// gap where it was paused.
+func (t *Trace) Reset() {
 	t.head, t.count = 0, 0
 	t.next = t.Chip.Cycles
 	t.lastTick = t.Chip.Cycles
@@ -112,8 +122,17 @@ func (t *Trace) Tick() {
 	t.next += steps * t.Interval
 	var s TraceSample
 	s.T = now
-	for i, pin := range t.pins {
-		s.V[i] = t.Chip.Pins.Voltage(pin)
+	if t.Digital {
+		levels := t.Chip.Pins.Levels()
+		for i, pin := range t.pins {
+			if pin >= 0 && pin < 64 && levels&(uint64(1)<<uint(pin)) != 0 {
+				s.V[i] = 3.3
+			}
+		}
+	} else {
+		for i, pin := range t.pins {
+			s.V[i] = t.Chip.Pins.Voltage(pin)
+		}
 	}
 	t.samples[t.head] = s
 	t.head = (t.head + 1) % len(t.samples)

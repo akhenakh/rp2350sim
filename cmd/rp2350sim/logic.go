@@ -226,6 +226,8 @@ func newLogicCapture(pinsStr, uartStr, i2cStr, spiStr string, rate float64, dept
 func (l *logicCapture) attach(c *rp2350.Chip) {
 	if len(l.pins) > 0 {
 		l.trace = devices.NewTrace(c, l.pins, l.interval, l.depth)
+		// Protocol capture only needs the digital wire level.
+		l.trace.Digital = true
 		// Sample the attach instant: the capture window starts here, and the
 		// periodic grid then continues on the trace's own interval.
 		l.trace.Tick()

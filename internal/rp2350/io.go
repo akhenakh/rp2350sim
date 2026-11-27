@@ -1,5 +1,7 @@
 package rp2350
 
+import "math/bits"
+
 // PinState holds the externally visible state of the 48 GPIO pins.
 type PinState struct {
 	Out, OE  uint64 // output latch and output enable, per pin
@@ -92,6 +94,37 @@ func (p *PinState) Level(pin int) bool {
 		}
 	}
 	return p.rawLevel(pin)
+}
+
+// Levels returns the resolved digital level of every pin as a bit mask. It is
+// the bit-parallel equivalent of Level(pin) for pins 0..47, used by the logic
+// analyzer to sample a whole window without 48 branches per sample.
+func (p *PinState) Levels() uint64 {
+	out, oe, _ := p.padView(p.Out, p.OE, 0)
+	pulls := p.pullUpMask
+	if p.padISO != 0 {
+		pulls = (pulls &^ p.padISO) | (p.latchedPullUp & p.padISO)
+	}
+	pulls |= p.ExtPullUp
+	ext := p.ExtValid
+	levels := (out & oe) | (p.ExtLevel &^ oe & ext) | (pulls &^ oe &^ ext)
+	if p.LevelOverride != nil {
+		for m := p.pwmPins; m != 0; m &= m - 1 {
+			pin := bits.TrailingZeros64(m)
+			bit := uint64(1) << uint(pin)
+			if oe&bit == 0 {
+				continue
+			}
+			if level, ok := p.LevelOverride(pin); ok {
+				if level {
+					levels |= bit
+				} else {
+					levels &^= bit
+				}
+			}
+		}
+	}
+	return levels
 }
 
 // PadInput reports the digital value the pad presents to the peripheral input

@@ -36,6 +36,45 @@ func TestPADSResetValuesAndPulls(t *testing.T) {
 	}
 }
 
+// TestLevelsMatchesLevel checks the bit-parallel level mask against the
+// per-pin resolver across outputs, external drive, pulls, isolation, output
+// disable and the PWM override.
+func TestLevelsMatchesLevel(t *testing.T) {
+	p := NewPinState()
+	p.padISO = 0
+	p.padIE = 1<<48 - 1
+	p.OE = 0x0000_FFFF_00FF_00FF
+	p.Out = 0x0000_AAAA_0F0F_0F0F
+	p.ExtValid = 0x0000_0000_FF00_0000
+	p.ExtLevel = 0x0000_0000_0F00_F000
+	for pin := 0; pin < 48; pin += 5 {
+		p.PullUp[pin] = true
+		p.pullUpMask |= 1 << uint(pin)
+	}
+	p.ExtPullUp = 0x0000_0001_0001_0000
+	p.padOD = 0x0000_0000_0000_0F00  // pins 8-11 output-disabled
+	p.padISO = 0x0000_0000_0000_00FF // pins 0-7 isolated
+	p.latchedOut = 0x0000_0000_0000_0055
+	p.latchedOE = 0x0000_0000_0000_00FF
+	p.latchedPullUp = 0x0000_0000_0000_0003
+	p.pwmPins = 1 << 27
+	p.LevelOverride = func(pin int) (bool, bool) {
+		if pin == 27 {
+			return true, true
+		}
+		return false, false
+	}
+
+	levels := p.Levels()
+	for pin := range 48 {
+		want := p.Level(pin)
+		got := levels&(uint64(1)<<uint(pin)) != 0
+		if got != want {
+			t.Fatalf("GP%d Levels=%v Level=%v (levels=%#x)", pin, got, want, levels)
+		}
+	}
+}
+
 func TestPinExternalChangesUseResolvedLevel(t *testing.T) {
 	p := NewPinState()
 	configurePadState(p)
