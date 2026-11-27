@@ -96,6 +96,47 @@ func TestSVCFromThreadUsesPSP(t *testing.T) {
 	}
 }
 
+// TestControlHandlerModeRazWi checks the Armv8-M Handler mode rule for
+// CONTROL: nPRIV and SPSEL read as zero and ignore writes, FPCA stays
+// writable, and a handler write cannot change the stack the return resumes on.
+func TestControlHandlerModeRazWi(t *testing.T) {
+	bus := codeBus()
+	const (
+		vtor    = 0x8000
+		handler = 0x9000
+		msp     = 0x7000
+		psp     = 0x6000
+	)
+	vectorAt(bus, vtor, 11, handler)
+	put16(t, bus, 0, 0xDF00) // svc #0
+	put16(t, bus, handler, 0xE7FE)
+
+	c := New(bus)
+	c.Interrupts = &fakeIRQ{allow: true}
+	c.VTOR = vtor
+	c.MSP = msp
+	c.PSP = psp
+	c.R[13] = psp
+	c.CONTROL = 2
+	stepAt(t, c, 0)
+
+	if got := c.readSpecialReg(0x14); got != 0 {
+		t.Fatalf("handler CONTROL = %#x, want 0", got)
+	}
+	c.writeSpecialReg(0x14, 1|2|4) // nPRIV | SPSEL | FPCA
+	if got := c.readSpecialReg(0x14); got != 4 {
+		t.Fatalf("handler CONTROL after write = %#x, want 4 (FPCA only)", got)
+	}
+	if c.CONTROL&1 != 0 {
+		t.Fatalf("handler write set nPRIV: CONTROL=%#x", c.CONTROL)
+	}
+
+	c.exceptionReturn(0xFFFFFFFD)
+	if c.IPSR != 0 || c.CONTROL&2 == 0 || c.CONTROL&1 != 0 || c.R[13] != psp {
+		t.Fatalf("return: IPSR=%d CONTROL=%#x SP=%#x", c.IPSR, c.CONTROL, c.R[13])
+	}
+}
+
 func TestExceptionRejectsArmVector(t *testing.T) {
 	bus := codeBus()
 	const (

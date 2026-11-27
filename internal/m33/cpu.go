@@ -809,9 +809,17 @@ func (c *CPU) UserMode() bool { return c.IPSR == 0 }
 // setControl updates CONTROL, banking the stack pointer when SPSEL changes in
 // thread mode. FPCA stays synchronized with the live FP context.
 func (c *CPU) setControl(v uint32) {
+	if c.IPSR != 0 {
+		// In Handler mode nPRIV and SPSEL are RAZ/WI; only FPCA is writable.
+		// Keeping the thread-mode SPSEL bit untouched preserves which stack an
+		// exception return must resume on.
+		c.CONTROL = (c.CONTROL & 3) | (v & 4)
+		c.FPUActive = v&4 != 0
+		return
+	}
 	newSPSEL := v&2 != 0
 	oldSPSEL := c.CONTROL&2 != 0
-	if c.IPSR == 0 && newSPSEL != oldSPSEL {
+	if newSPSEL != oldSPSEL {
 		if oldSPSEL {
 			c.PSP = c.R[13]
 			c.R[13] = c.MSP

@@ -884,6 +884,10 @@ func (c *CPU) readSpecialReg(sysm uint32) uint32 {
 	case 0x13: // FAULTMASK
 		return c.FAULTMASK & 1
 	case 0x14: // CONTROL
+		if c.IPSR != 0 {
+			// nPRIV and SPSEL read as zero in Handler mode.
+			return c.CONTROL & 4
+		}
 		return c.CONTROL
 	}
 	return 0
