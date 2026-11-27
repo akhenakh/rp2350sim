@@ -486,7 +486,7 @@ func (n *NVIC) read(off uint32) uint32 {
 		}
 		return v
 	case off == 0xD00:
-		return 0x410FD210 // Cortex-M33: ARM, variant 1, part 0xD21, revision 0
+		return 0x410FD214 // Cortex-M33 r0p4: ARM, variant 0, part 0xD21, revision 4
 	case off == 0xD04:
 		if cpu == nil {
 			return 0

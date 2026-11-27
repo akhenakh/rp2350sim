@@ -15,6 +15,9 @@ func TestChipIdentity(t *testing.T) {
 	if got := c.Read32(0x40000008); got != 0 {
 		t.Fatalf("SYSINFO.PLATFORM = %d, want 0 (ASIC)", got)
 	}
+	if got := c.Read32(SCSBase + 0xD00); got != 0x410FD214 {
+		t.Fatalf("CPUID = %#x, want 0x410FD214 (Cortex-M33 r0p4)", got)
+	}
 	if got := c.Read32(0x40160000); got != 1 {
 		t.Fatalf("TBMAN.PLATFORM = %d, want 1 (ASIC)", got)
 	}
