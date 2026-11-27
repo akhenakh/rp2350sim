@@ -59,10 +59,7 @@ func canPanel() {
 				Label("waiting for traffic — the peer answers a matching request", FontSize(12),
 					TextColor(220, 6, 68, 1))
 			}
-			limit := len(frames) - 100
-			if limit < 0 {
-				limit = 0
-			}
+			limit := max(len(frames)-100, 0)
 			for i := len(frames) - 1; i >= limit; i-- {
 				f := frames[i]
 				typ := "STD"
