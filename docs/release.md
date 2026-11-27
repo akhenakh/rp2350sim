@@ -22,7 +22,7 @@ backend, so a single Linux runner cross-compiles every target.
 
 ## GitHub paths
 
-Replace `<tag>` with the release tag (for example `v0.4.0`) and `<previous-tag>`
+Replace `<tag>` with the release tag (for example `v0.5.0`) and `<previous-tag>`
 with the prior tag. Keep the paths themselves abstract:
 
 - repository: `https://github.com/akhenakh/rp2350sim`
@@ -46,7 +46,13 @@ release page consistent without retroactively editing the tagged commit.
 
 ## Next release (unreleased)
 
-Working notes for changes after v0.4 go here.
+Working notes for changes after v0.5 go here.
+
+## v0.5 highlights
+
+v0.5 turns the emulator into a sensor and protocol lab: scripted and timed
+devices, a CAN controller, NMEA GPS, ITM/DWT trace and a matching desktop UI.
+See the [What's New #5](videos.md#whats-new-5) tour.
 
 - Scripted device plugins: I2C, SPI and UART models can be shipped as Lua or
   WASM files and loaded from `boards.yaml`, the CLI or the Bus tab. Lua runs

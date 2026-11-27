@@ -41,3 +41,13 @@ USB HID, the scope FFT and 10–90% rise/fall measurements, the virtual BOOTSEL
 drive, hang detection with DWARF and SVD explanations, the paced ADC and
 generated signal sources, the shared instruction predecode cache, and profiling
 with exact coverage, LCOV export and the Profile tab.
+
+## What's New #5
+
+[![rp2350sim what's new #5](https://img.youtube.com/vi/kpmdgwViQb4/hqdefault.jpg)](https://youtu.be/kpmdgwViQb4)
+
+[Watch on YouTube](https://youtu.be/kpmdgwViQb4) — the fifth feature tour:
+timed 1-Wire, DHT and HC-SR04 devices, a deterministic NMEA GPS source, an
+MCP2515 CAN controller, per-core ITM/DWT trace, the GPS/CAN/Trace tabs and the
+pico2-lcd-lab LCD dashboard. The dedicated device-plugin video is linked from
+the episode.
