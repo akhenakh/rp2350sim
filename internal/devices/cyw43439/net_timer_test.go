@@ -116,3 +116,17 @@ func TestCloseReleasesDataPath(t *testing.T) {
 		t.Fatalf("second Close called the data path again (%d)", got)
 	}
 }
+
+// Frames queued from a goroutine (the DNS resolver) must use the virtual clock
+// mirror, never Chip.Cycles directly.
+func TestCaptureUsesClockMirror(t *testing.T) {
+	d := newDevice(&fakeBus{}, Config{Capture: true})
+	d.nowMicros.Store(4321)
+	d.captureLocked(false, []byte{1, 2, 3})
+	if len(d.pcapRing) != 1 {
+		t.Fatalf("captured %d frames, want 1", len(d.pcapRing))
+	}
+	if got := d.pcapRing[0].ts; got != 4321 {
+		t.Fatalf("capture timestamp = %d, want the mirrored clock 4321", got)
+	}
+}

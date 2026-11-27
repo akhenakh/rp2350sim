@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
@@ -171,6 +172,7 @@ type Device struct {
 	hostNet    dataPath
 	dataSeq    uint8
 	mu         sync.Mutex
+	nowMicros  atomic.Uint64
 	cap        *pcapWriter
 	pcapRing   []pcapFrame
 	pcapTotal  uint64
@@ -302,8 +304,13 @@ func Attach(c *rp2350.Chip, cfg Config) *Device {
 }
 
 func (d *Device) tickNetwork() {
-	if d.hostNet != nil && d.chip != nil {
-		d.hostNet.tick(d.chip.NowMicros())
+	if d.chip != nil {
+		// Mirror the virtual clock for goroutines (the DNS resolver) that queue
+		// frames: they must not read Chip.Cycles while the emulator writes it.
+		d.nowMicros.Store(d.chip.NowMicros())
+	}
+	if d.hostNet != nil {
+		d.hostNet.tick(d.nowMicros.Load())
 	}
 }
 
@@ -326,6 +333,10 @@ func newDevice(b bus, cfg Config) *Device {
 }
 
 func (d *Device) reset() {
+	// reset runs from the pin-change listener and the chip reset hook. A DNS
+	// goroutine can call queueDataFrame at the same time, so state shared with
+	// it is mutated under the lock; the pin drive stays outside.
+	d.mu.Lock()
 	d.phase = phaseIdle
 	d.bit = 0
 	d.cmd = 0
@@ -352,6 +363,7 @@ func (d *Device) reset() {
 	d.fwBytes = 0
 	d.dataSeq = 0
 	d.version++
+	d.mu.Unlock()
 	d.bus.drive(true)
 }
 
@@ -469,6 +481,11 @@ func (d *Device) sampleCommand() {
 	d.fn = int(cmd >> 28 & 3)
 	d.addr = cmd >> 11 & 0x1ffff
 	d.length = int(cmd & 0x7ff)
+	if d.chip != nil {
+		// Stamp the transaction so frames queued during it get a fresh pcap
+		// timestamp without any thread reading Chip.Cycles directly.
+		d.nowMicros.Store(d.chip.NowMicros())
+	}
 	if d.debug {
 		d.log.Debug("cyw43439 command",
 			slog.Bool("write", d.write), slog.Int("fn", d.fn),
@@ -1131,10 +1148,7 @@ func (d *Device) captureLocked(inbound bool, frame []byte) {
 	if d.cap == nil && !d.cfg.Capture {
 		return
 	}
-	var ts uint64
-	if d.chip != nil {
-		ts = d.chip.NowMicros()
-	}
+	ts := d.nowMicros.Load()
 	if d.cap != nil {
 		_ = d.cap.packet(ts, inbound, frame)
 	}
@@ -1152,6 +1166,9 @@ func (d *Device) captureLocked(inbound bool, frame []byte) {
 }
 
 func (d *Device) capture(inbound bool, frame []byte) {
+	if d.chip != nil {
+		d.nowMicros.Store(d.chip.NowMicros())
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.captureLocked(inbound, frame)
