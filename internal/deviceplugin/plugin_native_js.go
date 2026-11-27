@@ -111,6 +111,9 @@ func (b *nativeBackend) Init(config []byte) error {
 	if ptr.IsUndefined() {
 		return fmt.Errorf("deviceplugin: %s alloc failed", b.p.name)
 	}
+	if len(config) > 0 && ptr.Int() == 0 {
+		return fmt.Errorf("deviceplugin: %s plugin_alloc returned 0 for %d config bytes", b.p.name, len(config))
+	}
 	if len(config) > 0 && !b.writeMemory(uint32(ptr.Int()), config) {
 		return fmt.Errorf("deviceplugin: %s config does not fit memory", b.p.name)
 	}

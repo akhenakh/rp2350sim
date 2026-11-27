@@ -1,9 +1,12 @@
 package deviceplugin
 
 import (
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLuaI2CUARTAndLog(t *testing.T) {
@@ -87,5 +90,73 @@ func TestWASMSpiPlugin(t *testing.T) {
 	}
 	if got := p.spiTransfer(0); got != 0x15 {
 		t.Fatalf("JEDEC[2] = %#x", got)
+	}
+}
+
+func TestLuaConfigEscaping(t *testing.T) {
+	hostile := `"} ; evil() ; t={"` + "\n\t\x00"
+	cfg := map[string]any{
+		"x":     hostile,
+		"list":  []any{"a", 1.5, true},
+		"snow":  "☃",
+		"float": -0.25,
+	}
+	got, err := ConfigBytes(Lua, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[" + strconv.Quote("x") + "]=" + strconv.Quote(hostile)
+	if !strings.Contains(string(got), want) {
+		t.Fatalf("config = %s, missing %s", got, want)
+	}
+}
+
+func TestLuaConfigRejectsBadValues(t *testing.T) {
+	if _, err := ConfigBytes(Lua, map[string]any{"nan": math.NaN()}); err == nil {
+		t.Fatal("NaN accepted")
+	}
+	cycle := map[string]any{}
+	cycle["self"] = cycle
+	if _, err := ConfigBytes(Lua, cycle); err == nil {
+		t.Fatal("cycle accepted")
+	}
+}
+
+func TestPluginExecutionTimeout(t *testing.T) {
+	p, err := Load(Config{
+		Name: "spin",
+		Lang: Lua,
+		Source: []byte(`
+return {
+  new = function() return {
+    tick = function(self) while true do end end,
+  } end,
+}
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	done := make(chan struct{})
+	go func() {
+		p.Tick(1)
+		close(done)
+	}()
+	select {
+	case <-done:
+		if p.Err() == nil {
+			t.Fatal("infinite tick returned without an error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("infinite tick was not interrupted")
+	}
+}
+
+func TestLanguageForPathQuery(t *testing.T) {
+	for _, p := range []string{"dev.lua?v=2", "dev.wasm#frag"} {
+		if _, err := LanguageForPath(p); err != nil {
+			t.Fatalf("LanguageForPath(%q): %v", p, err)
+		}
 	}
 }

@@ -986,6 +986,23 @@ tasks:
     cmds:
       - clang --target=wasm32 -nostdlib -O2 -fno-builtin -Wall -Wextra -Wl,--no-entry -Wl,--strip-all -o plugins/examples/aq-sensor.wasm plugins/examples/wasm/aq-sensor.c
 
+  plugins:wasm:spi:
+    desc: Compile the SPI flash ABI fixture from C to wasm32
+    sources:
+      - plugins/examples/wasm/spi-flash.c
+    generates:
+      - plugins/examples/spi-flash.wasm
+    cmds:
+      - >-
+        clang --target=wasm32 -nostdlib -O2 -fno-builtin -Wall -Wextra
+        -Wl,--no-entry -Wl,--strip-all
+        -Wl,--export=plugin_abi_version -Wl,--export=plugin_alloc
+        -Wl,--export=plugin_init -Wl,--export=plugin_reset
+        -Wl,--export=plugin_tick -Wl,--export=i2c_begin
+        -Wl,--export=i2c_write -Wl,--export=i2c_read -Wl,--export=i2c_end
+        -Wl,--export=spi_select -Wl,--export=spi_transfer -Wl,--export=uart_tx
+        -o plugins/examples/spi-flash.wasm plugins/examples/wasm/spi-flash.c
+
   plugins:build:
     desc: Rebuild the bundled device_lua.wasm (needs wasi-sdk and a Lua 5.4 source tree)
     cmds:

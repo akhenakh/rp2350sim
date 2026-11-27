@@ -255,12 +255,23 @@ maintainers changing the shim. In the browser the embedded Lua module is
 instantiated by the page's native WebAssembly engine, with the small WASI
 subset provided by the host bridge.
 
+## Limits and sandbox
+
+Desktop plugin calls have a per-call deadline and a memory cap; a script that
+loops forever is stopped, marked failed and reported in the Bus tab. The
+browser's native WebAssembly engine cannot preempt a synchronous call, so the
+same budget is not available there. Lua exposes only the base, table, string,
+math, utf8 and coroutine libraries; `os`, `io` and `debug` are absent, and
+`dofile`/`loadfile` are removed. `clock()` and `time()` follow virtual time.
+UART `pins` on a board restrict `gpio_read`/`gpio_write`; the CLI plugin form
+leaves GPIO unrestricted for command-line experiments.
+
 ## Limits
 
-- Plugins are trusted local files. They run in the emulator's process and can
-  spend CPU or loop forever; link limits are not a security boundary. Lua
-  libraries are still restricted and WASM has no filesystem or network
-  imports.
+- Plugins are trusted local files. Desktop calls have a deadline and a memory
+  cap, but they still run in the emulator's process and are not a security
+  boundary; the browser cannot preempt a synchronous call. Lua libraries are
+  restricted and WASM has no filesystem or network imports.
 - Desktop and headless runs use wazero's compiler; the browser uses the native
   WebAssembly engine with JavaScript/Go host imports. A browser still pays the
   JS/Go boundary on each callback, so use compiled WASM for hot SPI paths.

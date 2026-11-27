@@ -8,7 +8,11 @@ static int out;
 static int left;
 
 int plugin_abi_version(void) { return 1; }
-void *plugin_alloc(int n) { (void)n; return 0; }
+static unsigned char plugin_config[4096];
+void *plugin_alloc(int n) {
+    if (n < 0 || n > (int)sizeof(plugin_config)) return 0;
+    return plugin_config;
+}
 int plugin_init(const char *config, int len) { (void)config; (void)len; return 0; }
 void plugin_reset(void) {}
 void plugin_tick(int64_t us) { (void)us; }

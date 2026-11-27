@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -231,6 +233,9 @@ func (p *Plugin) Tick(us uint64) {
 
 // LanguageForPath picks the runtime from a .lua/.wasm file name.
 func LanguageForPath(path string) (Language, error) {
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
 	lower := strings.ToLower(path)
 	switch {
 	case strings.HasSuffix(lower, ".lua"):
@@ -262,6 +267,13 @@ func ConfigBytes(lang Language, cfg map[string]any) ([]byte, error) {
 }
 
 func writeLuaValue(b *strings.Builder, v any) error {
+	return writeLuaValueDepth(b, v, 0, map[uintptr]bool{})
+}
+
+func writeLuaValueDepth(b *strings.Builder, v any, depth int, seen map[uintptr]bool) error {
+	if depth > 64 {
+		return fmt.Errorf("deviceplugin: config nesting exceeds 64 levels")
+	}
 	switch x := v.(type) {
 	case nil:
 		b.WriteString("nil")
@@ -280,21 +292,43 @@ func writeLuaValue(b *strings.Builder, v any) error {
 	case uint64:
 		b.WriteString(strconv.FormatUint(x, 10))
 	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return fmt.Errorf("deviceplugin: config contains a non-finite number")
+		}
 		b.WriteString(strconv.FormatFloat(x, 'g', -1, 64))
 	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return fmt.Errorf("deviceplugin: config contains a non-finite number")
+		}
 		b.WriteString(strconv.FormatFloat(float64(x), 'g', -1, 32))
 	case []any:
+		ptr := reflect.ValueOf(x).Pointer()
+		if ptr != 0 && seen[ptr] {
+			return fmt.Errorf("deviceplugin: config contains a cycle")
+		}
+		if ptr != 0 {
+			seen[ptr] = true
+			defer delete(seen, ptr)
+		}
 		b.WriteByte('{')
 		for i, item := range x {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			if err := writeLuaValue(b, item); err != nil {
+			if err := writeLuaValueDepth(b, item, depth+1, seen); err != nil {
 				return err
 			}
 		}
 		b.WriteByte('}')
 	case map[string]any:
+		ptr := reflect.ValueOf(x).Pointer()
+		if ptr != 0 && seen[ptr] {
+			return fmt.Errorf("deviceplugin: config contains a cycle")
+		}
+		if ptr != 0 {
+			seen[ptr] = true
+			defer delete(seen, ptr)
+		}
 		b.WriteByte('{')
 		first := true
 		for k, item := range x {
@@ -305,7 +339,7 @@ func writeLuaValue(b *strings.Builder, v any) error {
 			b.WriteByte('[')
 			b.WriteString(strconv.Quote(k))
 			b.WriteString("]=")
-			if err := writeLuaValue(b, item); err != nil {
+			if err := writeLuaValueDepth(b, item, depth+1, seen); err != nil {
 				return err
 			}
 		}

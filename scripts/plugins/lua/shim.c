@@ -45,6 +45,16 @@ extern "C" clock_t clock(void) {
     return (clock_t)host_now_us();
 }
 
+/* Lua's math.randomseed uses time(NULL); use virtual microseconds so two
+ * runs of the same plugin see the same seed. */
+extern "C" time_t time(time_t *out) {
+    time_t v = (time_t)(host_now_us() / 1000000);
+    if (out != nullptr) {
+        *out = v;
+    }
+    return v;
+}
+
 static lua_State *L;
 static int instance_ref = LUA_NOREF;
 static int failed;

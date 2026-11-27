@@ -6,12 +6,22 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
+
+const (
+	pluginCallTimeout = 50 * time.Millisecond
+	pluginInitTimeout = 500 * time.Millisecond
+)
+
+// sharedCompilationCache is process-wide: the Lua runtime and repeated plugin
+// instances compile once and reuse the same machine code.
+var sharedCompilationCache = wazero.NewCompilationCache()
 
 type wazeroBackend struct {
 	p   *Plugin
@@ -23,7 +33,10 @@ type wazeroBackend struct {
 func newBackend(p *Plugin, cfg Config, artifact []byte) (backend, error) {
 	ctx := context.Background()
 	rconf := wazero.NewRuntimeConfigCompiler().
-		WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling)
+		WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
+		WithCloseOnContextDone(true).
+		WithMemoryLimitPages(1024).
+		WithCompilationCache(sharedCompilationCache)
 	rt := wazero.NewRuntimeWithConfig(ctx, rconf)
 	b := &wazeroBackend{p: p, cfg: cfg, rt: rt}
 	closeOnError := func(err error) (backend, error) {
@@ -108,17 +121,20 @@ func (b *wazeroBackend) Init(config []byte) error {
 	if alloc == nil || initf == nil {
 		return fmt.Errorf("deviceplugin: %s does not export plugin_alloc/plugin_init", b.p.name)
 	}
-	ptr, err := b.callErr(alloc, uint64(len(config)))
+	ptr, err := b.callErrWith(alloc, pluginInitTimeout, uint64(len(config)))
 	if err != nil {
 		return fmt.Errorf("deviceplugin: %s alloc: %w", b.p.name, err)
 	}
 	if len(config) > 0 {
+		if ptr == 0 {
+			return fmt.Errorf("deviceplugin: %s plugin_alloc returned 0 for %d config bytes", b.p.name, len(config))
+		}
 		mem := b.mod.Memory()
 		if mem == nil || !mem.Write(uint32(ptr), config) {
 			return fmt.Errorf("deviceplugin: %s config does not fit memory", b.p.name)
 		}
 	}
-	res, err := b.callErr(initf, ptr, uint64(len(config)))
+	res, err := b.callErrWith(initf, pluginInitTimeout, ptr, uint64(len(config)))
 	if err != nil {
 		return fmt.Errorf("deviceplugin: %s init: %w", b.p.name, err)
 	}
@@ -144,7 +160,13 @@ func (b *wazeroBackend) call(name string, args ...uint64) int32 {
 }
 
 func (b *wazeroBackend) callErr(f api.Function, args ...uint64) (uint64, error) {
-	res, err := f.Call(context.Background(), args...)
+	return b.callErrWith(f, pluginCallTimeout, args...)
+}
+
+func (b *wazeroBackend) callErrWith(f api.Function, timeout time.Duration, args ...uint64) (uint64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	res, err := f.Call(ctx, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -156,7 +178,7 @@ func (b *wazeroBackend) callErr(f api.Function, args ...uint64) (uint64, error) 
 
 func (b *wazeroBackend) Tick(us uint64) {
 	if f := b.mod.ExportedFunction("plugin_tick"); f != nil {
-		if _, err := f.Call(context.Background(), us); err != nil {
+		if _, err := b.callErr(f, us); err != nil {
 			b.p.setErr(err)
 		}
 	}
@@ -164,7 +186,7 @@ func (b *wazeroBackend) Tick(us uint64) {
 
 func (b *wazeroBackend) Reset() {
 	if f := b.mod.ExportedFunction("plugin_reset"); f != nil {
-		if _, err := f.Call(context.Background()); err != nil {
+		if _, err := b.callErr(f); err != nil {
 			b.p.setErr(err)
 		}
 	}
