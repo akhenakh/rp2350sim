@@ -20,7 +20,12 @@ var (
 
 // applyGPSField parses one edited field and pushes the whole configuration.
 func applyGPSField(field, text string) {
-	v, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		gpsEditErr = ""
+		return
+	}
+	v, err := strconv.ParseFloat(text, 64)
 	if err != nil {
 		gpsEditErr = "number expected"
 		return
@@ -60,6 +65,7 @@ func gpsEditableCard(title, field, value string, info *devices.GPSInfo) {
 			attrs := DefaultTextInputAttrs()
 			attrs.MinWidth = 120
 			attrs.FixedWidth = true
+			attrs.Placeholder = gpsFieldValue(field, info)
 			TextInputExt(&gpsEditBuf, attrs)
 			if gpsEditErr != "" {
 				Label(gpsEditErr, FontSize(10), TextColor(0, 65, 55, 1))
@@ -73,6 +79,7 @@ func gpsEditableCard(title, field, value string, info *devices.GPSInfo) {
 			gpsEditField, gpsEditBuf, gpsEditErr = "", "", ""
 			Blur()
 		case key == KeyEnter, outside && key == 0:
+			applyGPSField(field, gpsEditBuf)
 			gpsEditField, gpsEditBuf, gpsEditErr = "", "", ""
 			Blur()
 		default:
@@ -86,7 +93,9 @@ func gpsEditableCard(title, field, value string, info *devices.GPSInfo) {
 		Label(value, FontSize(17), FontWeight(600), Fonts(Monospace...))
 		if IsDoubleClicked() {
 			edit := gpsFieldValue(field, info)
-			gpsEditField, gpsEditBuf, gpsEditOrig, gpsEditErr = field, edit, edit, ""
+			// Start empty so typing replaces the value instead of appending
+			// to it; the current number stays visible as the placeholder.
+			gpsEditField, gpsEditBuf, gpsEditOrig, gpsEditErr = field, "", edit, ""
 			RequestNextFrame()
 		}
 	})
