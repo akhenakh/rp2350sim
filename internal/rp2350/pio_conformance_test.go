@@ -531,8 +531,8 @@ func TestPIOWaitSourcesAndPinMask(t *testing.T) {
 		wantStall bool
 	}{
 		{name: "gpio waits for high", inst: 0x2084, gpioBase: 16, wantStall: true},
-		{name: "gpio absolute high", inst: 0x2084, gpioBase: 16, highPins: []int{4}},
-		{name: "gpio base does not remap", inst: 0x2084, gpioBase: 16, highPins: []int{20}, wantStall: true},
+		{name: "gpio window high", inst: 0x2084, gpioBase: 16, highPins: []int{20}},
+		{name: "gpio outside window", inst: 0x2084, gpioBase: 16, highPins: []int{4}, wantStall: true},
 		{name: "pin mapped", inst: 0x20A3, gpioBase: 16, inBase: 2, inCount: 4, highPins: []int{21}},
 		{name: "pin masked", inst: 0x20A3, gpioBase: 16, inBase: 2, inCount: 3, highPins: []int{21}, wantStall: true},
 		{name: "jmppin offset", inst: 0x20E3, gpioBase: 16, jmpPin: 30, highPins: []int{17}},

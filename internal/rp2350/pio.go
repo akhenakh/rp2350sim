@@ -232,10 +232,10 @@ func (p *pioBlock) read(c *Chip, off uint32) (uint32, bool) {
 		return p.irq, true
 	case 0x038: // INPUT_SYNC_BYPASS
 		return p.inputBypass, true
-	case 0x03C: // DBG_PADOUT
-		return uint32(p.outVal), true
-	case 0x040: // DBG_PADOE
-		return uint32(p.outOE), true
+	case 0x03C: // DBG_PADOUT, in the block's 32-pin window
+		return uint32(p.outVal >> uint(p.gpioBase())), true
+	case 0x040: // DBG_PADOE, in the block's 32-pin window
+		return uint32(p.outOE >> uint(p.gpioBase())), true
 	case 0x044: // DBG_CFGINFO
 		return 1<<28 | 32<<16 | 4<<8 | 4, true
 	case 0x16C: // INTR
@@ -1052,17 +1052,6 @@ func (s *pioSM) readPin(offset int) bool {
 	return s.p.inputSync2&(1<<uint(pin)) != 0
 }
 
-func (s *pioSM) readAbsolutePin(pin int) bool {
-	if pin < 0 || pin >= 48 {
-		return false
-	}
-	offset := pin - s.p.gpioBase()
-	if offset >= 0 && offset < 32 && s.p.inputBypass&(1<<uint(offset)) != 0 {
-		return s.p.chip.Pins.PadInput(pin)
-	}
-	return s.p.inputSync2&(1<<uint(pin)) != 0
-}
-
 func (s *pioSM) readPins(base int) uint32 {
 	var v uint32
 	for i := range 32 {
@@ -1150,8 +1139,8 @@ func (s *pioSM) execWait(instr uint16) bool {
 	index := int(instr & 0x1F)
 	var level bool
 	switch src {
-	case 0: // GPIO is an absolute system GPIO, not affected by GPIOBASE
-		level = s.readAbsolutePin(index)
+	case 0: // GPIO is the 5-bit index into the block's GPIOBASE window
+		level = s.readPin(index)
 	case 1: // PIN is relative to IN_BASE and masked by IN_COUNT
 		if index < s.inCountPins() {
 			level = s.readPin(int((s.pinctrl>>15)&0x1F) + index)

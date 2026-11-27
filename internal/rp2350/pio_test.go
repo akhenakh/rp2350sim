@@ -143,4 +143,25 @@ func TestPIOGPIOBase(t *testing.T) {
 	if c.Pins.Out&(1<<20) != 0 {
 		t.Fatal("GPIOBASE=16: GP20 did not clear")
 	}
+
+	// WAIT GPIO indexes the same window: "wait 1 gpio 4" observes GP20.
+	p.inputSync2 = 1 << 20
+	if !p.sm[0].execWait(0x2084) {
+		t.Fatal("WAIT GPIO 4 did not observe GP20 with GPIOBASE=16")
+	}
+	p.inputSync2 = 1 << 4
+	if p.sm[0].execWait(0x2084) {
+		t.Fatal("WAIT GPIO 4 observed GP4 instead of GP20")
+	}
+
+	// The debug pad registers expose the block's 32-pin window, not absolute
+	// bit positions (GP20 is bit 4).
+	p.sm[0].writePinRange(4, 1, 1, false)
+	if got := c.Read32(pioBase0 + 0x03C); got != 1<<4 {
+		t.Fatalf("DBG_PADOUT = %#x, want 1<<4", got)
+	}
+	p.sm[0].writePinRange(4, 1, 1, true)
+	if got := c.Read32(pioBase0 + 0x040); got != 1<<4 {
+		t.Fatalf("DBG_PADOE = %#x, want 1<<4", got)
+	}
 }
