@@ -251,6 +251,10 @@ func (c *CPU) exec32E8(hw1, hw2 uint16) {
 			imm = -imm
 		}
 		base := c.R[rn]
+		if rn == 15 {
+			// LDRD (literal) addresses Align(PC,4), like VLDR.
+			base = c.pcRead() &^ 3
+		}
 		addr := base
 		if p {
 			addr = uint32(int32(base) + imm)
@@ -462,17 +466,25 @@ func (c *CPU) exec32ImmData(hw1, hw2 uint16) {
 		imm16 := uint32(hw1>>10&1)<<11 | uint32(hw1&0xF)<<12 | uint32(hw2>>12&7)<<8 | uint32(hw2&0xFF)
 		c.R[rd] = c.R[rd]&0xFFFF | imm16<<16
 		return
-	case 0xF200: // ADDW
+	case 0xF200: // ADDW (Rn=15 is ADR.W)
 		rn := uint32(hw1 & 0xF)
 		rd := uint32(hw2 >> 8 & 0xF)
 		imm12 := uint32(hw1>>10&1)<<11 | uint32(hw2>>12&7)<<8 | uint32(hw2&0xFF)
-		c.R[rd] = c.R[rn] + imm12
+		base := c.R[rn]
+		if rn == 15 {
+			base = c.pcRead() &^ 3
+		}
+		c.R[rd] = base + imm12
 		return
-	case 0xF2A0: // SUBW
+	case 0xF2A0: // SUBW (Rn=15 is ADR.W)
 		rn := uint32(hw1 & 0xF)
 		rd := uint32(hw2 >> 8 & 0xF)
 		imm12 := uint32(hw1>>10&1)<<11 | uint32(hw2>>12&7)<<8 | uint32(hw2&0xFF)
-		c.R[rd] = c.R[rn] - imm12
+		base := c.R[rn]
+		if rn == 15 {
+			base = c.pcRead() &^ 3
+		}
+		c.R[rd] = base - imm12
 		return
 	}
 
