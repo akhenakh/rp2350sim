@@ -135,6 +135,13 @@ func (s *SDCard) writeHostFile(root *os.Root, rel string, data []byte) error {
 		_ = root.Remove(tmpRel)
 		return fmt.Errorf("sd sync: %w", err)
 	}
+	// Flush before the rename so a crash cannot leave the committed name
+	// pointing at an empty file.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = root.Remove(tmpRel)
+		return fmt.Errorf("sd sync: %w", err)
+	}
 	if err := tmp.Chmod(0o644); err != nil {
 		_ = tmp.Close()
 		_ = root.Remove(tmpRel)
