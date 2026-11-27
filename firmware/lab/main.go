@@ -225,7 +225,7 @@ func spin(us int) {
 func readDHT() bool {
 	dhtPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	dhtPin.Low()
-	spin(1000) // the model answers at >= 1 ms; Sleep can wake a tick early
+	spin(2000) // the model answers at >= 1 ms; leave margin for the next read
 	dhtPin.Configure(machine.PinConfig{Mode: machine.PinInputPullup})
 	if !dhtWait(false, 100) {
 		logf("lab dht: no low1")
