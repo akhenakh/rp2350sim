@@ -93,9 +93,12 @@ func TestRelayUDPClosesBothOnError(t *testing.T) {
 
 type stubDataPath struct {
 	closed atomic.Int32
+	frames [][]byte
 }
 
-func (s *stubDataPath) handleFrame([]byte)               {}
+func (s *stubDataPath) handleFrame(f []byte) {
+	s.frames = append(s.frames, append([]byte(nil), f...))
+}
 func (s *stubDataPath) tick(uint64)                      {}
 func (s *stubDataPath) close()                           { s.closed.Add(1) }
 func (s *stubDataPath) networkInfo() devices.NetworkInfo { return devices.NetworkInfo{} }

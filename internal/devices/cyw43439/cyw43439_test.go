@@ -278,3 +278,61 @@ func TestBTSharedBusReset(t *testing.T) {
 		t.Fatalf("HCI event = % x, want command complete", ev)
 	}
 }
+
+// The chip must start a transaction when CS goes low even if the pin was
+// already low at reset (pulled down, or configured low before REG_ON rises).
+func TestSelectWithoutPriorDeselect(t *testing.T) {
+	d := newDevice(&fakeBus{}, Config{})
+	d.regOn = true
+	if d.cs || d.phase != phaseIdle {
+		t.Fatalf("reset left cs=%v phase=%d", d.cs, d.phase)
+	}
+	d.setCS(false)
+	if !d.cs || d.phase != phaseCommand {
+		t.Fatalf("CS low did not select the chip: cs=%v phase=%d", d.cs, d.phase)
+	}
+	d.setCS(true)
+	if d.cs || d.phase != phaseIdle {
+		t.Fatalf("CS high did not deselect the chip: cs=%v phase=%d", d.cs, d.phase)
+	}
+}
+
+// WL_REG_ON low holds the interface off, as on the real part.
+func TestPoweredOffIgnoresPins(t *testing.T) {
+	d := newDevice(&fakeBus{}, Config{})
+	d.regOn = false
+	d.setCS(false)
+	if d.cs || d.phase != phaseIdle {
+		t.Fatalf("chip selected while WL_REG_ON is low: cs=%v phase=%d", d.cs, d.phase)
+	}
+}
+
+func TestZeroLengthCommandAndEmptyRead(t *testing.T) {
+	b := &fakeBus{}
+	d := newDevice(b, Config{})
+	d.regOn = true
+	d.word32 = true
+
+	send := func(cmd uint32) {
+		d.setCS(false)
+		for i := 31; i >= 0; i-- {
+			b.d = cmd>>uint(i)&1 != 0
+			d.setCLK(false)
+			d.setCLK(true)
+		}
+	}
+
+	send(cmdWord(false, 2, 0, 0))
+	if d.length != 2048 {
+		t.Fatalf("zero length decoded as %d, want 2048", d.length)
+	}
+	if d.phase != phaseStatus {
+		t.Fatalf("empty F2 read phase = %d, want status", d.phase)
+	}
+	d.setCS(true)
+
+	send(cmdWord(false, 2, 0, 4))
+	if d.phase != phaseStatus {
+		t.Fatalf("short empty F2 read phase = %d, want status", d.phase)
+	}
+}

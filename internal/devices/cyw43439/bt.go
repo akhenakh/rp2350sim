@@ -107,6 +107,9 @@ func (b *btBus) write(full uint32, data []byte) bool {
 		return true
 	case btSharedBase + 0x200C:
 		b.b2hOut = leValue(data) & (btRingSize - 1)
+		// The host just reclaimed space; push anything waiting now instead of
+		// waiting up to a millisecond for the periodic BLE tick.
+		b.pushEvents()
 		return true
 	}
 	if full >= btSharedBase && full < btSharedBase+btBufSize {
@@ -171,17 +174,26 @@ func (b *btBus) drainHost() {
 // the flow-control interrupt the C driver polls.
 func (b *btBus) pushEvents() {
 	queued := 0
-	for b.ctrl.HasEvents() {
-		used := (b.b2hIn - b.b2hOut) & (btRingSize - 1)
-		if used+260 >= btRingSize {
-			break // the host is not draining; keep the rest queued
-		}
-		pkt := b.ctrl.PopEvent()
+	for {
+		pkt := b.ctrl.PeekEvent()
 		if pkt == nil {
 			break
 		}
+		if len(pkt) < 2 {
+			b.ctrl.PopEvent()
+			continue
+		}
 		n := len(pkt) - 1
 		total := align4(4 + n)
+		if total > btRingSize {
+			b.ctrl.PopEvent()
+			continue
+		}
+		used := (b.b2hIn - b.b2hOut) & (btRingSize - 1)
+		if used+uint32(total) >= btRingSize {
+			break // the host is not draining; keep the rest queued
+		}
+		b.ctrl.PopEvent()
 		hdr := [4]byte{byte(n), byte(n >> 8), byte(n >> 16), pkt[0]}
 		b.writeRing(1, b.b2hIn, hdr[:])
 		b.writeRing(1, b.b2hIn+4, pkt[1:])

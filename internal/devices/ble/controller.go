@@ -156,6 +156,15 @@ func (c *Controller) WriteHCI(packetType byte, data []byte) { c.writeHCI(packetT
 // packet type and the rest is the HCI payload.
 func (c *Controller) PopEvent() []byte { return c.popEvent() }
 
+// PeekEvent returns the first queued HCI packet without removing it, so a
+// transport can size it before claiming ring space.
+func (c *Controller) PeekEvent() []byte {
+	if len(c.events) == 0 {
+		return nil
+	}
+	return c.events[0]
+}
+
 // HasEvents reports whether an HCI event or ACL packet is queued.
 func (c *Controller) HasEvents() bool { return len(c.events) > 0 }
 

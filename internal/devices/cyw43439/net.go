@@ -250,6 +250,11 @@ func (n *network) handleARP(frame []byte, src [6]byte) {
 	}
 	var target [4]byte
 	copy(target[:], p[24:28])
+	// Answering a probe for the guest's own address would claim the address
+	// and break duplicate-address detection before a DHCP lease is accepted.
+	if target == n.cfg.GuestIP {
+		return
+	}
 	var reply [28]byte
 	binary.BigEndian.PutUint16(reply[0:], 1)      // htype
 	binary.BigEndian.PutUint16(reply[2:], 0x0800) // ptype

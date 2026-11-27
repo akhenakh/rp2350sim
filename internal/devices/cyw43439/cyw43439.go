@@ -338,6 +338,8 @@ func (d *Device) reset() {
 	// it is mutated under the lock; the pin drive stays outside.
 	d.mu.Lock()
 	d.phase = phaseIdle
+	d.cs = false
+	d.clk = false
 	d.bit = 0
 	d.cmd = 0
 	d.words = 0
@@ -373,8 +375,10 @@ func (d *Device) enabledFromPins() {
 		return
 	}
 	d.regOn = d.chip.Pins.Level(d.cfg.RegOn)
-	d.cs = !d.chip.Pins.Level(d.cfg.CS)
 	d.clk = d.chip.Pins.Level(d.cfg.CLK)
+	// Route through setCS so a chip that comes up with CS already low starts a
+	// command instead of keeping the stale deselected state reset() installed.
+	d.setCS(d.chip.Pins.Level(d.cfg.CS))
 }
 
 func (d *Device) pinChange(pin int, level bool) {
@@ -390,6 +394,9 @@ func (d *Device) pinChange(pin int, level bool) {
 }
 
 func (d *Device) setCS(level bool) {
+	if !d.regOn {
+		return
+	}
 	selected := !level
 	if selected == d.cs {
 		return
@@ -411,6 +418,9 @@ func (d *Device) setCS(level bool) {
 }
 
 func (d *Device) setCLK(level bool) {
+	if !d.regOn {
+		return
+	}
 	if !d.cs {
 		d.clk = level
 		return
@@ -481,6 +491,10 @@ func (d *Device) sampleCommand() {
 	d.fn = int(cmd >> 28 & 3)
 	d.addr = cmd >> 11 & 0x1ffff
 	d.length = int(cmd & 0x7ff)
+	if d.length == 0 {
+		// The 11-bit length field encodes zero as the 2048-byte maximum.
+		d.length = 2048
+	}
 	if d.chip != nil {
 		// Stamp the transaction so frames queued during it get a fresh pcap
 		// timestamp without any thread reading Chip.Cycles directly.
@@ -513,6 +527,13 @@ func (d *Device) sampleCommand() {
 	d.words = len(d.data) / 4
 	d.status = d.statusWord()
 	d.bit = 0
+	if d.words == 0 {
+		// A read with no payload still returns the status word; entering
+		// phaseRead would wait for bit == 0 forever.
+		d.phase = phaseStatus
+		d.stBit = 0
+		return
+	}
 	d.phase = phaseRead
 }
 
@@ -608,6 +629,8 @@ func (d *Device) statusWord() uint32 {
 		s |= statusF2Ready
 	}
 	if len(d.queue) > 0 {
+		// A 2048-byte packet encodes as zero in the length field, matching the
+		// command encoding; the mask already produces that.
 		s |= statusF2Available | ((uint32(len(d.queue[0])) & 0x7ff) << statusF2LenShift)
 	}
 	return s
@@ -770,23 +793,25 @@ func (d *Device) coreWrite(core int, off, v uint32) {
 // ---- function 2: WLAN/control ----
 
 func (d *Device) wlanWrite(packet []byte) {
-	if len(packet) < sdpcmHeaderLen+cdcHeaderLen {
+	if len(packet) < sdpcmHeaderLen {
 		return
 	}
 	size := int(binary.LittleEndian.Uint16(packet))
-	if size < sdpcmHeaderLen+cdcHeaderLen || size > len(packet) {
+	if size < sdpcmHeaderLen || size > len(packet) {
 		return
 	}
 	hdrLen := int(packet[7])
-	if hdrLen < sdpcmHeaderLen || hdrLen+cdcHeaderLen > size {
+	if hdrLen < sdpcmHeaderLen || hdrLen > size {
 		return
 	}
 	channel := packet[5] & 0xf
 	if channel == 2 {
+		// Data frames carry a 4-byte BDC header, not the 16-byte CDC one, and
+		// can be shorter than a control packet.
 		d.handleDataFrame(packet, hdrLen, size)
 		return
 	}
-	if channel != channelControl {
+	if channel != channelControl || hdrLen+cdcHeaderLen > size {
 		return
 	}
 	seq := packet[4]
