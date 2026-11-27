@@ -44,6 +44,13 @@ var stopCPUProfile func()
 // bleHCIFile is closed explicitly because exit skips deferred calls.
 var bleHCIFile *os.File
 
+// cywDevice and the capture files need the same treatment on early exits.
+var (
+	cywDevice   *cyw43439.Device
+	cywHCIFile  *os.File
+	cywPcapFile *os.File
+)
+
 func exit(code int) {
 	if stopCPUProfile != nil {
 		stopCPUProfile()
@@ -52,6 +59,16 @@ func exit(code int) {
 	if bleHCIFile != nil {
 		_ = bleHCIFile.Close()
 		bleHCIFile = nil
+	}
+	if cywDevice != nil {
+		cywDevice.Close()
+		cywDevice = nil
+	}
+	for _, f := range []**os.File{&cywHCIFile, &cywPcapFile} {
+		if *f != nil {
+			_ = (*f).Close()
+			*f = nil
+		}
 	}
 	os.Exit(code)
 }
@@ -557,7 +574,6 @@ func main() {
 		}
 		var bleArr [6]byte
 		copy(bleArr[:], bleAddr)
-		var cywHCIFile *os.File
 		if *cywBLELog != "" && !*cywNoBLE {
 			f, err := os.Create(*cywBLELog)
 			if err != nil {
@@ -585,12 +601,14 @@ func main() {
 			cfg.HCILog = cywHCIFile
 		}
 		cyw = cyw43439.Attach(c, cfg)
+		cywDevice = cyw
 		if *cywPcap != "" {
 			f, err := os.Create(*cywPcap)
 			if err != nil {
 				log.Error("cyw43439 pcap", slog.String("path", *cywPcap), slog.Any("err", err))
 				exit(1)
 			}
+			cywPcapFile = f
 			if err := cyw.SetPcapWriter(f); err != nil {
 				log.Error("cyw43439 pcap", slog.Any("err", err))
 				exit(1)

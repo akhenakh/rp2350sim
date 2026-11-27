@@ -810,12 +810,9 @@ func (d *Device) handleDataFrame(packet []byte, hdrLen, size int) {
 }
 func (d *Device) queueDataFrame(frame []byte) {
 	const bdcLen = 4
-	if d.hostNet == nil {
-		return
-	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.linkUp {
+	if d.hostNet == nil || !d.linkUp {
 		return
 	}
 	if len(d.queue) >= maxQueue {
@@ -1160,8 +1157,19 @@ func (d *Device) capture(inbound bool, frame []byte) {
 	d.captureLocked(inbound, frame)
 }
 
-// Close releases the pin drive.
-func (d *Device) Close() { d.bus.release() }
+// Close releases the pin drive and shuts the host data path down, closing its
+// gVisor stack, endpoints and NAT sockets. Without this every reload or board
+// switch would leave the stack and its host connections alive.
+func (d *Device) Close() {
+	d.mu.Lock()
+	net := d.hostNet
+	d.hostNet = nil
+	d.mu.Unlock()
+	if net != nil {
+		net.close()
+	}
+	d.bus.release()
+}
 
 func leBytes(v uint32, n int) []byte {
 	out := make([]byte, n)

@@ -515,10 +515,18 @@ func relay(a, b net.Conn) {
 }
 
 func relayUDP(a, b net.Conn) {
+	var once sync.Once
+	closeBoth := func() {
+		once.Do(func() {
+			_ = a.Close()
+			_ = b.Close()
+		})
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer closeBoth()
 		buf := make([]byte, 64*1024)
 		for {
 			n, err := a.Read(buf)
@@ -532,6 +540,7 @@ func relayUDP(a, b net.Conn) {
 	}()
 	go func() {
 		defer wg.Done()
+		defer closeBoth()
 		buf := make([]byte, 64*1024)
 		for {
 			n, err := b.Read(buf)
@@ -580,11 +589,12 @@ type vclock struct {
 }
 
 type vtimer struct {
-	clk   *vclock
-	at    time.Duration
-	f     func()
-	stop  bool
-	fired bool
+	clk     *vclock
+	at      time.Duration
+	f       func()
+	stop    bool
+	fired   bool
+	inQueue bool
 }
 
 func (c *vclock) Now() time.Time {
@@ -602,7 +612,7 @@ func (c *vclock) NowMonotonic() tcpip.MonotonicTime {
 func (c *vclock) AfterFunc(d time.Duration, f func()) tcpip.Timer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	t := &vtimer{clk: c, at: c.now + d, f: f}
+	t := &vtimer{clk: c, at: c.now + d, f: f, inQueue: true}
 	c.timers = append(c.timers, t)
 	return t
 }
@@ -618,6 +628,9 @@ func (t *vtimer) Stop() bool {
 	return true
 }
 
+// Reset re-arms the timer. A timer that already fired was dropped from the
+// clock's queue, so it must be appended again or gVisor's retransmit and
+// TIME_WAIT timers would silently never fire a second time.
 func (t *vtimer) Reset(d time.Duration) {
 	c := t.clk
 	c.mu.Lock()
@@ -625,6 +638,10 @@ func (t *vtimer) Reset(d time.Duration) {
 	t.at = c.now + d
 	t.fired = false
 	t.stop = false
+	if !t.inQueue {
+		c.timers = append(c.timers, t)
+		t.inQueue = true
+	}
 }
 
 func (c *vclock) advance(to time.Duration) {
@@ -636,10 +653,12 @@ func (c *vclock) advance(to time.Duration) {
 	live := c.timers[:0]
 	for _, t := range c.timers {
 		if t.stop || t.fired {
+			t.inQueue = false
 			continue
 		}
 		if t.at <= c.now {
 			t.fired = true
+			t.inQueue = false
 			due = append(due, t.f)
 			continue
 		}
