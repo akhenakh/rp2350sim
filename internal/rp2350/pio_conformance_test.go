@@ -834,3 +834,22 @@ func TestPIOInputSynchronizers(t *testing.T) {
 		t.Fatalf("GPIOBASE-relative bypass did not select GP16: %#x", got)
 	}
 }
+
+// TestPIOInputSynchronizerTracksFastInput pins the synchronizer as a true
+// two-stage shift register: even when GP0 toggles on every cycle, the
+// synchronized input follows one cycle behind inputSync1 instead of freezing
+// at its pre-toggle value.
+func TestPIOInputSynchronizerTracksFastInput(t *testing.T) {
+	c := newPIOConformanceChip()
+	p := c.pio[0]
+	levels := []bool{true, false, true, false, true, true, false, false}
+	prev := false
+	for i, level := range levels {
+		c.Pins.SetExternal(0, level)
+		p.tick()
+		if got := p.sm[0].readPins(0)&1 != 0; got != prev {
+			t.Fatalf("tick %d: synchronized input %v, want %v", i, got, prev)
+		}
+		prev = level
+	}
+}

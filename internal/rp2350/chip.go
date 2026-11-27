@@ -937,7 +937,7 @@ func (c *Chip) tickPeripherals() {
 		if p == nil {
 			continue
 		}
-		if p.active|p.clocking == 0 && p.inputPending == 0 && p.inputLast == pioInputs {
+		if p.active|p.clocking == 0 && p.inputLast == pioInputs && p.inputSync1 == p.inputSync2 {
 			continue
 		}
 		p.tickWithInputs(pioInputs)

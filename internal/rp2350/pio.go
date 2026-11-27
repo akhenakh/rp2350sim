@@ -30,11 +30,10 @@ type pioBlock struct {
 
 	// Input synchronizers are relative to the block's 32-pin GPIO window.
 	// INPUT_SYNC_BYPASS selects the raw input for individual pins.
-	inputBypass  uint32
-	inputSync1   uint64
-	inputSync2   uint64
-	inputLast    uint64
-	inputPending uint8
+	inputBypass uint32
+	inputSync1  uint64
+	inputSync2  uint64
+	inputLast   uint64
 }
 
 type pioSM struct {
@@ -178,7 +177,6 @@ func (p *pioBlock) reset() {
 	p.inputSync1 = 0
 	p.inputSync2 = 0
 	p.inputLast = 0
-	p.inputPending = 0
 	p.chip.pioActive &^= 1 << uint(p.id)
 	for i := range p.sm {
 		s := &p.sm[i]
@@ -1610,18 +1608,20 @@ func (c *Chip) pioInputLevels() uint64 {
 	return levels
 }
 
+// syncInputs clocks the two-stage input synchronizer. Every PIO cycle shifts
+// the sampled pin levels through the pipeline, so a pin that toggles on every
+// cycle still reaches inputSync2 exactly one cycle after inputSync1. Pins
+// marked in INPUT_SYNC_BYPASS take the raw level in both stages.
+func (p *pioBlock) syncInputs(raw uint64) {
+	bypass := uint64(p.inputBypass) << uint(p.gpioBase())
+	old1 := p.inputSync1
+	p.inputSync1 = raw
+	p.inputSync2 = (old1 &^ bypass) | (raw & bypass)
+	p.inputLast = raw
+}
+
 func (p *pioBlock) tickWithInputs(raw uint64) {
-	if raw != p.inputLast {
-		p.inputLast = raw
-		p.inputPending = 2
-	}
-	if p.inputPending != 0 {
-		bypass := uint64(p.inputBypass) << uint(p.gpioBase())
-		old1 := p.inputSync1
-		p.inputSync1 = raw
-		p.inputSync2 = (old1 &^ bypass) | (raw & bypass)
-		p.inputPending--
-	}
+	p.syncInputs(raw)
 	for mask := p.active | p.clocking; mask != 0; {
 		i := bits.TrailingZeros8(mask)
 		mask &^= 1 << uint(i)
@@ -1638,23 +1638,15 @@ func (p *pioBlock) advanceCycles(cycles uint64, raw uint64) {
 		mask &^= 1 << uint(i)
 		p.sm[i].advanceClock(cycles)
 	}
-	if raw != p.inputLast {
-		p.inputLast = raw
-		p.inputPending = 2
+	if cycles == 1 {
+		p.syncInputs(raw)
+		return
 	}
-	if p.inputPending != 0 {
-		if cycles == 1 {
-			bypass := uint64(p.inputBypass) << uint(p.gpioBase())
-			old1 := p.inputSync1
-			p.inputSync1 = raw
-			p.inputSync2 = (old1 &^ bypass) | (raw & bypass)
-			p.inputPending--
-		} else {
-			p.inputSync1 = raw
-			p.inputSync2 = raw
-			p.inputPending = 0
-		}
-	}
+	// A multi-cycle jump means the sampled levels were stable for the whole
+	// skipped interval, so both pipeline stages have settled on the new value.
+	p.inputSync1 = raw
+	p.inputSync2 = raw
+	p.inputLast = raw
 }
 
 // tick advances one PIO block by one CPU cycle.
