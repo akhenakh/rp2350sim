@@ -502,7 +502,8 @@ same data is available headlessly through `-coverage`, `-profile-out` and
 
 The GPS tab shows the attached NMEA 0183 source: fix state, latitude,
 longitude, satellites, altitude, speed and course, plus the **NMEA log** with
-the recent GGA/RMC sentences (**Copy** exports them). Double-click latitude,
+the recent GGA/RMC sentences (**Copy** exports them, **Clear** empties the log).
+Double-click latitude,
 longitude, altitude, speed or course to edit it; the value applies live, Enter
 commits and Escape restores the previous value. Speed is in metres per second;
 a non-zero speed moves the simulated position along the course at every
@@ -553,7 +554,8 @@ chip select or GPIO it uses. A **Device logs** card below it shows the
 transaction log of the timed wire devices that have no tab of their own:
 1-Wire DS18B20 reads, DHT22 conversions and HC-SR04 measurements. Each line
 keeps the decoded value and adds the raw payload (the nine scratchpad bytes,
-the five DHT bytes, or the echo pulse width in hex microseconds). CAN frames,
+the five DHT bytes, or the echo pulse width in hex microseconds); **Copy**
+exports the visible lines and **Clear** empties the log. CAN frames,
 GPS sentences, WS2812 frames and BLE HCI traffic stay in their dedicated tabs.
 When the board has no scripted, preset or TCP-bridged target, the tab still
 keeps a stable position and explains that those timed devices are modelled

@@ -2830,14 +2830,30 @@ func (e *Emu) GPSInfo() *devices.GPSInfo {
 	return &info
 }
 
-// SetGPSConfig updates the simulated GPS position and motion.
-func (e *Emu) SetGPSConfig(lat, lon, altitude, speedMPS, course float64) error {
+// SetGPSField changes one GPS value without disturbing the others.
+func (e *Emu) SetGPSField(field string, value float64) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.gpsDev == nil {
 		return fmt.Errorf("no GPS attached")
 	}
-	return e.gpsDev.SetConfig(lat, lon, altitude, speedMPS, course)
+	return e.gpsDev.SetField(field, value)
+}
+
+// ClearGPSLog drops the NMEA sentence history.
+func (e *Emu) ClearGPSLog() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.gpsDev != nil {
+		e.gpsDev.ClearHistory()
+	}
+}
+
+// ClearDeviceLogs drops the Bus tab's direct-device transaction log.
+func (e *Emu) ClearDeviceLogs() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.deviceLog = nil
 }
 
 // CANInfo returns the controller and recent bus frames, if attached.

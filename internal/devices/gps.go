@@ -103,6 +103,49 @@ func (g *GPS) SetConfig(lat, lon, altitude, speedMPS, course float64) error {
 	return nil
 }
 
+// SetField changes one simulated value. Field setters are used by the UI so
+// editing the speed or course does not reset a position that is currently
+// moving between GPS ticks.
+func (g *GPS) SetField(field string, v float64) error {
+	switch field {
+	case "lat":
+		if v < -90 || v > 90 {
+			return fmt.Errorf("latitude must be between -90 and 90")
+		}
+		g.cfg.Lat = v
+	case "lon":
+		if v < -180 || v > 180 {
+			return fmt.Errorf("longitude must be between -180 and 180")
+		}
+		g.cfg.Lon = v
+	case "alt":
+		if v < -1000 || v > 10000 {
+			return fmt.Errorf("altitude must be between -1000 and 10000 m")
+		}
+		g.cfg.Altitude = v
+	case "speed":
+		if v < 0 || v > 1000 {
+			return fmt.Errorf("speed must be between 0 and 1000 m/s")
+		}
+		g.cfg.SpeedMPS = v
+	case "course":
+		if v < 0 || v >= 360 {
+			return fmt.Errorf("course must be between 0 and 360")
+		}
+		g.cfg.Course = v
+	default:
+		return fmt.Errorf("unknown GPS field %q", field)
+	}
+	return nil
+}
+
+// ClearHistory drops the NMEA sentence ring and the last-sentence cache.
+func (g *GPS) ClearHistory() {
+	g.history = nil
+	g.last = ""
+	g.sentences = 0
+}
+
 // TX accepts host bytes; the GPS is output-only.
 func (g *GPS) TX(byte) {}
 

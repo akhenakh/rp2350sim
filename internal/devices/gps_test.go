@@ -115,6 +115,27 @@ func TestGPSMovesAtSpeed(t *testing.T) {
 	}
 }
 
+func TestGPSSetFieldSpeedKeepsMoving(t *testing.T) {
+	c := rp2350.New()
+	c.CPU0.Sleeping = true
+	c.CPU1.Parked = true
+	c.Write32(0x4007802c, 1<<4)
+	g := NewGPS(c, 1, GPSConfig{
+		Lat: 45.5017, Lon: -73.5673, Altitude: 82,
+		Course: 90, Satellites: 9, Rate: time.Second, FixSet: true, Fix: true,
+	})
+	c.Run(1_100_000 * uint64(rp2350.CyclesPerMicrosecond))
+	if err := g.SetField("speed", 10); err != nil {
+		t.Fatal(err)
+	}
+	before := g.Info().Lon
+	c.Run(2_100_000 * uint64(rp2350.CyclesPerMicrosecond))
+	after := g.Info().Lon
+	if after <= before {
+		t.Fatalf("speed edit stopped movement: %f -> %f", before, after)
+	}
+}
+
 func TestGPSNoFix(t *testing.T) {
 	c := rp2350.New()
 	c.CPU0.Sleeping = true

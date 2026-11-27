@@ -3132,6 +3132,10 @@ func busPanel(snap MachineState) {
 					if Button(NoIcon, "Copy") {
 						RequestTextCopy(strings.Join(deviceLogs, "\n"))
 					}
+					if Button(NoIcon, "Clear") {
+						emu.ClearDeviceLogs()
+						RequestNextFrame()
+					}
 				})
 				Container(Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
 					Background(220, 12, 8, 1), Corners(4)), func() {

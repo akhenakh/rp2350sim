@@ -19,26 +19,13 @@ var (
 )
 
 // applyGPSField parses one edited field and pushes the whole configuration.
-func applyGPSField(field, text string, info *devices.GPSInfo) {
+func applyGPSField(field, text string) {
 	v, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
 	if err != nil {
 		gpsEditErr = "number expected"
 		return
 	}
-	lat, lon, alt, speed, course := info.Lat, info.Lon, info.Altitude, info.SpeedMPS, info.Course
-	switch field {
-	case "lat":
-		lat = v
-	case "lon":
-		lon = v
-	case "alt":
-		alt = v
-	case "speed":
-		speed = v
-	case "course":
-		course = v
-	}
-	if err := emu.SetGPSConfig(lat, lon, alt, speed, course); err != nil {
+	if err := emu.SetGPSField(field, v); err != nil {
 		gpsEditErr = err.Error()
 		return
 	}
@@ -82,14 +69,14 @@ func gpsEditableCard(title, field, value string, info *devices.GPSInfo) {
 		outside := GetFrameInput().Mouse.Has(MouseClick) && !IsHovered()
 		switch {
 		case key == KeyEscape:
-			applyGPSField(field, gpsEditOrig, info)
+			applyGPSField(field, gpsEditOrig)
 			gpsEditField, gpsEditBuf, gpsEditErr = "", "", ""
 			Blur()
 		case key == KeyEnter, outside && key == 0:
 			gpsEditField, gpsEditBuf, gpsEditErr = "", "", ""
 			Blur()
 		default:
-			applyGPSField(field, gpsEditBuf, info)
+			applyGPSField(field, gpsEditBuf)
 		}
 		return
 	}
@@ -127,7 +114,7 @@ func gpsPanel() {
 			gpsEditableCard("Longitude", "lon", fmt.Sprintf("%.6f", info.Lon), info)
 			statCard("Satellites", fmt.Sprintf("%d", info.Satellites))
 			gpsEditableCard("Altitude", "alt", fmt.Sprintf("%.1f m", info.Altitude), info)
-			gpsEditableCard("Speed", "speed", fmt.Sprintf("%.2f kn", info.SpeedMPS), info)
+			gpsEditableCard("Speed", "speed", fmt.Sprintf("%.2f m/s", info.SpeedMPS), info)
 			gpsEditableCard("Course", "course", fmt.Sprintf("%.1f°", info.Course), info)
 		})
 		Container(Attrs(Grow(1), Expand, Gap(6), Pad(12), Corners(8),
@@ -139,6 +126,10 @@ func gpsPanel() {
 				Filler(1)
 				if Button(NoIcon, "Copy") {
 					RequestTextCopy(strings.Join(info.History, ""))
+				}
+				if Button(NoIcon, "Clear") {
+					emu.ClearGPSLog()
+					RequestNextFrame()
 				}
 			})
 			Container(Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
