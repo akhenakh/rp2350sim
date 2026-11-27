@@ -37,7 +37,7 @@ The desktop UI also runs in the browser as a
   validation rule is documented in the [reference](boards-yaml.md).
 - **Scripted device plugins**: a BME280, SPI flash, modem or companion radio
   can be shipped as a `.lua` or `.wasm` file and loaded from a board or the
-  Bus tab. See [device plugins](plugins.md).
+  Plugins tab. See [device plugins](plugins.md).
 - **Distribution**: Homebrew on macOS, AUR on Arch, and release archives with
   verifiable GitHub build provenance.
 

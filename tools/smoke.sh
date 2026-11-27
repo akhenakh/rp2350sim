@@ -442,12 +442,19 @@ if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
 	fi
 fi
 
-if (cd cmd/simui && go run . --board pico2-plugins --tab bus --run 0.5 \
+if (cd cmd/simui && go run . --board pico2-plugins --tab plugins --run 0.5 \
 	--png "../../$BUILD/ui-plugins-smoke.png" "../../$BUILD/presets.elf" >/dev/null 2>&1) &&
 	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-plugins-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI scripted plugins tab"
 else
 	bad "UI scripted plugins tab" "$(cat "$SMOKE_LOG")"
+fi
+if (cd cmd/simui && go run . --board touch-lcd2-plugins --tab uart --run 1 \
+	--png "../../$BUILD/ui-uart-smoke.png" "../../$BUILD/pluginlcd.elf" >/dev/null 2>&1) &&
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-uart-smoke.png" >>"$SMOKE_LOG" 2>&1; then
+	ok "UI UART byte log tab"
+else
+	bad "UI UART byte log tab" "$(cat "$SMOKE_LOG")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-lcd-lab --tab lcd --run 3 \

@@ -113,10 +113,10 @@ devices, a CAN controller, NMEA GPS, ITM/DWT trace and a matching desktop UI.
 See the [What's New #5](videos.md#whats-new-5) tour.
 
 - Scripted device plugins: I2C, SPI and UART models can be shipped as Lua or
-  WASM files and loaded from `boards.yaml`, the CLI or the Bus tab. Lua runs
+  WASM files and loaded from `boards.yaml`, the CLI or the Plugins tab. Lua runs
   in a bundled wasm interpreter and both formats share one ABI; desktop and
   headless runs use wazero, while the browser uses native WebAssembly. Plugin
-  `print`/`host_log` lines are shown in the Bus tab.
+  `print`/`host_log` lines are shown in the Plugins tab.
 - Timed wire devices: a DS18B20 on 1-Wire, DHT11/DHT22 and HC-SR04 models use
   cycle-exact edge deadlines rather than scripted bus transactions. A
   deterministic NMEA GPS source, a classic CAN 2.0B bus with a responding peer

@@ -42,7 +42,7 @@ Startup flags:
 | `--input ID=VALUE` | set a board input before the first frame (`on`/`off`, volts, `+N`/`-N`); repeatable |
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
-| `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `gps`, `can`, `audio`, `midi`, `otp`, `bus`, `debug`, `trace`, `console` |
+| `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `gps`, `can`, `audio`, `midi`, `otp`, `bus`, `plugins`, `uart`, `debug`, `trace`, `console` |
 | `--otp PATH` | seed OTP rows from a JSON file, overriding the board's `otp.file` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
@@ -564,17 +564,27 @@ exports the visible lines and **Clear** empties the log. CAN frames,
 GPS sentences, WS2812 frames and BLE HCI traffic stay in their dedicated tabs.
 When the board has no scripted, preset or TCP-bridged target, the tab still
 keeps a stable position and explains that those timed devices are modelled
-outside the I2C/SPI target registry. It lists
-the board's built-in presets (`i2c_presets` /
-`spi_presets`), scripted device files (`i2c_plugins`, `spi_plugins`,
-`serial_plugins`) and TCP bridges. A preset or plugin is attached directly to
-the emulated controller, so firmware sees a real BME280, SSD1306, MPU6050 or
-W25Q16 without an external script. The Scripted plugins card lists each model
-with its language (Lua or WASM), slot and load state; select one to open its
-own scrollable `print`/`host_log` console, with **Clear** and **Copy** buttons.
-See [device plugins](plugins.md).
+outside the I2C/SPI target registry. It lists the board's built-in presets
+(`i2c_presets` / `spi_presets`) and TCP bridges. A preset or plugin is
+attached directly to the emulated controller, so firmware sees a real BME280,
+SSD1306, MPU6050 or W25Q16 without an external script.
+
+The **Plugins** tab lists every scripted device model (`i2c_plugins`,
+`spi_plugins`, `serial_plugins`) with its language (Lua or WASM), slot and
+load state. Select one to open its own scrollable `print`/`host_log` console,
+with **Clear** and **Copy** buttons. See [device plugins](plugins.md).
 
 ![Scripted plugins](images/plugins.png)
+
+The **UART** tab is the raw hardware UART byte log, separate from the firmware
+console. It shows both directions (`TX` firmware→device, `RX` device→firmware)
+and both controllers, with a timestamp, hex byte and ASCII rendering. Use it
+for a `serial_plugins` device on UART1 while the firmware's console stays on
+UART0. **Copy** exports the log and **Clear** empties it; the tab appears when
+the board configures a UART plugin or a logic-analyzer UART, or once any UART
+byte has moved.
+
+![UART byte log](images/uart.png)
 
 For TCP bridges, select a listening bridge and **Connect terminal** to act as
 the device: the panel shows the Bus Pirate request tokens and sends the

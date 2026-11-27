@@ -1192,14 +1192,14 @@ tasks:
     deps: [firmware:presets]
     dir: cmd/simui
     cmds:
-      - go run . --board pico2-plugins --tab bus '../../{{.BUILD}}/presets.elf'
+      - go run . --board pico2-plugins --tab plugins '../../{{.BUILD}}/presets.elf'
 
   ui:plugins:png:
-    desc: Render the Scripted plugins Bus tab to build/ui-plugins.png
+    desc: Render the Plugins tab to build/ui-plugins.png
     deps: [firmware:presets]
     dir: cmd/simui
     cmds:
-      - go run . --board pico2-plugins --tab bus --run 0.5 --png '../../{{.BUILD}}/ui-plugins.png' '../../{{.BUILD}}/presets.elf'
+      - go run . --board pico2-plugins --tab plugins --run 0.5 --png '../../{{.BUILD}}/ui-plugins.png' '../../{{.BUILD}}/presets.elf'
 
   ui:gps:
     desc: Run the UI on the NMEA GPS source

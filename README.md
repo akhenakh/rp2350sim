@@ -320,8 +320,8 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task ui:presets` | built-in BME280/SSD1306/MPU6050/W25Q16 board |
 | `task ui:presets:png` | headless render of the built-in presets tab to `build/ui-presets.png` |
 | `task run:presets` | probe the four built-in bus presets and print their IDs |
-| `task ui:plugins` | Lua/WASM scripted device examples in the Bus tab |
-| `task ui:plugins:png` | headless render of the Scripted plugins card to `build/ui-plugins.png` |
+| `task ui:plugins` | Lua/WASM scripted device examples in the Plugins tab |
+| `task ui:plugins:png` | headless render of the Plugins tab to `build/ui-plugins.png` |
 | `task plugins:build` | rebuild the bundled Lua device runtime (wasi-sdk + Lua source) |
 | `task ui:ota` | OTA demo in the UI with a persistent flash image and self-update banner |
 | `task ui:ota-png` | headless render of the OTA banner to `build/ui-ota.png` |

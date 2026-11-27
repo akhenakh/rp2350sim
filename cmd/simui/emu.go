@@ -77,6 +77,7 @@ type MachineState struct {
 	Serial        []string
 	Buses         []string
 	DeviceLogs    []string
+	UARTCount     int
 
 	Touch     *TouchState
 	IMU       *IMUState
@@ -1815,7 +1816,12 @@ func (e *Emu) attachPlugins(c *rp2350.Chip, b *BoardDef, attachSPI func(bus, cs 
 			},
 		}
 		if uart >= 0 {
-			cfg.UARTWrite = func(data []byte) { c.SendUART(uart, data) }
+			cfg.UARTWrite = func(data []byte) {
+				for _, b := range data {
+					e.addUART(uart, c.Cycles, true, b)
+				}
+				c.SendUART(uart, data)
+			}
 		}
 		p, err := deviceplugin.Load(cfg)
 		if err != nil {
@@ -3000,6 +3006,14 @@ func (e *Emu) ClearDeviceLogs() {
 	e.deviceLog = nil
 }
 
+// ClearUARTEvents drops the captured hardware UART bytes shown in the UART
+// tab.
+func (e *Emu) ClearUARTEvents() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.uartEvents = e.uartEvents[:0]
+}
+
 // CANInfo returns the controller and recent bus frames, if attached.
 func (e *Emu) CANInfo() (devices.MCP2515Info, []devices.CANFrame, bool) {
 	e.mu.Lock()
@@ -3200,6 +3214,7 @@ func (e *Emu) Snapshot() MachineState {
 		s.Network = &info
 	}
 	s.DeviceLogs = append([]string(nil), e.deviceLog...)
+	s.UARTCount = len(e.uartEvents)
 	if e.ble != nil {
 		st := e.ble.Status()
 		s.BLE = &BLEState{

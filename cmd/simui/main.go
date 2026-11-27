@@ -86,6 +86,8 @@ const (
 	tabMIDI
 	tabOTP
 	tabBus
+	tabPlugins
+	tabUART
 	tabDebug
 	tabProfile
 	tabHID
@@ -208,6 +210,10 @@ func RootView() {
 				otpPanel(snap)
 			case tabBus:
 				busPanel(snap)
+			case tabPlugins:
+				pluginsPanel(snap)
+			case tabUART:
+				uartPanel(snap)
 			case tabDebug:
 				debugPanel(snap)
 			case tabProfile:
@@ -571,6 +577,10 @@ func setTab(name string) {
 		activeTab = tabOTP
 	case "bus", "i2c", "spi", "bridges":
 		activeTab = tabBus
+	case "plugins", "plugin", "wasm", "script":
+		activeTab = tabPlugins
+	case "uart", "serial", "seriallog":
+		activeTab = tabUART
 	case "can", "canbus":
 		if selectedBoard != nil && selectedBoard.CAN != nil {
 			activeTab = tabCAN
@@ -632,6 +642,12 @@ func tabsBar(snap MachineState) {
 		tabButton("Profile", tabProfile)
 		tabButton("Trace", tabTrace)
 		tabButton("Bus", tabBus)
+		if boardHasPlugins(selectedBoard) {
+			tabButton("Plugins", tabPlugins)
+		}
+		if boardHasUART(selectedBoard, snap) {
+			tabButton("UART", tabUART)
+		}
 		if selectedBoard.GPS != nil {
 			tabButton("GPS", tabGPS)
 		}
@@ -655,6 +671,19 @@ func tabsBar(snap MachineState) {
 // their own tab.
 func boardHasSensors(b *BoardDef) bool {
 	return b != nil && (b.Touch != nil || b.IMU != nil || b.Battery != nil || b.SD != nil)
+}
+
+// boardHasPlugins reports whether the board loads any scripted device model.
+func boardHasPlugins(b *BoardDef) bool {
+	return b != nil && (len(b.I2CPlugins) > 0 || len(b.SPIPlugins) > 0 || len(b.UARTPlugins) > 0)
+}
+
+// boardHasUART reports whether the board has a UART worth a raw byte log.
+func boardHasUART(b *BoardDef, snap MachineState) bool {
+	if snap.UARTCount > 0 {
+		return true
+	}
+	return b != nil && (len(b.UARTPlugins) > 0 || (b.Logic != nil && b.Logic.UART != nil))
 }
 
 func tabButton(label string, tab int) {
@@ -3132,7 +3161,6 @@ func deviceLogLines(snap MachineState) []string {
 
 func busPanel(snap MachineState) {
 	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
-		plugins := emu.Plugins()
 		infos := emu.BusBridges()
 		boardDevs := boardDevices(selectedBoard)
 		deviceLogs := deviceLogLines(snap)
@@ -3142,9 +3170,6 @@ func busPanel(snap MachineState) {
 		}
 		if len(deviceLogs) > 0 {
 			parts = append(parts, "device logs")
-		}
-		if len(plugins) > 0 {
-			parts = append(parts, "scripted plugins")
 		}
 		if selectedBoard != nil && (len(selectedBoard.I2CPresets) > 0 || len(selectedBoard.SPIPresets) > 0) {
 			parts = append(parts, "built-in presets")
@@ -3205,57 +3230,6 @@ func busPanel(snap MachineState) {
 				})
 			})
 		}
-		if len(plugins) > 0 {
-			if busPluginSel >= len(plugins) || busPluginSel < 0 {
-				busPluginSel = 0
-			}
-			Container(Attrs(Grow(1), Expand, Gap(6), Pad(8), Corners(6), Background(220, 10, 18, 1),
-				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
-				Container(Attrs(Row, CrossMid, Gap(8)), func() {
-					Label("Scripted plugins", FontSize(12), FontWeight(700))
-					Filler(1)
-					Label(fmt.Sprintf("%d device(s)", len(plugins)), FontSize(11),
-						TextColor(220, 6, 65, 1))
-				})
-				Container(Attrs(Row, Gap(6), Wrap), func() {
-					for i, p := range plugins {
-						if Button(NoIcon, pluginLabel(p, i)) {
-							busPluginSel = i
-							RequestNextFrame()
-						}
-					}
-				})
-				p := plugins[busPluginSel]
-				Container(Attrs(Row, CrossMid, Gap(8)), func() {
-					Label(pluginTitle(p), FontSize(11), FontWeight(600), Fonts(Monospace...),
-						TextColor(140, 45, 68, 1))
-					Filler(1)
-					if p.Index >= 0 && Button(NoIcon, "Clear") {
-						emu.ClearPluginLogs(p.Index)
-						RequestNextFrame()
-					}
-					if Button(NoIcon, "Copy") {
-						RequestTextCopy(pluginLogText(p))
-					}
-				})
-				if p.Error != "" {
-					Label("error: "+p.Error, FontSize(10), TextColor(0, 65, 55, 1))
-				}
-				ContainerWithKey(fmt.Sprintf("plugin-log-%d", p.Index),
-					Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
-						Background(220, 12, 8, 1), Corners(4)), func() {
-						ScrollOnInput()
-						ScrollBars()
-						if len(p.Logs) == 0 {
-							Label("no output yet", FontSize(11), TextColor(220, 6, 62, 1))
-							return
-						}
-						for _, line := range p.Logs {
-							Label(line, Fonts(Monospace...), FontSize(10), TextColor(220, 6, 68, 1))
-						}
-					})
-			})
-		}
 		if selectedBoard != nil && (len(selectedBoard.I2CPresets) > 0 || len(selectedBoard.SPIPresets) > 0) {
 			Container(Attrs(Gap(4), Pad(8), Corners(6), Background(220, 10, 18, 1),
 				BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
@@ -3276,7 +3250,7 @@ func busPanel(snap MachineState) {
 		}
 		if len(infos) == 0 {
 			if selectedBoard == nil || (len(selectedBoard.I2CPresets) == 0 &&
-				len(selectedBoard.SPIPresets) == 0 && len(plugins) == 0) {
+				len(selectedBoard.SPIPresets) == 0 && !boardHasPlugins(selectedBoard)) {
 				if len(boardDevs) == 0 {
 					Label("No I2C/SPI targets or board devices on this board.", FontSize(13))
 				} else {
@@ -3376,6 +3350,150 @@ func busPanel(snap MachineState) {
 		Label("Type ACK, NAK or hex bytes; spaces queue one response per request (e.g. 0xEF 0x40 0x18).", FontSize(11), TextColor(140, 45, 65, 1))
 		Label("If only HELLO appears, the firmware is not asking yet: queue the answers, then press Reset in the toolbar.", FontSize(11), TextColor(140, 45, 65, 1))
 	})
+}
+
+// pluginsPanel is the dedicated log view for scripted I2C/SPI/UART device
+// models. Keeping it out of the Bus tab gives a UART plugin's own output and
+// the wire log separate homes.
+func pluginsPanel(snap MachineState) {
+	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+		plugins := emu.Plugins()
+		Container(Attrs(Row, CrossMid, Gap(10)), func() {
+			Label("Scripted plugins", FontSize(16), FontWeight(700))
+			Label("Lua and WASM device models", FontSize(12))
+			Filler(1)
+			Label(fmt.Sprintf("%d loaded · %d lines", len(plugins), pluginTotalLines(plugins)),
+				FontSize(11), TextColor(140, 45, 65, 1))
+		})
+		if len(plugins) == 0 {
+			Label("no scripted plugins on this board", FontSize(12), TextColor(220, 6, 62, 1))
+			return
+		}
+		if busPluginSel >= len(plugins) || busPluginSel < 0 {
+			busPluginSel = 0
+		}
+		Container(Attrs(Grow(1), Expand, Gap(6), Pad(8), Corners(6), Background(220, 10, 18, 1),
+			BorderWidth(1), BorderColor(220, 20, 26, 1)), func() {
+			Container(Attrs(Row, Gap(6), Wrap), func() {
+				for i, p := range plugins {
+					if Button(NoIcon, pluginLabel(p, i)) {
+						busPluginSel = i
+						RequestNextFrame()
+					}
+				}
+			})
+			p := plugins[busPluginSel]
+			Container(Attrs(Row, CrossMid, Gap(8)), func() {
+				Label(pluginTitle(p), FontSize(11), FontWeight(600), Fonts(Monospace...),
+					TextColor(140, 45, 68, 1))
+				Filler(1)
+				if p.Index >= 0 && Button(NoIcon, "Clear") {
+					emu.ClearPluginLogs(p.Index)
+					RequestNextFrame()
+				}
+				if Button(NoIcon, "Copy") {
+					RequestTextCopy(pluginLogText(p))
+				}
+			})
+			if p.Error != "" {
+				Label("error: "+p.Error, FontSize(10), TextColor(0, 65, 55, 1))
+			}
+			ContainerWithKey(fmt.Sprintf("plugin-log-%d", p.Index),
+				Attrs(Grow(1), Expand, Clip, Viewport, Gap(2), Pad2(4, 6),
+					Background(220, 12, 8, 1), Corners(4)), func() {
+					ScrollOnInput()
+					ScrollBars()
+					if len(p.Logs) == 0 {
+						Label("no output yet", FontSize(11), TextColor(220, 6, 62, 1))
+						return
+					}
+					for _, line := range p.Logs {
+						Label(line, Fonts(Monospace...), FontSize(10), TextColor(220, 6, 68, 1))
+					}
+				})
+		})
+	})
+}
+
+func pluginTotalLines(plugins []PluginInfo) int {
+	var n int
+	for _, p := range plugins {
+		n += len(p.Logs)
+	}
+	return n
+}
+
+// uartPanel shows the raw hardware UART byte stream, both directions and both
+// controllers. It is the wire log the device tabs and plugin models do not
+// show.
+func uartPanel(snap MachineState) {
+	events := emu.UARTEvents()
+	Container(Attrs(Grow(1), Expand, Gap(10)), func() {
+		var tx, rx [2]int
+		for _, e := range events {
+			bus := e.Bus & 1
+			if e.In {
+				rx[bus]++
+			} else {
+				tx[bus]++
+			}
+		}
+		Container(Attrs(Row, CrossMid, Gap(10)), func() {
+			Label("UART", FontSize(16), FontWeight(700))
+			Label("hardware TX/RX bytes", FontSize(12))
+			Filler(1)
+			Label(fmt.Sprintf("UART0 TX %d · RX %d   UART1 TX %d · RX %d",
+				tx[0], rx[0], tx[1], rx[1]), FontSize(11), TextColor(140, 45, 65, 1))
+			if len(events) > 0 && Button(NoIcon, "Copy") {
+				RequestTextCopy(uartBytesText(events))
+			}
+			if len(events) > 0 && Button(NoIcon, "Clear") {
+				emu.ClearUARTEvents()
+				RequestNextFrame()
+			}
+		})
+		ContainerWithKey("uart-log",
+			Attrs(Grow(1), Expand, Clip, Viewport, Gap(1), Pad2(4, 6),
+				Background(220, 12, 8, 1), Corners(4), BorderWidth(1), BorderColor(220, 8, 25, 1)), func() {
+				ScrollOnInput()
+				ScrollBars()
+				if len(events) == 0 {
+					Label("no UART traffic yet", FontSize(11), TextColor(220, 6, 62, 1))
+					return
+				}
+				base := events[0].Cycle
+				show := events
+				if len(show) > 512 {
+					show = show[len(show)-512:]
+				}
+				for _, e := range show {
+					Label(uartEventLine(base, e), Fonts(Monospace...), FontSize(10),
+						TextColor(220, 6, 68, 1))
+				}
+			})
+	})
+}
+
+func uartEventLine(base uint64, e UARTEvent) string {
+	dir := "TX"
+	if e.In {
+		dir = "RX"
+	}
+	return fmt.Sprintf("%9.3fms UART%d %s 0x%02x %q",
+		float64(e.Cycle-base)/150e3, e.Bus, dir, e.Data, string(rune(e.Data)))
+}
+
+func uartBytesText(events []UARTEvent) string {
+	if len(events) == 0 {
+		return ""
+	}
+	base := events[0].Cycle
+	var b strings.Builder
+	for _, e := range events {
+		b.WriteString(uartEventLine(base, e))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // pluginLabel is the compact selector label for one scripted device.

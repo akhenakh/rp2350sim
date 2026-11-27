@@ -13,7 +13,7 @@ JavaScript host imports bridging back to Go. This is how the four built-in
 presets grow into a device ecosystem: anyone can share a BME280, a flash chip,
 a modem or a companion radio as a file.
 
-![Scripted plugins in the Bus tab](images/plugins.png)
+![Scripted plugins tab](images/plugins.png)
 
 ## Quick start
 
@@ -164,8 +164,7 @@ alongside the Lua models.
 
 ## Watching plugin output
 
-Plugin `print()` (and WASM `host_log`) lines appear in the **Bus** tab's
-Scripted plugins card. Pick a device from its Lua/WASM slot buttons to open that
+Plugin `print()` (and WASM `host_log`) lines appear in the **Plugins** tab. Pick a device from its Lua/WASM slot buttons to open that
 device's scrollable console; **Clear** drops its buffer and **Copy** exports it.
 The CLI writes the same lines as `plugin` `slog` records, so `-quiet` still
 leaves warnings and errors visible. This is the first place to look when a
@@ -179,6 +178,10 @@ nRF5340 host interface or a modem: keep a receive buffer in the script,
 implement the framing and command/response set, and use `tick` for
 unsolicited events. `plugins/examples/uart-modem.lua` is a small AT-command
 example.
+
+The **UART** tab shows the raw UART byte stream in both directions, so the
+firmware's requests and the script's responses can be inspected separately
+from the **Plugins** tab's `print`/`host_log` output.
 
 nRF7002-class parts use an SPI host interface; use `spi_select`/`spi_transfer`
 and `gpio_write` for the IRQ line. The examples are deliberately generic—
@@ -259,7 +262,7 @@ subset provided by the host bridge.
 ## Limits and sandbox
 
 Desktop plugin calls have a per-call deadline and a memory cap; a script that
-loops forever is stopped, marked failed and reported in the Bus tab. The
+loops forever is stopped, marked failed and reported in the Plugins tab. The
 browser's native WebAssembly engine cannot preempt a synchronous call, so the
 same budget is not available there. Lua exposes only the base, table, string,
 math, utf8 and coroutine libraries; `os`, `io` and `debug` are absent, and
@@ -282,14 +285,14 @@ leaves GPIO unrestricted for command-line experiments.
   missing export is a load error, not a silent default.
 - The browser path needs native WebAssembly exception handling for the Lua
   runtime (current Chrome and Firefox). A browser without it reports the
-  instantiation error in the Bus tab instead of using a fallback interpreter.
+  instantiation error in the Plugins tab instead of using a fallback interpreter.
 
 ## Tasks
 
 ```sh
 task plugins:build    # rebuild device_lua.wasm (needs wasi-sdk + Lua source)
 task test:js          # plugin tests on the native engine (Node, js/wasm)
-task ui:plugins       # the pico2-plugins board in the Bus tab
+task ui:plugins       # the pico2-plugins board in the Plugins tab
 task ui:plugins:png   # render it to build/ui-plugins.png
 task wasm:plugins     # serve the same board and firmware in the browser
 ```
