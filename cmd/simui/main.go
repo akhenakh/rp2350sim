@@ -562,9 +562,7 @@ func setTab(name string) {
 	case "otp":
 		activeTab = tabOTP
 	case "bus", "i2c", "spi", "bridges":
-		if boardHasBuses(selectedBoard) {
-			activeTab = tabBus
-		}
+		activeTab = tabBus
 	case "can", "canbus":
 		if selectedBoard != nil && selectedBoard.CAN != nil {
 			activeTab = tabCAN
@@ -628,9 +626,7 @@ func tabsBar(snap MachineState) {
 		tabButton("Debug", tabDebug)
 		tabButton("Profile", tabProfile)
 		tabButton("Trace", tabTrace)
-		if boardHasBuses(selectedBoard) {
-			tabButton("Bus", tabBus)
-		}
+		tabButton("Bus", tabBus)
 		if selectedBoard.CAN != nil {
 			tabButton("CAN", tabCAN)
 		}
@@ -655,12 +651,6 @@ func tabsBar(snap MachineState) {
 // their own tab.
 func boardHasSensors(b *BoardDef) bool {
 	return b != nil && (b.Touch != nil || b.IMU != nil || b.Battery != nil || b.SD != nil)
-}
-
-func boardHasBuses(b *BoardDef) bool {
-	return b != nil && (len(b.I2CTCP) > 0 || len(b.SPITCP) > 0 ||
-		len(b.I2CPlugins) > 0 || len(b.SPIPlugins) > 0 || len(b.UARTPlugins) > 0 ||
-		len(b.I2CPresets) > 0 || len(b.SPIPresets) > 0)
 }
 
 func tabButton(label string, tab int) {

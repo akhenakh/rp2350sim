@@ -541,7 +541,10 @@ it on `firmware/c/itmdemo`; `ui:trace:png` renders it.
 
 ### Bus
 
-The I2C/SPI tab lists the board's built-in presets (`i2c_presets` /
+The I2C/SPI tab is available on every board. It is empty when the board has no
+scripted, preset or TCP-bridged target, which keeps the tab in a stable
+position for boards such as `pico2-lcd-lab`. It lists the board's built-in
+presets (`i2c_presets` /
 `spi_presets`), scripted device files (`i2c_plugins`, `spi_plugins`,
 `serial_plugins`) and TCP bridges. A preset or plugin is attached directly to
 the emulated controller, so firmware sees a real BME280, SSD1306, MPU6050 or
