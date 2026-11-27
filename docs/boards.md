@@ -32,6 +32,7 @@ and reference firmware. In short:
 | `rp2350-eth` | `-ch9120` |
 | `pico2w` | `-ch9120` (legacy virtual Wi-Fi transport) |
 | `pico2w-cyw` | `-cyw43439` (on-board CYW43439 gSPI radio) |
+| `pico2w-lcd` | `-cyw43439` (Wi-Fi clock with a 320×240 ST7789) |
 | `pico2-serial` | `-serial-tcp 1:127.0.0.1:0` |
 | `pico2-bus` | `-i2c-tcp`, `-spi-tcp` |
 | `pico2-presets` | `-i2c-preset`, `-spi-preset` |
@@ -214,7 +215,9 @@ What works today:
   `firmware/pico2wnet` uses the lneto stack to get DHCP, resolve `app.lan` and
   echo through a host TCP server. `task run:pico2w` / `task run:pico2wnet`
   execute them, and the `pico2w-cyw` UI board shows the radio, link, NAT and
-  BLE state in the Wi-Fi tab.
+  BLE state in the Wi-Fi tab. `firmware/wificlock` adds the `pico2w-lcd` board:
+  after DHCP it resolves `pool.ntp.org`, sets the clock from the NTP reply and
+  draws the UTC time on a 320x240 ST7789 panel (`task ui:wificlock`).
 
 The legacy `pico2w` board still uses the CH9120 serial netdev for TinyGo `net`
 socket offload. The stock Pico SDK BTstack firmware is still served by the

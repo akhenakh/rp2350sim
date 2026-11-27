@@ -429,6 +429,20 @@ if [ -f "$BUILD/pico2wble.elf" ]; then
 	contains "CYW43439 HCI command complete" "pico2wble: reset complete event" "$out"
 fi
 
+# --- Wi-Fi clock: DHCP + NTP + ST7789 ----------------------------------------
+if [ -f "$BUILD/wificlock.elf" ]; then
+	out=$("$EMU" -fw "$BUILD/wificlock.elf" -cyw43439 -cyw43439-host pool.ntp.org=10.0.2.2 -seconds 15 2>&1)
+	contains "Wi-Fi clock DHCP" "wificlock: dhcp 10.0.2.15" "$out"
+	contains "Wi-Fi clock NTP" "wificlock: ntp" "$out"
+	if (cd cmd/simui && go run . --board pico2w-lcd --tab lcd --run 15 \
+		--png "../../$BUILD/ui-wificlock-smoke.png" "../../$BUILD/wificlock.elf" >/dev/null 2>&1) &&
+		"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-wificlock-smoke.png" >>"$SMOKE_LOG" 2>&1; then
+		ok "UI Wi-Fi clock LCD"
+	else
+		bad "UI Wi-Fi clock LCD" "$(cat "$SMOKE_LOG")"
+	fi
+fi
+
 # --- virtual CYW43 BLE controller -------------------------------------------
 if [ -f "$BUILD/ble-c/ble_temp_reader.elf" ]; then
 	rm -f "$BUILD/ble.pcapng"

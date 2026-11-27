@@ -312,6 +312,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task run:pico2wble` | CYW43439 Bluetooth shared-bus HCI |
 | `task run:wifi` | virtual Wi-Fi TCP client against the host echo |
 | `task ui:wifi` | desktop UI on the Pico 2 W (virtual Wi-Fi) with the netdev example |
+| `task ui:wificlock` | Pico 2 W Wi-Fi clock: DHCP + NTP on an ST7789 LCD |
 | `task ui:scope` | scope demo with a 1 kHz sine on GP26 (`pico2-analog`) |
 | `task ui:scope:fft` | scope with the FFT spectrum view; `ui:scope:fft:png` renders it |
 | `task ui:hid` | HID tab with the TinyGo keyboard + mouse firmware |

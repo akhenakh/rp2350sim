@@ -286,6 +286,13 @@ coordinate; the UI maps the displayed (rotated) frame back through the LCD
 
 ![LCD tab](images/lcd.png)
 
+`task ui:wificlock` runs the `pico2w-lcd` board: a Pico 2 W with a 320×240
+ST7789 panel. The firmware joins the virtual AP, gets DHCP, resolves
+`pool.ntp.org` and displays the NTP-derived UTC clock. `task ui:wificlock:png`
+renders the same panel headlessly.
+
+![Wi-Fi NTP clock on an ST7789 panel](images/wificlock.png)
+
 ### DVI
 
 Shown when the board declares `hstx: true`. It displays the last complete

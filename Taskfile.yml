@@ -145,6 +145,7 @@ tasks:
       - firmware:pico2w
       - firmware:pico2wnet
       - firmware:pico2wble
+      - firmware:wificlock
       - firmware:ws2812
       - firmware:cores
       - firmware:assigncore
@@ -522,6 +523,39 @@ tasks:
     deps: [build, firmware:pico2wble]
     cmds:
       - '{{.EMU}} -fw {{.BUILD}}/pico2wble.elf -cyw43439 -seconds 12'
+
+  firmware:wificlock:
+    desc: Build the Wi-Fi DHCP + NTP clock firmware
+    dir: firmware/wificlock
+    sources:
+      - main.go
+      - go.mod
+      - go.sum
+    generates:
+      - '../../{{.BUILD}}/wificlock.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -o ../../{{.BUILD}}/wificlock.elf .'
+
+  run:wificlock:
+    desc: Join the AP, get DHCP and the time from pool.ntp.org (headless)
+    deps: [build, firmware:wificlock]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/wificlock.elf -cyw43439 -cyw43439-host pool.ntp.org=10.0.2.2 -seconds 15'
+
+  ui:wificlock:
+    desc: Wi-Fi clock on the Pico 2 W with an ST7789 LCD
+    deps: [firmware:wificlock]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2w-lcd --tab lcd '../../{{.BUILD}}/wificlock.elf'
+
+  ui:wificlock:png:
+    desc: Render the Wi-Fi clock LCD to build/ui-wificlock.png
+    deps: [firmware:wificlock]
+    dir: cmd/simui
+    cmds:
+      - go run . --board pico2w-lcd --tab lcd --run 15 --png '../../{{.BUILD}}/ui-wificlock.png' '../../{{.BUILD}}/wificlock.elf'
 
   firmware:echo:
     desc: Build the console echo firmware

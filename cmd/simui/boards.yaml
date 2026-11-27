@@ -398,6 +398,30 @@ boards:
       hosts:
         app.lan: 10.0.2.2
 
+  - id: pico2w-lcd
+    name: Raspberry Pi Pico 2 W + ST7789 clock
+    description: CYW43439 Wi-Fi clock · DHCP + NTP from pool.ntp.org · 320×240 ST7789 on SPI0
+    wifi:
+      kind: cyw43439
+      reg_on: 23
+      data: 24
+      cs: 25
+      clk: 29
+      mac: 02:11:22:33:44:55
+      ssid: rp2350sim
+      password: password
+      hosts:
+        pool.ntp.org: 10.0.2.2
+    lcd:
+      spi: 0
+      cs: 17
+      dc: 16
+      rst: 20
+      width: 320
+      height: 240
+      rotation: 90
+      backlight: 15
+
   - id: pico2-analog
     name: RP2350 + analog + protocols
     description: 1 kHz sine on GP26 plus UART/I2C/SPI demo pins for the analyzers
