@@ -52,7 +52,10 @@ int main(void) {
     if (bad != 0) {
         return 1;
     }
-    while (true) {
-        tight_loop_contents();
+    // The demo is complete; idle in WFI instead of a tight loop so the
+    // emulator can fast-forward and the hang detector does not flag a finished
+    // test as a wedged core.
+    for (;;) {
+        __asm volatile("wfi");
     }
 }

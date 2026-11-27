@@ -472,6 +472,11 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			-psram 8 -psram-cs 8 -psram-latency 6 2>&1)
 		contains "Pico SDK C PSRAM" "psram: ok" "$out"
 		contains "Pico SDK C PSRAM size" "size=8388608" "$out"
+		if grep -q "hang detected" <<<"$out"; then
+			bad "Pico SDK C PSRAM idle" "$out"
+		else
+			ok "Pico SDK C PSRAM idle"
+		fi
 		if (cd cmd/simui && go run . --board pico2 --tab otp --run 0.05 --width 1920 --height 1080 \
 			--png "../../$BUILD/otp-ui-smoke.png" "../../$BUILD/pico-c/otp.elf" >/dev/null 2>&1) &&
 			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/otp-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then

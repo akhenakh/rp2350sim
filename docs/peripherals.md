@@ -387,7 +387,9 @@ the C demo.
 ![PSRAM board](images/psram.png)
 
 Reference firmware: `firmware/c/psram`. Tasks: `task c:psram`,
-`task ui:psram`.
+`task ui:psram`. After the pattern and timing check the fixture idles in
+`WFI`, so a finished run fast-forwards instead of spinning and tripping the
+hang detector.
 
 ## RP2350B (QFN-80)
 
