@@ -114,7 +114,106 @@ func newClocks(c *Chip) *regBlock {
 		}
 		return 0, false
 	}
+	b.writeFn = func(c *Chip, off, v uint32) {
+		if off != 0xA0 { // FC0_SRC starts a measurement
+			return
+		}
+		// The hardware measures for REF_KHZ * INTERVAL cycles; the emulator
+		// completes instantly and reports the selected source's frequency.
+		b.regs[0xA4/4] = 1 << 4 // STATUS.DONE
+		b.regs[0xA8/4] = clockSourceKHz(c, b, v) << 5
+	}
 	return b
+}
+
+// Clock anchors used by the frequency counter. The emulator runs clk_sys at
+// 150 MHz and models the Pico SDK's PLL setup; these are the frequencies the
+// SDK's clock_configure calls target.
+const (
+	clkPLLSysKHz = 150000
+	clkPLLUSBKHz = 48000
+	clkXOSCKHz   = 12000
+	clkROSCKHz   = 12000
+)
+
+func pllPowered(c *Chip, base uint32) bool {
+	return c.Read32(base+4)&0x5 == 0
+}
+
+func clockSourceKHz(c *Chip, b *regBlock, src uint32) uint32 {
+	switch src {
+	case 1: // PLL_SYS_CLKSRC_PRIMARY
+		if pllPowered(c, 0x40050000) {
+			return clkPLLSysKHz
+		}
+	case 2, 16: // PLL_USB_CLKSRC_PRIMARY (and its test output)
+		if pllPowered(c, 0x40058000) {
+			return clkPLLUSBKHz
+		}
+	case 3, 4:
+		return clkROSCKHz
+	case 5, 8: // XOSC, clk_ref
+		return clkXOSCKHz
+	case 9:
+		return clockSysKHz(c, b)
+	case 10:
+		return clockPeriKHz(c, b)
+	case 11, 12: // clk_usb, clk_adc
+		return clkPLLUSBKHz
+	case 13:
+		return 125000 // clk_hstx
+	case 14:
+		return 32 // lposc
+	}
+	return 0
+}
+
+func clockSysKHz(c *Chip, b *regBlock) uint32 {
+	ctrl := b.peek(0x3C)
+	var base uint32
+	if ctrl&1 == 0 { // SRC = clk_ref
+		base = clockSourceKHz(c, b, 8)
+	} else {
+		switch (ctrl >> 5) & 7 {
+		case 0:
+			base = clockSourceKHz(c, b, 1)
+		case 1:
+			base = clockSourceKHz(c, b, 2)
+		case 2:
+			base = clkROSCKHz
+		case 3:
+			base = clkXOSCKHz
+		}
+	}
+	return base / clockDivider(b.peek(0x40))
+}
+
+func clockPeriKHz(c *Chip, b *regBlock) uint32 {
+	ctrl := b.peek(0x48)
+	if ctrl&(1<<11) == 0 { // ENABLE
+		return 0
+	}
+	var base uint32
+	switch (ctrl >> 5) & 7 {
+	case 0:
+		base = clockSysKHz(c, b)
+	case 1:
+		base = clockSourceKHz(c, b, 1)
+	case 2:
+		base = clockSourceKHz(c, b, 2)
+	case 3:
+		base = clkROSCKHz
+	case 4:
+		base = clkXOSCKHz
+	}
+	return base / clockDivider(b.peek(0x4C))
+}
+
+func clockDivider(div uint32) uint32 {
+	if n := div >> 8 & 0xFF; n != 0 {
+		return n
+	}
+	return 1
 }
 
 // ---- XOSC ----

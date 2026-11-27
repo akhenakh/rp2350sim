@@ -106,3 +106,37 @@ func TestFlashDevinfoDefaultAndNarrowXOR(t *testing.T) {
 		t.Fatalf("FLASH_DEVINFO after removing PSRAM = %#x", got)
 	}
 }
+
+// TestClocksFrequencyCounter checks the FC0 measurement the SDK's
+// frequency_count_khz() polls: DONE must set and the result is in kHz.
+func TestClocksFrequencyCounter(t *testing.T) {
+	c := New()
+	measure := func(src uint32) uint32 {
+		t.Helper()
+		c.Write32(0x40010000+0xa0, src)
+		if st := c.Read32(0x40010000 + 0xa4); st&(1<<4) == 0 {
+			t.Fatalf("source %d: FC0 DONE did not set (status %#x)", src, st)
+		}
+		return c.Read32(0x40010000+0xa8) >> 5
+	}
+	if got := measure(1); got != clkPLLSysKHz {
+		t.Fatalf("PLL_SYS = %d kHz, want %d", got, clkPLLSysKHz)
+	}
+	if got := measure(2); got != clkPLLUSBKHz {
+		t.Fatalf("PLL_USB = %d kHz, want %d", got, clkPLLUSBKHz)
+	}
+	if got := measure(5); got != clkXOSCKHz {
+		t.Fatalf("XOSC = %d kHz, want %d", got, clkXOSCKHz)
+	}
+	// Route clk_sys to PLL_SYS (aux source 0, divide by 1) and measure it.
+	c.Write32(0x40010000+0x3c, 1)
+	c.Write32(0x40010000+0x40, 1<<8)
+	if got := measure(9); got != clkPLLSysKHz {
+		t.Fatalf("CLK_SYS = %d kHz, want %d", got, clkPLLSysKHz)
+	}
+	// A powered-down PLL reads zero.
+	c.Write32(0x40050004, 1) // PLL_SYS PWR.PD
+	if got := measure(1); got != 0 {
+		t.Fatalf("PLL_SYS after power-down = %d kHz, want 0", got)
+	}
+}
