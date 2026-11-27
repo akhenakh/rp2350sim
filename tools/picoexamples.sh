@@ -6,7 +6,8 @@
 # Usage: tools/picoexamples.sh [build-dir]
 #   PICO_SDK_PATH        required, path to the Pico SDK
 #   PICO_EXAMPLES_TAG    release tag to fetch (default sdk-2.3.1)
-#   PICOTOOL_DIR         optional prebuilt picotool CMake package directory
+#   PICOTOOL_DIR         optional prebuilt picotool CMake package directory;
+#                        the default skips picotool entirely
 set -euo pipefail
 
 DEST=${1:-build/pico-examples}
@@ -84,11 +85,9 @@ add_subdirectory(${EX}/system/rand rand)
 add_subdirectory(${EX}/hstx/dvi_out_hstx_encoder dvi_out_hstx_encoder)
 EOF
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
-if [ -z "${PICOTOOL_DIR:-}" ] && [ -f "$ROOT/firmware/c/build/_deps/picotool/picotoolConfig.cmake" ]; then
-	PICOTOOL_DIR="$ROOT/firmware/c/build/_deps/picotool"
-fi
-picotool=()
+# The smoke suite consumes ELFs only. Skip picotool so the SDK never fetches
+# and builds it: recent CMake releases fail that sub-build on the CI runner.
+picotool=(-DPICO_NO_PICOTOOL=1)
 if [ -n "${PICOTOOL_DIR:-}" ]; then
 	picotool=(-Dpicotool_DIR="$PICOTOOL_DIR")
 fi
