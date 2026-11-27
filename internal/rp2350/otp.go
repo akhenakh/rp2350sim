@@ -450,9 +450,17 @@ func (o *otpBlock) readRow(row int) (uint32, uint32) {
 // SetRow pre-programs a row from a host file, bypassing fuse and lock rules
 // (it represents data burned before the device reached the firmware).
 func (o *otpBlock) setRow(row int, raw uint32) {
-	if row >= 0 && row < OTPRows {
-		o.rows[row] = raw & 0xffffff
+	if row < 0 || row >= OTPRows {
+		return
 	}
+	raw &= 0xffffff
+	if o.rows[row] == raw {
+		return
+	}
+	o.rows[row] = raw
+	// Host seeds are fuses too: bump the version so UI snapshots refresh and
+	// a persist target sees the change.
+	o.version++
 }
 
 // OTPRow returns the raw 24-bit contents of a row.

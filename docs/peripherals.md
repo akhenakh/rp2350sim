@@ -424,8 +424,14 @@ only `data` get fresh ECC.
 **UI.** The **OTP** tab shows 64 pages of 64 rows, programmed counts and the
 effective secure/non-secure and software locks. Click a page to inspect data,
 raw 24-bit values and ECC status. It follows the last programmed row until you
-pick a page. The UI has no OTP seed flag: use the runner to create a dump, or
-run the C OTP example to populate it.
+pick a page. A board can carry pre-burnt fuses with the `otp:` key in
+`boards.yaml` (`file`, inline `rows`, optional `persist`); `rp2350sim-ui --otp
+PATH` overrides the board file for the session. The header names the seed
+source and row count, so factory rows are distinguishable from firmware
+writes. Reset, Load and `--watch` keep the programmed rows; selecting a board
+starts from that board's seed. With `persist`, a fuse written by firmware is
+saved to a `-otp-dump`-format file after the change and that file wins over
+`file` on the next start.
 
 ![OTP tab after the C OTP example](images/otp.png)
 

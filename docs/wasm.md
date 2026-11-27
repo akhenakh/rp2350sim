@@ -110,7 +110,8 @@ them for other hosts.
   Lua W25Q16 on GP17 and the compiled WASM flash on GP21.
 - **Host devices are stripped** before boot by `webPrepareBoard`: SD directory
   backing (the built-in FAT16 image is used), UART/I2C/SPI TCP bridges, the
-  W5500/W6300/CH9120 controllers and the GDB server. Boards
+  W5500/W6300/CH9120 controllers, the GDB server and `otp:` seeding/persistence
+  (the page has no host filesystem). Boards
   that need sockets (Ethernet, Wi-Fi, `pico2-bus`) still render, but their
   network devices are absent.
 - **One thread.** The emulator loop shares the page's thread, so it steps in

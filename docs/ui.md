@@ -43,6 +43,7 @@ Startup flags:
 | `--list-boards` | print board IDs, names and badges, then exit |
 | `--version` | print the version and exit |
 | `--tab NAME` | initial tab: `board`, `lcd`, `dvi`, `eth`/`wifi`, `ws`, `sensors`, `scope`, `logic`, `gps`, `can`, `audio`, `midi`, `otp`, `bus`, `debug`, `trace`, `console` |
+| `--otp PATH` | seed OTP rows from a JSON file, overriding the board's `otp.file` |
 | `--width`, `--height` | window size in points |
 | `--run SECONDS` | advance virtual time at startup; a live window keeps running, `--png` snapshots stay frozen |
 | `--turbo` | run as fast as the host allows instead of pacing virtual time to real time |
@@ -462,8 +463,12 @@ task ui:bootsel:png  # render it to build/ui-bootsel.png
 The RP2350 OTP array: 64 pages of 64 rows, each page showing its programmed-row
 count and effective secure/non-secure lock. Click a page to inspect its rows
 (data, raw 24-bit value and ECC status). The panel follows the last row the
-firmware programmed until you pick a page. Nothing is persistent: seed rows
-with the runner's `-otp` flag or dump them with `-otp-dump`.
+firmware programmed until you pick a page. The header names the seed source
+(`seeded from device/otp.json (18 rows)`), so factory rows are distinguishable
+from firmware writes. Boards seed the array with `otp:` (`file`, inline
+`rows`, optional `persist`); `--otp PATH` overrides the file. Programmed rows
+survive Reset, Load and `--watch`; switching boards starts fresh. With
+`persist`, firmware-written fuses survive closing the window.
 
 ![OTP tab](images/otp.png)
 

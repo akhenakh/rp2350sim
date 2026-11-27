@@ -194,6 +194,9 @@ func webPrepareBoard(b *BoardDef) {
 	if b.SD != nil {
 		b.SD.Dir = ""
 	}
+	// The browser has no host filesystem, so otp.file cannot be read. OTP
+	// seeding is a desktop feature; docs/wasm.md records the limitation.
+	b.OTP = nil
 	b.Serial = nil
 	b.I2CTCP = nil
 	b.SPITCP = nil

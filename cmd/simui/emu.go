@@ -23,6 +23,7 @@ import (
 	"github.com/akhenakh/rp2350sim/internal/firmware"
 	"github.com/akhenakh/rp2350sim/internal/hang"
 	"github.com/akhenakh/rp2350sim/internal/midi"
+	"github.com/akhenakh/rp2350sim/internal/otpfile"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 	"go.hasen.dev/shirei"
 )
@@ -169,6 +170,9 @@ type OTPState struct {
 	Writes     uint64
 	Programmed int
 	LastWrite  int
+	SeedSource string
+	SeedRows   int
+	SeedPage   int
 }
 
 // Emu owns the emulated machine and steps it in the background.
@@ -212,6 +216,22 @@ type Emu struct {
 	lcdDuty  float32
 	otpGen   uint64
 	otpRows  []uint32
+
+	// OTP seeding and persistence. otpFresh is set when a board is selected so
+	// resetChip applies the board's seed instead of carrying the previous
+	// chip's rows (Reset, Load and watch reloads keep the fuses).
+	otpSeed           []otpfile.SeedRow
+	otpSeedSource     string
+	otpSeedPage       int
+	otpSeeded         int
+	otpOverride       []otpfile.SeedRow
+	otpOverrideSet    bool
+	otpOverrideSource string
+	otpPersist        string
+	otpFresh          bool
+	otpPersistWrites  uint64
+	otpPersistVersion uint64
+	lastOTPVersion    uint64
 
 	board *BoardDef
 
@@ -392,12 +412,23 @@ type USBEvent struct {
 }
 
 func NewEmu() *Emu {
-	e := &Emu{debugger: rp2350.NewDebugger()}
+	e := &Emu{debugger: rp2350.NewDebugger(), otpSeedPage: -1}
 	e.mu.Lock()
 	e.resetChip()
 	e.mu.Unlock()
 	go e.loop()
 	return e
+}
+
+// SetOTPOverride replaces the selected board's otp.file for this session.
+// Persistence is disabled so an alternate device image is not written into the
+// board's persist target.
+func (e *Emu) SetOTPOverride(rows []otpfile.SeedRow, source string) {
+	e.mu.Lock()
+	e.otpOverride = rows
+	e.otpOverrideSet = true
+	e.otpOverrideSource = source
+	e.mu.Unlock()
 }
 
 // SetBoard selects the board whose devices are attached on the next boot.
@@ -409,6 +440,8 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	// Delivers queued Note-Off/All-Notes-Off messages to the old transport
 	// before resetChip drops its endpoints.
 	e.flushMIDILocked()
+	// The old board's persist target (if any) owns anything burned so far.
+	e.saveOTPLocked()
 	if b == nil {
 		e.stopLocked()
 		return
@@ -417,6 +450,24 @@ func (e *Emu) SetBoard(b *BoardDef) {
 	e.pickerResume, e.pickerPaused, e.atPicker = false, false, false
 	e.board = b
 	e.errText = ""
+	// A board switch starts from a fresh fuse array and applies that board's
+	// seed. Reset/Load/reload keep the current rows instead.
+	e.otpFresh = true
+	e.otpSeed, e.otpSeedSource, e.otpPersist = nil, "", ""
+	e.otpSeedPage = -1
+	if e.otpOverrideSet {
+		e.otpSeed = e.otpOverride
+		e.otpSeedSource = e.otpOverrideSource
+	} else if b.OTP != nil {
+		e.otpSeed = b.OTP.Seed
+		e.otpSeedSource = b.OTP.Source
+		e.otpPersist = b.OTP.Persist
+	}
+	for _, r := range e.otpSeed {
+		if page := r.Row / rp2350.OTPPageRows; e.otpSeedPage < 0 || page < e.otpSeedPage {
+			e.otpSeedPage = page
+		}
+	}
 	e.scopePins = b.ScopePins()
 	e.initInputsLocked()
 	if e.img != nil || e.fwPath != "" {
@@ -1196,8 +1247,33 @@ func (e *Emu) FlashUF2(name string, data []byte) error {
 }
 
 // resetChip builds a fresh machine and attaches the selected board's devices.
+// Programmed OTP rows are fuses: unless a board was just selected, they are
+// carried into the new chip so Reset, Load and watch reloads behave like a
+// power cycle. The seed is applied once, on the fresh array.
 func (e *Emu) resetChip() {
+	if e.otpPersist != "" {
+		e.saveOTPLocked()
+	}
+	var carried []uint32
+	if e.chip != nil && !e.otpFresh {
+		carried = e.chip.OTPRowsCopy()
+	}
 	c := rp2350.New()
+	if e.otpFresh {
+		e.otpSeeded = otpfile.Apply(c, e.otpSeed)
+		e.otpFresh = false
+	} else {
+		for i, raw := range carried {
+			if raw != 0 {
+				c.SetOTPRow(i, raw)
+			}
+		}
+	}
+	// The seed/carried rows are a baseline, not a firmware burn: do not
+	// rewrite the persist target until the firmware changes something.
+	e.otpPersistVersion = c.OTPVersion()
+	e.otpPersistWrites = c.OTPWrites()
+	e.lastOTPVersion = c.OTPVersion()
 	if e.board != nil && e.board.Package == "qfn80" {
 		c.SetPackage(rp2350.PackageQFN80)
 	}
@@ -2437,6 +2513,33 @@ func (e *Emu) SaveFlash() {
 	}
 }
 
+// saveOTPLocked writes the current fuse rows to the board's persist target
+// when a fuse or lock changed. The caller holds e.mu.
+func (e *Emu) saveOTPLocked() {
+	path := e.otpPersist
+	if path == "" || e.chip == nil {
+		return
+	}
+	version := e.chip.OTPVersion()
+	writes := e.chip.OTPWrites()
+	if version == e.otpPersistVersion && writes == e.otpPersistWrites {
+		return
+	}
+	contents := otpfile.ContentsOf(e.chip)
+	e.otpPersistVersion = version
+	e.otpPersistWrites = writes
+	if err := otpfile.Write(path, contents); err != nil {
+		slog.Error("otp persist", slog.String("path", path), slog.Any("err", err))
+	}
+}
+
+// SaveOTP persists the current fuse rows.
+func (e *Emu) SaveOTP() {
+	e.mu.Lock()
+	e.saveOTPLocked()
+	e.mu.Unlock()
+}
+
 // SyncSD flushes a host-backed SD card so writes made just before the window
 // closes are not lost.
 func (e *Emu) SyncSD() {
@@ -2722,6 +2825,13 @@ func (e *Emu) loop() {
 			e.lastBoots = boots
 			saveFlash = true
 		}
+		saveOTP := false
+		if e.chip != nil {
+			if v := e.chip.OTPVersion(); v != e.lastOTPVersion {
+				e.lastOTPVersion = v
+				saveOTP = true
+			}
+		}
 		e.mu.Unlock()
 		yieldEvery := min(frameEvery, 50*time.Millisecond)
 		if yieldEvery <= 16*time.Millisecond {
@@ -2733,6 +2843,9 @@ func (e *Emu) loop() {
 		}
 		if saveFlash {
 			e.SaveFlash()
+		}
+		if saveOTP {
+			e.SaveOTP()
 		}
 		switch {
 		case sleepFor > 0:
@@ -2986,9 +3099,12 @@ func (e *Emu) Snapshot() MachineState {
 		e.otpRows = e.chip.OTPRowsCopy()
 	}
 	otp := &OTPState{
-		Rows:      e.otpRows,
-		Writes:    e.chip.OTPWrites(),
-		LastWrite: e.chip.OTPLastWriteRow(),
+		Rows:       e.otpRows,
+		Writes:     e.chip.OTPWrites(),
+		LastWrite:  e.chip.OTPLastWriteRow(),
+		SeedSource: e.otpSeedSource,
+		SeedRows:   e.otpSeeded,
+		SeedPage:   e.otpSeedPage,
 	}
 	for i, raw := range otp.Rows {
 		if raw == 0 {

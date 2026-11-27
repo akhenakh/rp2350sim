@@ -2,12 +2,14 @@ package main
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/otpfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,6 +50,7 @@ type BoardDef struct {
 	BLE         *BLEDevice         `yaml:"ble"`
 	Audio       *AudioDevice       `yaml:"audio"`
 	MIDI        *MIDIDevice        `yaml:"midi"`
+	OTP         *OTPDevice         `yaml:"otp"`
 	// Package selects the RP2350 variant: qfn60 (RP2350A, 30 GPIOs) or
 	// qfn80 (RP2350B, 48 GPIOs).
 	Package string `yaml:"package"`
@@ -308,6 +311,25 @@ func (d *PSRAMDevice) LatencyCycles() int {
 	return d.Latency
 }
 
+// OTPDevice pre-programs the antifuse array. File and Persist are resolved
+// relative to the boards.yaml directory; Seed and Source are filled by
+// LoadBoards after validation.
+type OTPDevice struct {
+	File    string            `yaml:"file"`
+	Rows    []OTPRowDef       `yaml:"rows"`
+	Persist string            `yaml:"persist"`
+	Seed    []otpfile.SeedRow `yaml:"-"`
+	Source  string            `yaml:"-"`
+}
+
+// OTPRowDef is one inline yaml row. data is 16 bits and gets a fresh ECC;
+// raw is the 24-bit fuse value written verbatim.
+type OTPRowDef struct {
+	Row  int     `yaml:"row"`
+	Data *uint32 `yaml:"data"`
+	Raw  *uint32 `yaml:"raw"`
+}
+
 // InputDef is one interactive board control on the Board tab: a momentary
 // pushbutton, a slide switch, a rotary encoder, an ADC potentiometer/slider or
 // the BOOTSEL button.
@@ -477,6 +499,11 @@ func LoadBoards() ([]BoardDef, error) {
 		ids[b.ID] = true
 		if b.Name == "" {
 			b.Name = b.ID
+		}
+		if b.OTP != nil {
+			if err := prepareOTP(b.OTP, baseDir); err != nil {
+				return nil, fmt.Errorf("boards: %s: %w", b.ID, err)
+			}
 		}
 		spi := map[spiPin]string{}
 		spiCS := map[int]spiPin{}
@@ -1184,6 +1211,68 @@ func LoadBoards() ([]BoardDef, error) {
 		}
 	}
 	return file.Boards, nil
+}
+
+// prepareOTP resolves the seed and persistence paths and validates the rows
+// at board load. A persist file that already exists wins over file; inline
+// rows are merged last. A persist target does not have to exist yet.
+func prepareOTP(o *OTPDevice, baseDir string) error {
+	origFile, origPersist := o.File, o.Persist
+	resolve := func(p string) string {
+		p = expandPath(p)
+		if p != "" && !filepath.IsAbs(p) && baseDir != "" {
+			p = filepath.Join(baseDir, p)
+		}
+		return p
+	}
+	o.File = resolve(o.File)
+	o.Persist = resolve(o.Persist)
+
+	if o.File == "" && o.Persist == "" && len(o.Rows) == 0 {
+		return fmt.Errorf("otp needs file, rows or persist")
+	}
+
+	var rows []otpfile.SeedRow
+	source := ""
+	persistUsed := false
+	if o.Persist != "" {
+		if _, err := os.Stat(o.Persist); err == nil {
+			r, err := otpfile.Load(o.Persist)
+			if err != nil {
+				return fmt.Errorf("otp persist: %w", err)
+			}
+			rows, source, persistUsed = r, origPersist, true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("otp persist: %w", err)
+		}
+	}
+	if !persistUsed && o.File != "" {
+		r, err := otpfile.Load(o.File)
+		if err != nil {
+			return fmt.Errorf("otp: %w", err)
+		}
+		rows, source = r, origFile
+	}
+
+	inline := make([]otpfile.SeedRow, 0, len(o.Rows))
+	for _, r := range o.Rows {
+		row, err := otpfile.NewRowValues(r.Row, r.Data, r.Raw)
+		if err != nil {
+			return fmt.Errorf("otp: %w", err)
+		}
+		inline = append(inline, row)
+	}
+	rows = otpfile.Merge(rows, inline)
+	switch {
+	case source == "" && o.Persist != "":
+		source = origPersist + " (new)"
+	case source == "":
+		source = "inline rows"
+	case len(inline) > 0:
+		source += " + inline"
+	}
+	o.Seed, o.Source = rows, source
+	return nil
 }
 
 // preparePlugin resolves a plugin source and gives it a stable display name.

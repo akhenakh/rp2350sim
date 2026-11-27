@@ -2,8 +2,11 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/akhenakh/rp2350sim/internal/rp2350"
 )
 
 // TestTouchPointRotation checks the LCD click mapping for the Touch-LCD-2's
@@ -508,5 +511,130 @@ func TestGPSFixPointer(t *testing.T) {
 	}
 	if boards[1].GPS.Fix == nil || *boards[1].GPS.Fix {
 		t.Fatal("explicit GPS fix:false was not preserved")
+	}
+}
+
+// TestBoardsLoadOTPSeed checks the file plus inline rows, including the
+// inline override of a file row.
+func TestBoardsLoadOTPSeed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "otp.json"),
+		[]byte(`{"rows":[{"row":1024,"data":"0xfa1a"},{"row":1025,"data":"0x0001"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "boards.yaml"), []byte(`boards:
+  - id: otp
+    otp:
+      file: otp.json
+      rows:
+        - { row: 1025, data: 0x0002 }
+        - { row: 1030, raw: 0x123456 }
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RP2350SIM_BOARDS", filepath.Join(dir, "boards.yaml"))
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &boards[0]
+	if b.OTP == nil || b.OTP.Source != "otp.json + inline" {
+		t.Fatalf("otp config = %+v", b.OTP)
+	}
+	want := map[int]uint32{
+		1024: uint32(rp2350.OTPEncodeRow(0xfa1a)),
+		1025: uint32(rp2350.OTPEncodeRow(0x0002)),
+		1030: 0x123456,
+	}
+	if len(b.OTP.Seed) != len(want) {
+		t.Fatalf("seed rows = %d, want %d", len(b.OTP.Seed), len(want))
+	}
+	for _, r := range b.OTP.Seed {
+		if r.Raw != want[r.Row] {
+			t.Fatalf("row %d = %#x, want %#x", r.Row, r.Raw, want[r.Row])
+		}
+	}
+}
+
+// TestBoardsRejectBadOTP checks the load-time validation.
+func TestBoardsRejectBadOTP(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		seed string
+	}{
+		{name: "missing file", yaml: "boards:\n  - id: otp\n    otp: { file: missing.json }\n"},
+		{name: "data too wide", yaml: "boards:\n  - id: otp\n    otp:\n      rows:\n        - { row: 1, data: 0x10000 }\n"},
+		{name: "raw too wide", yaml: "boards:\n  - id: otp\n    otp:\n      rows:\n        - { row: 1, raw: 0x1000000 }\n"},
+		{name: "row out of range", yaml: "boards:\n  - id: otp\n    otp:\n      rows:\n        - { row: 4096, data: 1 }\n"},
+		{name: "empty otp", yaml: "boards:\n  - id: otp\n    otp: {}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "boards.yaml"), []byte(tt.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("RP2350SIM_BOARDS", filepath.Join(dir, "boards.yaml"))
+			if _, err := LoadBoards(); err == nil {
+				t.Fatal("bad otp config accepted")
+			}
+		})
+	}
+}
+
+// TestBoardsOTPPersistWins checks that an existing persist file overrides the
+// board seed file.
+func TestBoardsOTPPersistWins(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "seed.json"),
+		[]byte(`{"rows":[{"row":1024,"data":"0x1111"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "persist.json"),
+		[]byte(`{"rows":[{"row":1024,"data":"0x2222"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "boards.yaml"), []byte(`boards:
+  - id: otp
+    otp: { file: seed.json, persist: persist.json }
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RP2350SIM_BOARDS", filepath.Join(dir, "boards.yaml"))
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := boards[0].OTP
+	if o == nil || o.Source != "persist.json" {
+		t.Fatalf("otp source = %+v", o)
+	}
+	if len(o.Seed) != 1 || o.Seed[0].Raw != uint32(rp2350.OTPEncodeRow(0x2222)) {
+		t.Fatalf("seed = %+v", o.Seed)
+	}
+}
+
+// TestBoardsOTPPersistMayNotExist allows a new session to start from the
+// file while creating the persist target later.
+func TestBoardsOTPPersistMayNotExist(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "seed.json"),
+		[]byte(`{"rows":[{"row":1024,"data":"0x1111"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "boards.yaml"), []byte(`boards:
+  - id: otp
+    otp: { file: seed.json, persist: new.json }
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RP2350SIM_BOARDS", filepath.Join(dir, "boards.yaml"))
+	boards, err := LoadBoards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := boards[0].OTP; o == nil || len(o.Seed) != 1 || o.Source != "seed.json" {
+		t.Fatalf("otp = %+v", o)
 	}
 }

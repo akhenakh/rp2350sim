@@ -76,6 +76,7 @@ has no tab.
 | `ultrasonic` | Board | Timed HC-SR04 sensors |
 | `gps` | Board / Console | NMEA 0183 source on a UART |
 | `can` | Board / Console | MCP2515 CAN controller and peer |
+| `otp` | OTP | pre-burnt fuses and optional persistence |
 
 The Board, Scope, Logic, OTP, Debug, Profile and Console tabs always exist.
 
@@ -570,6 +571,49 @@ can:
 The peer increments the data bytes of a matching request. Classic CAN only;
 CAN FD is not modelled yet.
 
+## `otp`
+
+Pre-programs the antifuse array before boot, so an unmodified production
+firmware reads its factory-burned key from OTP. The file uses the same JSON as
+the runner's `-otp`/`-otp-dump`: `{"rows":[{"row":1024,"data":"0xfa1a"}]}`.
+`data` is 16 bits and gets a fresh Hamming ECC; `raw` is the 24-bit fuse value
+written verbatim.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `file` | path | none | seed rows; relative to this yaml |
+| `rows` | list | empty | inline rows merged after `file` |
+| `persist` | path | none | backing file for fuses written at runtime |
+
+Each inline row has `row` and exactly one of `data` (16 bits) or `raw` (24
+bits). Inline rows override a row from the file.
+
+```yaml
+boards:
+  - id: ds-poe-eth-nrf
+    ethernet: { kind: w6300, spi: 0, cs: 17 }
+    otp:
+      file: ../device/otp.json
+      rows:
+        - { row: 0x400, data: 0xfa1a }
+      persist: ../build/otp-ds-poe.json
+```
+
+`persist` is read on startup and wins over `file`; it does not have to exist
+yet, and when it does `file` is not read. After a fuse or lock change the UI
+writes the whole array there, so a firmware provisioning flow survives closing
+the window. `--otp PATH` on
+`rp2350sim-ui` overrides `file` for the session and disables `persist`, so
+alternate device images are not mixed.
+
+The seed is applied when a board is selected. Reset, Load and `--watch`
+reloads keep the programmed rows (fuses survive a power cycle); switching
+boards or using `--otp` starts from a fresh array. A seed is written before
+boot and never clears a fuse.
+
+The browser build has no host filesystem, so `otp:` is ignored there; see
+[wasm.md](wasm.md).
+
 ## `i2c_plugins`, `spi_plugins` and `serial_plugins`
 
 Scripted device models are files: a `.lua` script runs in the bundled Lua
@@ -633,6 +677,9 @@ or when any of these conflicts exist:
   it is another kind.
 - **Plugins** need a `file` or `url`, a valid slot, and cannot reuse an I2C
   address, SPI chip select or UART already claimed by another device.
+- **OTP** rows must be 0–4095, `data` at most 16 bits and `raw` at most 24
+  bits. `file` must exist unless an existing `persist` file provides the rows;
+  a `persist` target may not exist yet.
 
 Unknown YAML keys are ignored by the parser, so use the exact names above.
 

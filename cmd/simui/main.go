@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/akhenakh/rp2350sim/internal/devices"
+	"github.com/akhenakh/rp2350sim/internal/otpfile"
 	"github.com/akhenakh/rp2350sim/internal/rp2350"
 
 	app "go.hasen.dev/shirei/app"
@@ -296,6 +297,9 @@ func boardBadges(b *BoardDef) []string {
 	}
 	if b.PSRAM != nil {
 		out = append(out, fmt.Sprintf("PSRAM %d MB", b.PSRAM.SizeMB))
+	}
+	if b.OTP != nil {
+		out = append(out, "OTP")
 	}
 	if len(b.Analog) > 0 {
 		out = append(out, "ANALOG")
@@ -1493,6 +1497,9 @@ func otpVisiblePage(o *OTPState) int {
 	if o.LastWrite >= 0 {
 		return o.LastWrite / rp2350.OTPPageRows
 	}
+	if o.SeedPage >= 0 {
+		return o.SeedPage
+	}
 	return 0
 }
 
@@ -1531,6 +1538,18 @@ func otpPanel(snap MachineState) {
 			}
 			Filler(1)
 			Label(fmt.Sprintf("%d rows programmed · %d writes", o.Programmed, o.Writes), FontSize(12))
+		})
+		Container(Attrs(Row, CrossMid, Gap(8)), func() {
+			if o.SeedSource != "" {
+				rows := "rows"
+				if o.SeedRows == 1 {
+					rows = "row"
+				}
+				Label(fmt.Sprintf("seeded from %s (%d %s)", o.SeedSource, o.SeedRows, rows), FontSize(12))
+			} else {
+				Label("blank OTP at boot", FontSize(12), TextColor(220, 6, 62, 1))
+			}
+			Filler(1)
 		})
 		Container(Attrs(Row, Grow(1), Expand, Gap(12)), func() {
 			Container(Attrs(FixWidth(636), Gap(6)), func() {
@@ -3491,6 +3510,7 @@ func main() {
 		return nil
 	})
 	flashPath := flag.String("flash", "", "raw flash backing image; loaded before firmware, and self-updates are written back here")
+	otpPath := flag.String("otp", "", "seed OTP rows from this JSON file, overriding the board's otp.file")
 	tabName := flag.String("tab", "board", "tab to show: board, lcd, dvi, eth/wifi, ws, sensors, scope, logic, audio, midi, otp, bus, debug, profile, hid, ble, bootsel, console")
 	turboFlag := flag.Bool("turbo", false, "run as fast as the host allows instead of pacing virtual time to real time")
 	debugBreak := flag.String("break", "", "add a debugger breakpoint (address or symbol) after loading")
@@ -3543,6 +3563,14 @@ func main() {
 			fmt.Printf("%-14s %-28s %s\n", b.ID, b.Name, strings.Join(boardBadges(&b), " · "))
 		}
 		return
+	}
+	if *otpPath != "" {
+		rows, err := otpfile.Load(*otpPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "otp: %v\n", err)
+			os.Exit(2)
+		}
+		emu.SetOTPOverride(rows, *otpPath)
 	}
 	if *boardID != "" {
 		b := findBoard(*boardID)
@@ -3665,6 +3693,7 @@ func main() {
 		// A self-update during the warm-up has already produced a new flash
 		// image; persist it before the live window starts.
 		emu.SaveFlash()
+		emu.SaveOTP()
 		// A live window keeps running after the warm-up; only the headless
 		// snapshot needs the machine frozen.
 		if *png == "" {
@@ -3685,6 +3714,7 @@ func main() {
 		}
 		emu.SyncSD()
 		emu.SaveFlash()
+		emu.SaveOTP()
 		return
 	}
 
@@ -3693,4 +3723,5 @@ func main() {
 	stopAudio()
 	emu.SyncSD()
 	emu.SaveFlash()
+	emu.SaveOTP()
 }
