@@ -35,6 +35,12 @@ tasks:
     cmds:
       - go test ./...
 
+  test:simui:
+    desc: Run the desktop UI tests
+    dir: cmd/simui
+    cmds:
+      - go test ./...
+
   test:js:
     desc: Run the browser plugin backend tests under Node's native WebAssembly engine
     cmds:
@@ -59,18 +65,72 @@ tasks:
 
   lint:
     desc: Static gates (golangci-lint with modernize, go fix diff) for every module
+    deps: [lint:root, lint:simui, lint:ch9120, lint:w6300]
+
+  lint:root:
     cmds:
       - go vet ./...
       - golangci-lint run ./...
       - go fix -diff ./...
-      - cd cmd/simui && go vet ./... && golangci-lint run ./... && go fix -diff ./...
+
+  lint:simui:
+    dir: cmd/simui
+    cmds:
+      - go vet ./...
+      - golangci-lint run ./...
+      - go fix -diff ./...
       # The browser build is a supported target: keep it compiling.
-      - cd cmd/simui && GOOS=js GOARCH=wasm go build ./...
-      - cd drivers/ch9120 && go vet ./... && golangci-lint run ./... && go fix -diff ./...
-      - cd drivers/w6300 && go vet ./... && golangci-lint run ./... && go fix -diff ./...
+      - GOOS=js GOARCH=wasm go build ./...
+
+  lint:ch9120:
+    dir: drivers/ch9120
+    cmds:
+      - go vet ./...
+      - golangci-lint run ./...
+      - go fix -diff ./...
+
+  lint:w6300:
+    dir: drivers/w6300
+    cmds:
+      - go vet ./...
+      - golangci-lint run ./...
+      - go fix -diff ./...
 
   ci:
     desc: Full verification (lint, unit tests, QEMU corpus, firmware smokes, UI snapshot)
+    # The three groups are independent; Task runs dependencies in parallel.
+    deps: [lint, ci:test, ci:smoke]
+
+  ci:test:
+    deps: [test, test:js, test:simui, test:qemu]
+
+  ci:smoke:
+    deps: [ci:smoke:builds]
+    cmds:
+      # Run the independent slices of tools/smoke.sh in parallel. One task
+      # owns the shared build dependency, so the pico-examples tree is never
+      # configured by two processes at once.
+      - |
+        pids=""
+        for group in basic1 network basic2 c pex1 pex2 pex3 pex4; do
+          (
+            start=$(date +%s)
+            PICO_C_BUILD=firmware/c/build PICO_EXAMPLES_READY=1 \
+              SMOKE_GROUP=$group SMOKE_LOG="{{.BUILD}}/smoke-$group.log" \
+              bash tools/smoke.sh "{{.BUILD}}"
+            rc=$?
+            echo "smoke[$group]: $(( $(date +%s) - start ))s" >&2
+            exit $rc
+          ) &
+          pids="$pids $!"
+        done
+        status=0
+        for pid in $pids; do
+          wait "$pid" || status=1
+        done
+        exit $status
+
+  ci:smoke:builds:
     deps:
       - build
       - firmware:blinky
@@ -105,19 +165,43 @@ tasks:
       - firmware:ch9120
       - firmware:wifi
       - firmware:sdcard
+      - ci:picoexamples
+      - ci:tools
+
+  ci:picoexamples:
+    desc: Warm the pinned pico-examples build after c:build
+    deps: [c:build]
     cmds:
-      - task: lint
-      - go test ./...
-      - task: test:js
-      - cd cmd/simui && go test ./...
-      - 'go test -tags qemu ./internal/m33 -run TestQEMU'
-      - 'go build -o {{.BUILD}}/ethhost ./tools/ethhost'
-      - 'go build -o {{.BUILD}}/pngcheck ./tools/pngcheck'
-      - 'go build -o {{.BUILD}}/pincheck ./tools/pincheck'
-      - 'go build -o {{.BUILD}}/wavcheck ./tools/wavcheck'
-      - 'go build -o {{.BUILD}}/serialcheck ./tools/serialcheck'
-      - 'go build -o {{.BUILD}}/busfake ./tools/busfake'
-      - 'bash tools/smoke.sh {{.BUILD}}'
+      - |
+        if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &&
+          command -v cmake >/dev/null 2>&1; then
+          if ! bash tools/picoexamples.sh "{{.BUILD}}/pico-examples" >"{{.BUILD}}/picoexamples.log" 2>&1; then
+            echo "pico-examples build failed:" >&2
+            tail -30 "{{.BUILD}}/picoexamples.log" >&2
+            exit 1
+          fi
+        fi
+
+  ci:tools:
+    desc: Build the host helpers used by the smoke suite
+    cmds:
+      - |
+        mkdir -p "{{.BUILD}}"
+        pids=""
+        for tool in ethhost pngcheck pincheck wavcheck serialcheck busfake; do
+          go build -o "{{.BUILD}}/$tool" "./tools/$tool" 2>"{{.BUILD}}/build-$tool.log" &
+          pids="$pids $!"
+        done
+        status=0
+        for pid in $pids; do
+          wait "$pid" || status=1
+        done
+        if [ "$status" -ne 0 ]; then
+          for tool in ethhost pngcheck pincheck wavcheck serialcheck busfake; do
+            cat "{{.BUILD}}/build-$tool.log" >&2
+          done
+          exit 1
+        fi
 
   zephyr:smoke:
     desc: Build and run Zephyr samples on the RP2350 (needs a west workspace and /opt/zephyr-sdk)

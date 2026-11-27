@@ -107,6 +107,24 @@ This is how CI validates the PIO square wave (15 MHz, 50%), blink (2 Hz),
 the PIO blink frequencies and the PWM duty cycles. Build the subset on its own
 with `task picoexamples:build` (or `bash tools/picoexamples.sh build/pico-examples`).
 
+## Parallel smoke slices
+
+`task ci` runs lint, the unit tests and the smoke suite in parallel. Inside the
+smoke suite, `tools/smoke.sh` is invoked once per slice:
+
+- `basic1`: blinky, audio, USB, console input, PIO, WS2812, SD and the LCD
+  boards;
+- `network`: W5500, W6300, CH9120, virtual Wi-Fi, UART and the I2C/SPI bridges
+  (kept together because they share host ports);
+- `basic2`: presets, plugins, sensors, logic analyzer and the scope;
+- `c`: the Pico SDK C fixtures;
+- `pex1`–`pex4`: the pinned pico-examples checks, split by runtime.
+
+`SMOKE_GROUP=<slice>` runs one slice directly; without it the script keeps the
+sequential `all` mode. Each slice writes `build/smoke-<slice>.log` for the
+helper output (pngcheck, pincheck, CMake) while the `ok:`/`FAIL:` lines stay on
+stdout for the PR report.
+
 ## Pull request reports
 
 The `ci` workflow runs on every pull request. It captures the full `task ci`

@@ -5,8 +5,16 @@ set -uo pipefail
 
 BUILD=${1:-build}
 EMU="$BUILD/rp2350sim"
+# SMOKE_GROUP selects one parallel slice of the suite; the default "all" runs
+# every slice in order for a standalone smoke run.
+GROUP=${SMOKE_GROUP:-all}
+in_group() { [ "$GROUP" = all ] || [ "$GROUP" = "$1" ]; }
+in_pex() {
+	in_group pex || in_group pex1 || in_group pex2 || in_group pex3 || in_group pex4
+}
+SMOKE_LOG=${SMOKE_LOG:-$BUILD/smoke.log}
 fail=0
-: >"$BUILD/smoke.log"
+: >"$SMOKE_LOG"
 
 ok() { echo "ok: $1"; }
 bad() {
@@ -23,6 +31,19 @@ contains() {
 	if grep -qF -- "$2" <<<"$3"; then ok "$1"; else bad "$1" "missing: $2" "$3"; fi
 }
 
+# port_busy PORT reports whether a local TCP listener already owns PORT.
+# ss is Linux-only; lsof covers macOS and the BSDs.
+port_busy() {
+	if command -v ss >/dev/null 2>&1; then
+		ss -ltn 2>/dev/null | grep -q ":$1 "
+	elif command -v lsof >/dev/null 2>&1; then
+		lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+	else
+		return 1
+	fi
+}
+
+if in_group basic1; then
 # --- blinky: GP25 toggles at least four times in one virtual second ---------
 out=$("$EMU" -fw "$BUILD/blinky.elf" -seconds 1 -trace-pins 25 2>&1)
 n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
@@ -33,10 +54,10 @@ if [ -x "$BUILD/wavcheck" ]; then
 	"$EMU" -fw "$BUILD/audio.elf" -seconds 1 -quiet -audio-pwm 0 \
 		-audio-out "$BUILD/audio.wav" >/dev/null 2>&1
 	if "$BUILD/wavcheck" -rate 48000 -channels 1 -freq 440 -freq-tol 30 \
-		-min-rms 0.1 "$BUILD/audio.wav" >>"$BUILD/smoke.log" 2>&1; then
+		-min-rms 0.1 "$BUILD/audio.wav" >>"$SMOKE_LOG" 2>&1; then
 		ok "PWM audio WAV"
 	else
-		bad "PWM audio WAV" "$(cat "$BUILD/smoke.log")"
+		bad "PWM audio WAV" "$(cat "$SMOKE_LOG")"
 	fi
 fi
 
@@ -108,18 +129,18 @@ contains "AssignCore survives sleeps and wakeups" "assigncore: done" "$out"
 
 # --- ST7789 framebuffer export ---------------------------------------------
 out=$("$EMU" -fw "$BUILD/lcd.elf" -seconds 3 -lcd -lcd-png "$BUILD/lcd-smoke.png" 2>&1)
-if "$BUILD/pngcheck" -w 240 -h 135 -colors 2 "$BUILD/lcd-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+if "$BUILD/pngcheck" -w 240 -h 135 -colors 2 "$BUILD/lcd-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "LCD framebuffer exported"
 else
-	bad "LCD framebuffer" "$out" "$(cat "$BUILD/smoke.log")"
+	bad "LCD framebuffer" "$out" "$(cat "$SMOKE_LOG")"
 fi
 
 # --- RP2350-Touch-LCD-2 -----------------------------------------------------
 out=$("$EMU" -fw "$BUILD/touchlcd.elf" -seconds 1 -touch-lcd2 -lcd-png "$BUILD/touchlcd-smoke.png" 2>&1)
-if "$BUILD/pngcheck" -w 320 -h 240 -colors 2 "$BUILD/touchlcd-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+if "$BUILD/pngcheck" -w 320 -h 240 -colors 2 "$BUILD/touchlcd-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "Touch-LCD-2 framebuffer exported"
 else
-	bad "Touch-LCD-2 framebuffer" "$out" "$(cat "$BUILD/smoke.log")"
+	bad "Touch-LCD-2 framebuffer" "$out" "$(cat "$SMOKE_LOG")"
 fi
 out=$("$EMU" -fw "$BUILD/touchlcd.elf" -seconds 3 -quiet -touch-lcd2 \
 	-touch 120,200 -touch-at 1s -touch-hold 500ms 2>&1)
@@ -141,18 +162,9 @@ else
 	bad "SD directory source" "$out"
 fi
 
-# port_busy PORT reports whether a local TCP listener already owns PORT.
-# ss is Linux-only; lsof covers macOS and the BSDs.
-port_busy() {
-	if command -v ss >/dev/null 2>&1; then
-		ss -ltn 2>/dev/null | grep -q ":$1 "
-	elif command -v lsof >/dev/null 2>&1; then
-		lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
-	else
-		return 1
-	fi
-}
+fi
 
+if in_group network; then
 # --- W5500 Ethernet against the host helper --------------------------------
 # ethhost drives its two server checks on wall time (1 s boot, then 300 ms
 # apart); keep the virtual run long enough that a fast emulator does not exit
@@ -193,10 +205,10 @@ contains "W6300 listener re-armed" 'server check 2: reply "pong\n"' "$log"
 contains "W6300 network advertised" "tcp/9002 listen host=127.0.0.1:9002" "$out"
 if (cd cmd/simui && go run . --board poe-eth --tab eth --run 0.5 \
 	--png "../../$BUILD/eth-ui-smoke.png" "../../$BUILD/w6300.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/eth-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/eth-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI Ethernet tab"
 else
-	bad "UI Ethernet tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI Ethernet tab" "$(cat "$SMOKE_LOG")"
 fi
 kill "$host" 2>/dev/null || true
 trap - EXIT
@@ -239,10 +251,10 @@ for i in $(seq 1 50); do
 done
 if [ -z "$serialaddr" ]; then
 	bad "UART over TCP" "no listener address" "$(cat "$BUILD/serial.log")"
-elif "$BUILD/serialcheck" -addr "$serialaddr" -send "serial-check" >>"$BUILD/smoke.log" 2>&1; then
+elif "$BUILD/serialcheck" -addr "$serialaddr" -send "serial-check" >>"$SMOKE_LOG" 2>&1; then
 	ok "UART over TCP ($serialaddr)"
 else
-	bad "UART over TCP" "$(cat "$BUILD/serial.log")" "$(cat "$BUILD/smoke.log")"
+	bad "UART over TCP" "$(cat "$BUILD/serial.log")" "$(cat "$SMOKE_LOG")"
 fi
 kill "$serialpid" 2>/dev/null || true
 
@@ -324,6 +336,9 @@ else
 fi
 kill "$bdevpid" 2>/dev/null || true
 
+fi
+
+if in_group basic2; then
 # --- built-in bus presets --------------------------------------------------
 out=$("$EMU" -fw "$BUILD/presets.elf" -seconds 2 \
 	-i2c-preset 0:bme280@0x76 -i2c-preset 0:mpu6050@0x68 \
@@ -335,10 +350,10 @@ contains "W25Q16 preset" "w25q16: ef 40 15" "$out"
 
 if (cd cmd/simui && go run . --board pico2-presets --tab bus --run 0.05 \
 	--png "../../$BUILD/ui-presets-smoke.png" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-presets-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-presets-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI built-in bus presets tab"
 else
-	bad "UI built-in bus presets tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI built-in bus presets tab" "$(cat "$SMOKE_LOG")"
 fi
 
 # --- scripted device plugins ------------------------------------------------
@@ -383,94 +398,108 @@ contains "UART air sensor values" "pm=" "$out"
 
 if (cd cmd/simui && go run . --board pico2-plugins --tab bus --run 0.5 \
 	--png "../../$BUILD/ui-plugins-smoke.png" "../../$BUILD/presets.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-plugins-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-plugins-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI scripted plugins tab"
 else
-	bad "UI scripted plugins tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI scripted plugins tab" "$(cat "$SMOKE_LOG")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-lcd-lab --tab lcd --run 3 \
 	--png "../../$BUILD/ui-lab-smoke.png" "../../$BUILD/lab.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-lab-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-lab-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI LCD sensor lab"
 else
-	bad "UI LCD sensor lab" "$(cat "$BUILD/smoke.log")"
+	bad "UI LCD sensor lab" "$(cat "$SMOKE_LOG")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-gps --tab gps --run 1 \
 	--png "../../$BUILD/ui-gps-smoke.png" "../../$BUILD/gps.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-gps-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-gps-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI GPS tab"
 else
-	bad "UI GPS tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI GPS tab" "$(cat "$SMOKE_LOG")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-can --tab can --run 1 \
 	--png "../../$BUILD/ui-can-smoke.png" "../../$BUILD/can.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-can-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-can-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI CAN tab"
 else
-	bad "UI CAN tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI CAN tab" "$(cat "$SMOKE_LOG")"
 fi
 
 if [ -f firmware/c/build/itmdemo.elf ]; then
 	if (cd cmd/simui && go run . --board pico2 --tab trace --run 1 \
 		--png "../../$BUILD/ui-trace-smoke.png" "../../firmware/c/build/itmdemo.elf" >/dev/null 2>&1) &&
-		"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-trace-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+		"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-trace-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 		ok "UI Trace tab"
 	else
-		bad "UI Trace tab" "$(cat "$BUILD/smoke.log")"
+		bad "UI Trace tab" "$(cat "$SMOKE_LOG")"
 	fi
 fi
 
 if (cd cmd/simui && go run . --board pico2 --png "../../$BUILD/ui-smoke.png" --run 0.4 "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI headless snapshot"
 else
-	bad "UI headless snapshot" "$(cat "$BUILD/smoke.log")"
+	bad "UI headless snapshot" "$(cat "$SMOKE_LOG")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-analog --tab scope --run 0.02 	--png "../../$BUILD/scope-smoke.png" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/scope-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/scope-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI oscilloscope tab"
 else
-	bad "UI oscilloscope tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI oscilloscope tab" "$(cat "$SMOKE_LOG")"
 fi
 
+fi
+
+if in_group c || in_pex; then
 # --- Pico SDK C firmware (optional: needs the ARM toolchain and the SDK) ------
 if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &&
 	command -v cmake >/dev/null 2>&1; then
-	if cmake -S firmware/c -B "$BUILD/pico-c" -G Ninja -DPICO_BOARD=pico2 \
+	# A `task ci` dependency may have built the same examples already; reuse
+	# them instead of compiling the SDK tree twice. Standalone runs build
+	# their own copy under $BUILD/pico-c.
+	C_BUILD=
+	if [ -n "${PICO_C_BUILD:-}" ] && [ -f "$PICO_C_BUILD/hello.elf" ] &&
+		[ -f "$PICO_C_BUILD/ota2.bin" ]; then
+		C_BUILD=$PICO_C_BUILD
+	elif cmake -S firmware/c -B "$BUILD/pico-c" -G Ninja -DPICO_BOARD=pico2 \
 		-DPICO_SDK_PATH="$PICO_SDK_PATH" -DCMAKE_BUILD_TYPE=Release \
 		-DPICO_NO_PICOTOOL=1 \
-		>>"$BUILD/smoke.log" 2>&1 &&
-		cmake --build "$BUILD/pico-c" >>"$BUILD/smoke.log" 2>&1; then
-		out=$("$EMU" -fw "$BUILD/pico-c/hello.elf" -seconds 1 -quiet 2>&1)
+		>>"$SMOKE_LOG" 2>&1 &&
+		cmake --build "$BUILD/pico-c" >>"$SMOKE_LOG" 2>&1; then
+		C_BUILD="$BUILD/pico-c"
+	fi
+	if [ -n "$C_BUILD" ]; then
+		if in_group c; then
+		out=$("$EMU" -fw "$C_BUILD/hello.elf" -seconds 1 -quiet 2>&1)
 		contains "Pico SDK C hello" "hello c done" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/usbhello.elf" -seconds 1 -quiet 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/usbhello.elf" -seconds 1 -quiet 2>&1)
 		contains "Pico SDK USB stdio" "hello usb done" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/usbecho.elf" -seconds 1 -quiet \
+		out=$("$EMU" -fw "$C_BUILD/usbecho.elf" -seconds 1 -quiet \
 			-input "Z" -input-at 300ms 2>&1)
 		contains "Pico SDK USB echo ready" "usb echo ready" "$out"
 		contains "Pico SDK USB echo input" "echo Z" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/aontimer.elf" -seconds 2 -quiet \
+		out=$("$EMU" -fw "$C_BUILD/aontimer.elf" -seconds 2 -quiet \
 			-expect "aon alarm 1001" -stop-on-expect 2>&1)
 		contains "Pico SDK AON timer" "aon alarm 1001" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/rtosctx.elf" -seconds 2 -quiet \
+		out=$("$EMU" -fw "$C_BUILD/rtosctx.elf" -seconds 2 -quiet \
 			-expect "rtosctx ok" -stop-on-expect 2>&1)
 		contains "C RTOS context switch" "rtosctx ok a=5 b=5 nested=1 crit=1" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/hang.elf" -seconds 1 -hang-cycles 500000 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/hang.elf" -seconds 1 -hang-cycles 500000 2>&1)
 		contains "C hang detector" '"msg":"hang detected"' "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/inputs.elf" -seconds 0.5 -quiet 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/inputs.elf" -seconds 0.5 -quiet 2>&1)
 		contains "C board inputs demo" "inputs: btn=0 sw=0 enc=0 boot=0" "$out"
 		contains "C board inputs float" "0.00 V" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/floatdemo.elf" -seconds 1 -quiet 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/floatdemo.elf" -seconds 1 -quiet 2>&1)
 		contains "C single-precision FPU" "40700000 40580000 3fc00000 3f400000" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/dcp.elf" -seconds 1 -quiet 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/dcp.elf" -seconds 1 -quiet 2>&1)
 		contains "C double DCP" "4010000000000000 c01e000000000000 4018000000000000 3fd5555555555555 3ff6a09e667f3bcd" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/multicore.elf" -seconds 1 -quiet 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/multicore.elf" -seconds 1 -quiet 2>&1)
 		contains "C multicore" "worker=1" "$out"
-		out=$("$EMU" -fw "$BUILD/pico-c/otp.elf" -seconds 0.3 -quiet \
+		out=$("$EMU" -fw "$C_BUILD/otp.elf" -seconds 0.3 -quiet \
 			-otp-dump "$BUILD/otp-smoke.json" 2>&1)
 		contains "Pico SDK C OTP" "OTP demo: ok" "$out"
 		if grep -q '"row": 1024' "$BUILD/otp-smoke.json" &&
@@ -479,7 +508,7 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		else
 			bad "OTP dump" "$(cat "$BUILD/otp-smoke.json" 2>/dev/null)"
 		fi
-		out=$("$EMU" -fw "$BUILD/pico-c/psram.elf" -seconds 2 -quiet \
+		out=$("$EMU" -fw "$C_BUILD/psram.elf" -seconds 2 -quiet \
 			-psram 8 -psram-cs 8 -psram-latency 6 2>&1)
 		contains "Pico SDK C PSRAM" "psram: ok" "$out"
 		contains "Pico SDK C PSRAM size" "size=8388608" "$out"
@@ -489,20 +518,20 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			ok "Pico SDK C PSRAM idle"
 		fi
 		if (cd cmd/simui && go run . --board pico2 --tab otp --run 0.05 --width 1920 --height 1080 \
-			--png "../../$BUILD/otp-ui-smoke.png" "../../$BUILD/pico-c/otp.elf" >/dev/null 2>&1) &&
-			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/otp-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+			--png "../../$BUILD/otp-ui-smoke.png" "../../$C_BUILD/otp.elf" >/dev/null 2>&1) &&
+			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/otp-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 			ok "UI OTP tab"
 		else
-			bad "UI OTP tab" "$(cat "$BUILD/smoke.log")"
+			bad "UI OTP tab" "$(cat "$SMOKE_LOG")"
 		fi
 		rm -f "$BUILD/ota-flash.bin" "$BUILD/ota-prefix.bin" "$BUILD/ota-ui-flash.bin"
-		out=$("$EMU" -fw "$BUILD/pico-c/ota.elf" -flash "$BUILD/ota-flash.bin" -seconds 2 \
+		out=$("$EMU" -fw "$C_BUILD/ota.elf" -flash "$BUILD/ota-flash.bin" -seconds 2 \
 			-expect "ota v2 running" -stop-on-expect 2>&1)
 		contains "OTA self-update boots v2" "ota v2 running" "$out"
 		contains "OTA reset logged" '"msg":"reset"' "$out"
-		size=$(wc -c <"$BUILD/pico-c/ota2.bin" | tr -d ' ')
+		size=$(wc -c <"$C_BUILD/ota2.bin" | tr -d ' ')
 		dd if="$BUILD/ota-flash.bin" of="$BUILD/ota-prefix.bin" bs=1 count="$size" 2>/dev/null
-		if cmp -s "$BUILD/ota-prefix.bin" "$BUILD/pico-c/ota2.bin"; then
+		if cmp -s "$BUILD/ota-prefix.bin" "$C_BUILD/ota2.bin"; then
 			ok "OTA flash image matches v2"
 		else
 			bad "OTA flash image" "first $size bytes differ"
@@ -511,19 +540,29 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 		contains "OTA flash boots without ELF" "ota v2 running" "$out"
 		if (cd cmd/simui && go run . --board pico2 --flash "../../$BUILD/ota-ui-flash.bin" --run 0.5 \
 			--width 1920 --height 1080 --png "../../$BUILD/ota-ui-smoke.png" \
-			"../../$BUILD/pico-c/ota.elf" >/dev/null 2>&1) &&
-			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/ota-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+			"../../$C_BUILD/ota.elf" >/dev/null 2>&1) &&
+			"$BUILD/pngcheck" -w 3840 -h 2160 -colors 20 "$BUILD/ota-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 			ok "UI self-update banner"
 		else
-			bad "UI self-update banner" "$(cat "$BUILD/smoke.log")"
+			bad "UI self-update banner" "$(cat "$SMOKE_LOG")"
 		fi
-		out=$("$EMU" -fw "$BUILD/pico-c/blinky.elf" -seconds 0.6 -trace-pins 25 2>&1)
+		out=$("$EMU" -fw "$C_BUILD/blinky.elf" -seconds 0.6 -trace-pins 25 2>&1)
 		n=$(grep -c '"msg":"pin change","pin":25,' <<<"$out")
 		if [ "$n" -ge 2 ]; then ok "C blinky toggles GP25 ($n edges)"; else bad "C blinky GP25" "$out"; fi
 
+		fi
+	else
+		if in_group c; then
+			bad "Pico SDK C build" "$(tail -20 "$SMOKE_LOG")"
+		fi
+	fi
+
+	if in_pex; then
 		# --- pico-examples: stock SDK programs with known output and signals ---
-		if bash tools/picoexamples.sh "$BUILD/pico-examples" >>"$BUILD/smoke.log" 2>&1; then
+		if [ "${PICO_EXAMPLES_READY:-0}" = 1 ] ||
+			bash tools/picoexamples.sh "$BUILD/pico-examples" >>"$SMOKE_LOG" 2>&1; then
 			EX="$BUILD/pico-examples/build"
+			if in_group pex || in_group pex1; then
 			out=$("$EMU" -fw "$EX/hello_serial/hello_serial.elf" -seconds 2.2 -quiet 2>&1)
 			contains "pico-examples hello_serial" "Hello, world!" "$out"
 			out=$("$EMU" -fw "$EX/hello_usb/hello_usb.elf" -seconds 1.2 -quiet 2>&1)
@@ -539,7 +578,7 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			contains "pico-examples TRNG rand" "All done" "$out"
 			out=$("$EMU" -fw "$EX/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf" -seconds 0.5 -quiet \
 				-dvi-png "$BUILD/dvi-smoke.png" 2>&1)
-			if "$BUILD/pngcheck" -w 640 -h 480 -colors 100 "$BUILD/dvi-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+			if "$BUILD/pngcheck" -w 640 -h 480 -colors 100 "$BUILD/dvi-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 				ok "pico-examples HSTX DVI frame"
 			else
 				bad "pico-examples HSTX DVI frame" "$("$BUILD/pngcheck" -w 640 -h 480 -colors 100 "$BUILD/dvi-smoke.png" 2>&1)"
@@ -547,11 +586,14 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			if (cd cmd/simui && go run . --board pico2-dvi --tab dvi --run 0.5 \
 				--png "../../$BUILD/dvi-ui-smoke.png" \
 				"../../$EX/dvi_out_hstx_encoder/dvi_out_hstx_encoder.elf" >/dev/null 2>&1) &&
-				"$BUILD/pngcheck" -w 2560 -h 1640 -colors 100 "$BUILD/dvi-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+				"$BUILD/pngcheck" -w 2560 -h 1640 -colors 100 "$BUILD/dvi-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 				ok "UI DVI tab"
 			else
-				bad "UI DVI tab" "$(cat "$BUILD/smoke.log")"
+				bad "UI DVI tab" "$(cat "$SMOKE_LOG")"
 			fi
+			fi
+
+			if in_group pex || in_group pex2; then
 			out=$("$EMU" -fw "$EX/hello_uart/hello_uart.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples hello_uart" "AB Hello, UART!" "$out"
 			out=$("$EMU" -fw "$EX/gps_uart/gps_uart.elf" -seconds 3 -quiet -hang-cycles 0 -gps 1 2>/dev/null)
@@ -575,6 +617,9 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			# dcp_dot consume the wrong elements and print 28.
 			out=$("$EMU" -fw "$EX/hello_dcp/hello_dcp.elf" -seconds 0.5 -quiet 2>&1)
 			contains "pico-examples DCP" "(1,2,3).(4,5,6)=32" "$out"
+			fi
+
+			if in_group pex || in_group pex3; then
 			out=$("$EMU" -fw "$EX/hello_watchdog/hello_watchdog.elf" -seconds 1.5 -quiet 2>&1)
 			contains "pico-examples watchdog boot" "Clean boot" "$out"
 			contains "pico-examples watchdog reboot" "Rebooted by Watchdog!" "$out"
@@ -592,46 +637,48 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			# GPIO/PIO/PWM programs: measure the pin, not just the console.
 			if "$EMU" -fw "$EX/blink/blink.elf" -seconds 1.2 -quiet \
 				-logic-pins 25 -logic-rate 1000 -logic-out "$BUILD/pe-blink.txt" >/dev/null 2>&1 &&
-				"$BUILD/pincheck" -pin 25 -freq 2 -duty 50 "$BUILD/pe-blink.txt" >>"$BUILD/smoke.log" 2>&1; then
+				"$BUILD/pincheck" -pin 25 -freq 2 -duty 50 "$BUILD/pe-blink.txt" >>"$SMOKE_LOG" 2>&1; then
 				ok "pico-examples blink GP25 at 2 Hz"
 			else
-				bad "pico-examples blink signal" "$(cat "$BUILD/smoke.log")"
+				bad "pico-examples blink signal" "$(cat "$SMOKE_LOG")"
 			fi
 			if "$EMU" -fw "$EX/hello_pio/hello_pio.elf" -seconds 1.6 -quiet \
 				-logic-pins 25 -logic-rate 1000 -logic-out "$BUILD/pe-hello-pio.txt" >/dev/null 2>&1 &&
-				"$BUILD/pincheck" -pin 25 -freq 1 -duty 50 "$BUILD/pe-hello-pio.txt" >>"$BUILD/smoke.log" 2>&1; then
+				"$BUILD/pincheck" -pin 25 -freq 1 -duty 50 "$BUILD/pe-hello-pio.txt" >>"$SMOKE_LOG" 2>&1; then
 				ok "pico-examples hello_pio GP25 at 1 Hz"
 			else
-				bad "pico-examples hello_pio signal" "$(cat "$BUILD/smoke.log")"
+				bad "pico-examples hello_pio signal" "$(cat "$SMOKE_LOG")"
 			fi
 			if "$EMU" -fw "$EX/pio_blink/pio_blink.elf" -seconds 1.2 -quiet \
 				-logic-pins 3,4,5,6 -logic-rate 1000 -logic-out "$BUILD/pe-pio-blink.txt" >/dev/null 2>&1 &&
-				"$BUILD/pincheck" -pin 3 -freq 4 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1 &&
-				"$BUILD/pincheck" -pin 4 -freq 3 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1 &&
-				"$BUILD/pincheck" -pin 5 -freq 2 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1 &&
-				"$BUILD/pincheck" -pin 6 -freq 1 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$BUILD/smoke.log" 2>&1; then
+				"$BUILD/pincheck" -pin 3 -freq 4 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$SMOKE_LOG" 2>&1 &&
+				"$BUILD/pincheck" -pin 4 -freq 3 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$SMOKE_LOG" 2>&1 &&
+				"$BUILD/pincheck" -pin 5 -freq 2 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$SMOKE_LOG" 2>&1 &&
+				"$BUILD/pincheck" -pin 6 -freq 1 -duty 50 "$BUILD/pe-pio-blink.txt" >>"$SMOKE_LOG" 2>&1; then
 				ok "pico-examples pio_blink 4/3/2/1 Hz"
 			else
-				bad "pico-examples pio_blink signals" "$(cat "$BUILD/smoke.log")"
+				bad "pico-examples pio_blink signals" "$(cat "$SMOKE_LOG")"
 			fi
 			if "$EMU" -fw "$EX/pio_squarewave/pio_squarewave.elf" -seconds 0.01 -quiet \
 				-continue-after-halt -logic-pins 0 -logic-rate 150e6 \
 				-logic-out "$BUILD/pe-squarewave.txt" >/dev/null 2>&1 &&
-				"$BUILD/pincheck" -pin 0 -freq 15e6 -duty 50 "$BUILD/pe-squarewave.txt" >>"$BUILD/smoke.log" 2>&1; then
+				"$BUILD/pincheck" -pin 0 -freq 15e6 -duty 50 "$BUILD/pe-squarewave.txt" >>"$SMOKE_LOG" 2>&1; then
 				ok "pico-examples PIO square wave 15 MHz"
 			else
-				bad "pico-examples PIO square wave" "$(cat "$BUILD/smoke.log")"
+				bad "pico-examples PIO square wave" "$(cat "$SMOKE_LOG")"
 			fi
 			if "$EMU" -fw "$EX/hello_pwm/hello_pwm.elf" -seconds 0.01 -quiet \
 				-continue-after-halt -logic-pins 0,1 -logic-rate 150e6 \
 				-logic-out "$BUILD/pe-pwm.txt" >/dev/null 2>&1 &&
-				"$BUILD/pincheck" -pin 0 -freq 37.5e6 -duty 25 "$BUILD/pe-pwm.txt" >>"$BUILD/smoke.log" 2>&1 &&
-				"$BUILD/pincheck" -pin 1 -freq 37.5e6 -duty 75 "$BUILD/pe-pwm.txt" >>"$BUILD/smoke.log" 2>&1; then
+				"$BUILD/pincheck" -pin 0 -freq 37.5e6 -duty 25 "$BUILD/pe-pwm.txt" >>"$SMOKE_LOG" 2>&1 &&
+				"$BUILD/pincheck" -pin 1 -freq 37.5e6 -duty 75 "$BUILD/pe-pwm.txt" >>"$SMOKE_LOG" 2>&1; then
 				ok "pico-examples PWM 25/75% at 37.5 MHz"
 			else
-				bad "pico-examples PWM signals" "$(cat "$BUILD/smoke.log")"
+				bad "pico-examples PWM signals" "$(cat "$SMOKE_LOG")"
+			fi
 			fi
 
+			if in_group pex || in_group pex4; then
 			out=$("$EMU" -fw "$EX/i2c_bus_scan/i2c_bus_scan.elf" -seconds 1 -quiet 2>&1)
 			contains "pico-examples I2C scan completes" "Done." "$out"
 			if [ "$(tr -cd '@' <<<"$out" | wc -c | tr -d ' ')" -eq 0 ]; then
@@ -648,16 +695,18 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null 2>&1 &
 			else
 				bad "pico-examples I2C scan devices" "$out"
 			fi
+			fi
 		else
-			bad "pico-examples build" "$(tail -20 "$BUILD/smoke.log")"
+			bad "pico-examples build" "$(tail -20 "$SMOKE_LOG")"
 		fi
-	else
-		bad "Pico SDK C build" "$(tail -20 "$BUILD/smoke.log")"
 	fi
 else
 	echo "skip: Pico SDK C checks (set PICO_SDK_PATH and install the ARM toolchain)"
 fi
 
+fi
+
+if in_group basic2; then
 "$EMU" -fw "$BUILD/protocols.elf" -seconds 0.4 -quiet \
 	-logic-pins 0,1 -logic-uart 0,1,115200 -logic-out "$BUILD/logic-capture.txt" \
 	-vcd "$BUILD/logic-capture.vcd" >/dev/null 2>&1
@@ -677,18 +726,18 @@ else
 fi
 
 if (cd cmd/simui && go run . --board pico2-analog --tab logic --run 0.05 	--png "../../$BUILD/logic-smoke.png" "../../$BUILD/protocols.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 30 "$BUILD/logic-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 30 "$BUILD/logic-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI logic analyzer tab"
 else
-	bad "UI logic analyzer tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI logic analyzer tab" "$(cat "$SMOKE_LOG")"
 fi
 
 if (cd cmd/simui && go run . --board pico2-bus --tab bus --run 0.05 \
 	--png "../../$BUILD/bus-ui-smoke.png" "../../$BUILD/busmaster.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/bus-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/bus-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI I2C/SPI bus tab"
 else
-	bad "UI I2C/SPI bus tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI I2C/SPI bus tab" "$(cat "$SMOKE_LOG")"
 fi
 
 # --- profiling: exact LCOV, JSON report and the sampled top list ------------
@@ -708,10 +757,12 @@ fi
 
 if (cd cmd/simui && go run . --board pico2 --tab profile --run 0.5 \
 	--png "../../$BUILD/profile-ui-smoke.png" "../../$BUILD/blinky.elf" >/dev/null 2>&1) &&
-	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/profile-ui-smoke.png" >>"$BUILD/smoke.log" 2>&1; then
+	"$BUILD/pngcheck" -w 2560 -h 1640 -colors 20 "$BUILD/profile-ui-smoke.png" >>"$SMOKE_LOG" 2>&1; then
 	ok "UI Profile tab"
 else
-	bad "UI Profile tab" "$(cat "$BUILD/smoke.log")"
+	bad "UI Profile tab" "$(cat "$SMOKE_LOG")"
+fi
+
 fi
 
 if [ "$fail" -ne 0 ]; then

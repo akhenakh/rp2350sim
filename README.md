@@ -346,10 +346,15 @@ go test ./...
 
 `task ci` is the full gate: `go vet`, the unit tests, the QEMU differential
 corpus (skipped when `qemu-system-arm`/`arm-none-eabi-gdb` are missing), every
-firmware example, and `tools/smoke.sh`, which asserts on observable behaviour
-(GPIO edges, console echo, PIO checks, WS2812 colours, multicore launch, LCD
-pixels, W5500 and W6300 TCP/UDP against `tools/ethhost`) plus a headless UI snapshot
-checked with `tools/pngcheck`. `.github/workflows/ci.yml` runs the same target.
+firmware example, and `tools/smoke.sh`, which runs as independent slices in
+parallel and asserts on observable behaviour (GPIO edges, console echo, PIO
+checks, WS2812 colours, multicore launch, LCD pixels, W5500 and W6300 TCP/UDP
+against `tools/ethhost`) plus a headless UI snapshot checked with
+`tools/pngcheck`. `.github/workflows/ci.yml` runs the same target.
+
+Lint, the unit tests and the smoke suite run concurrently. The smoke suite is
+split into nine slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`), each
+with its own helper log under `build/smoke-<slice>.log`.
 
 The decoder regression gate is a differential harness that runs a generated
 corpus of instructions (1344 cases) in QEMU's Cortex-M33 and compares registers,
