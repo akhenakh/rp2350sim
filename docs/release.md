@@ -22,7 +22,7 @@ backend, so a single Linux runner cross-compiles every target.
 
 ## GitHub paths
 
-Replace `<tag>` with the release tag (for example `v0.5.0`) and `<previous-tag>`
+Replace `<tag>` with the release tag (for example `v0.6.0`) and `<previous-tag>`
 with the prior tag. Keep the paths themselves abstract:
 
 - repository: `https://github.com/akhenakh/rp2350sim`
@@ -45,6 +45,15 @@ Committing the release notes before tagging keeps the tag, source archive and
 release page consistent without retroactively editing the tagged commit.
 
 ## Next release (unreleased)
+
+Working notes for changes after v0.6 go here.
+
+## v0.6 highlights
+
+v0.6 models the Pico 2 W's CYW43439 at the gSPI pins: the stock TinyGo Wi-Fi
+driver runs unmodified, the radio reaches a virtual access point backed by a
+gVisor userland TCP/IP stack, and Bluetooth HCI shares the same bus. The
+Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end.
 
 - The Pico 2 W's CYW43439 is modelled at the gSPI pins, so the stock TinyGo
   `soypat/cyw43439` driver runs unmodified: reset, firmware/CLM/NVRAM
@@ -79,6 +88,15 @@ release page consistent without retroactively editing the tagged commit.
   is filled, side-set applies on the resumed cycle, and a latched PIO
   pindir/output is applied when FUNCSEL switches to a PIO function — the
   pico-sdk cyw43 driver sets pindirs before selecting the PIO function.
+  Forced instructions also complete at sys_clk with a divided or default SM
+  clock, sticky OUT/PINDIRS ranges rotate and wrap through the 32-pin window,
+  and leaving PIO releases the pad.
+- CYW43439 hardening: `Device.Close` tears down the gVisor stack and NAT
+  sockets on reload, virtual timers re-arm after firing, reset and capture no
+  longer race the DNS resolver, the gSPI interface is gated on CS and
+  `WL_REG_ON`, a short data frame uses the BDC header, an empty read returns
+  the status word, length zero means 2048 bytes, and duplicate-address probes
+  for the guest are not answered.
 - New demo tasks and boards: `run:pico2w`, `run:pico2wnet`, `run:pico2wble`,
   `run:wificlock`, `ui:wificlock` and `ui:wificlock:png`; boards `pico2w-cyw`
   and `pico2w-lcd`. The smoke suite covers CYW firmware/join/LED, HCI Reset,
