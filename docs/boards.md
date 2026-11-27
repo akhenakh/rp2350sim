@@ -286,7 +286,9 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 - **CYW43439 / Bluetooth:** not emulated; the Pico 2 W uses the virtual Wi-Fi
   described above.
 - **Core 1:** works with `-scheduler=cores` (SIO launch, WFE/SEV, tasks on both
-  cores). The default TinyGo tasks scheduler is single-core. The SCS page is
+  cores). The default TinyGo tasks scheduler is single-core. `machine.AssignCore`
+  keeps a goroutine pinned to a core across sleeps and channel wakeups (see
+  `firmware/assigncore`). The SCS page is
   banked per core: VTOR, NVIC enable/pending/priority state, SysTick and the
   system-exception pending bits are private, and shared peripheral IRQs are
   replicated to both cores. The launch handshake validates the bootrom's
@@ -380,6 +382,7 @@ stderr); the UI board key is `serial: [{uart: 1}]`.
 | `firmware/hid` | USB HID keyboard + mouse reports |
 | `firmware/hidgamepad` | USB HID gamepad reports |
 | `firmware/cores` | `-scheduler=cores` and core 1 |
+| `firmware/assigncore` | `machine.AssignCore` pins goroutines to both cores |
 | `firmware/echo` | USB CDC console input |
 | `firmware/uart` | UART output for the logic analyzer |
 | `firmware/onewire` | bit-banged DS18B20 |

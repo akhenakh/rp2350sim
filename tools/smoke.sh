@@ -100,6 +100,12 @@ out=$("$EMU" -fw "$BUILD/cores.elf" -seconds 1.5 2>&1)
 contains "core 1 runs tasks" "cores: done" "$out"
 contains "core 1 launched" '"core1_launches":1' "$out"
 
+# --- cores scheduler affinity ------------------------------------------------
+out=$("$EMU" -fw "$BUILD/assigncore.elf" -seconds 1.5 2>&1)
+contains "AssignCore pins core 0" "assigncore: core=0 ok=true" "$out"
+contains "AssignCore pins core 1" "assigncore: core=1 ok=true" "$out"
+contains "AssignCore survives sleeps and wakeups" "assigncore: done" "$out"
+
 # --- ST7789 framebuffer export ---------------------------------------------
 out=$("$EMU" -fw "$BUILD/lcd.elf" -seconds 3 -lcd -lcd-png "$BUILD/lcd-smoke.png" 2>&1)
 if "$BUILD/pngcheck" -w 240 -h 135 -colors 2 "$BUILD/lcd-smoke.png" >>"$BUILD/smoke.log" 2>&1; then

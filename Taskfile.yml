@@ -84,6 +84,7 @@ tasks:
       - firmware:piotest
       - firmware:ws2812
       - firmware:cores
+      - firmware:assigncore
       - firmware:echo
       - firmware:w6300
       - firmware:w5500
@@ -606,6 +607,24 @@ tasks:
     cmds:
       - mkdir -p ../../{{.BUILD}}
       - '{{.TINYGO}} build -target={{.TARGET}} -scheduler=cores -o ../../{{.BUILD}}/cores.elf .'
+
+  firmware:assigncore:
+    desc: Build the cores scheduler affinity test (-scheduler=cores)
+    dir: firmware/assigncore
+    sources:
+      - main.go
+      - go.mod
+    generates:
+      - '../../{{.BUILD}}/assigncore.elf'
+    cmds:
+      - mkdir -p ../../{{.BUILD}}
+      - '{{.TINYGO}} build -target={{.TARGET}} -scheduler=cores -o ../../{{.BUILD}}/assigncore.elf .'
+
+  run:assigncore:
+    desc: Run the machine.AssignCore affinity test
+    deps: [build, firmware:assigncore]
+    cmds:
+      - '{{.EMU}} -fw {{.BUILD}}/assigncore.elf -seconds 1.5'
 
   run:cores:
     desc: Run the multicore test and trace both cores' pins

@@ -273,6 +273,7 @@ The repository ships a [Taskfile](https://taskfile.dev) (`task` lists them).
 | `task touchlcd` | run the Touch-LCD-2 example and export its framebuffer |
 | `task run:piotest` | run the PIO API checks (FIFOs, autopush/pull, IRQ, side-set) |
 | `task run:cores` | build with `-scheduler=cores`, run a task on core 1, trace both pins |
+| `task run:assigncore` | pin goroutines to both cores with `machine.AssignCore` |
 | `task run:echo` | echo injected console input through USB CDC |
 | `task run:ws2812` | run the WS2812B example and print the decoded LED colours |
 | `task run:hid`, `run:hidgamepad` | log decoded USB HID keyboard/mouse or gamepad reports |
@@ -370,6 +371,8 @@ regenerates the corpus with `llvm-mc -triple=thumbv8m.main` encodings.
 - The default `pico2` build does not launch core 1. With
   `tinygo build -scheduler=cores` the runtime starts core 1 through the SIO
   FIFO; both cores then run tasks (see `firmware/cores` and `task run:cores`).
+  `machine.AssignCore` pins a goroutine to one core, including across sleeps
+  and channel wakeups (see `firmware/assigncore`).
 - Time is virtual and one instruction is one cycle. Idle firmware fast-forwards
   to the next microsecond tick, so sleeps cost almost nothing; a compute-bound
   loop runs at about 90M instructions/s, and blinky's 2s program finishes in

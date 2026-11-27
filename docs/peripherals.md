@@ -59,7 +59,8 @@ Build the demo firmware once with:
 task firmware:blinky firmware:lcd firmware:touchlcd firmware:piotest \
   firmware:ws2812 firmware:w5500 firmware:w6300 firmware:ch9120 firmware:wifi \
   firmware:protocols firmware:serialbridge firmware:busmaster firmware:busdevice \
-  firmware:presets firmware:cores firmware:sdcard firmware:audio firmware:midi
+  firmware:presets firmware:cores firmware:assigncore firmware:sdcard \
+  firmware:audio firmware:midi
 ```
 
 ## GPIO, PWM and ADC
