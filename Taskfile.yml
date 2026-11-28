@@ -105,7 +105,24 @@ tasks:
 
   ci:
     desc: Full verification (lint, unit tests, QEMU corpus, firmware smokes, UI snapshot)
-    # The three groups are independent; Task runs dependencies in parallel.
+    # This workstation has plenty of cores; GitHub's four-core runners do not,
+    # and the loaded runner blew the GDB/QEMU test timeouts when everything ran
+    # at once. Keep the fast local default and cap the hosted runner.
+    vars:
+      CI_CONCURRENCY:
+        sh: |
+          if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo 2
+          elif command -v nproc >/dev/null 2>&1; then
+            nproc
+          else
+            sysctl -n hw.ncpu 2>/dev/null || echo 4
+          fi
+    cmds:
+      - task --concurrency {{.CI_CONCURRENCY}} ci:all
+
+  ci:all:
+    desc: Full verification graph (internal; use `task ci`)
     deps: [lint, ci:test, ci:smoke]
 
   ci:test:
@@ -113,29 +130,32 @@ tasks:
 
   ci:smoke:
     deps: [ci:smoke:builds]
+    vars:
+      SMOKE_JOBS:
+        sh: |
+          if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            echo 3
+          else
+            n=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+            if [ "$n" -gt 9 ]; then n=9; fi
+            echo "$n"
+          fi
     cmds:
-      # Run the independent slices of tools/smoke.sh in parallel. One task
-      # owns the shared build dependency, so the pico-examples tree is never
-      # configured by two processes at once.
+      # Run the independent slices of tools/smoke.sh in parallel, bounded by
+      # SMOKE_JOBS. One task owns the shared build dependency, so the
+      # pico-examples tree is never configured by two processes at once.
       - |
-        pids=""
-        for group in basic1 network basic2 c pex1 pex2 pex3 pex4; do
-          (
-            start=$(date +%s)
-            PICO_C_BUILD=firmware/c/build PICO_EXAMPLES_READY=1 \
-              SMOKE_GROUP=$group SMOKE_LOG="{{.BUILD}}/smoke-$group.log" \
-              bash tools/smoke.sh "{{.BUILD}}"
-            rc=$?
-            echo "smoke[$group]: $(( $(date +%s) - start ))s" >&2
-            exit $rc
-          ) &
-          pids="$pids $!"
-        done
-        status=0
-        for pid in $pids; do
-          wait "$pid" || status=1
-        done
-        exit $status
+        export SMOKE_JOBS={{.SMOKE_JOBS}}
+        groups="basic1 network basic2 c pex1 pex2 pex3 pex4"
+        printf '%s\n' $groups | xargs -P "$SMOKE_JOBS" -I{} sh -c '
+          start=$(date +%s)
+          PICO_C_BUILD=firmware/c/build PICO_EXAMPLES_READY=1 \
+            SMOKE_GROUP=$1 SMOKE_LOG="{{.BUILD}}/smoke-$1.log" \
+            bash tools/smoke.sh "{{.BUILD}}"
+          rc=$?
+          echo "smoke[$1]: $(( $(date +%s) - start ))s" >&2
+          exit $rc
+        ' sh {}
 
   ci:smoke:builds:
     deps:

@@ -125,6 +125,13 @@ sequential `all` mode. Each slice writes `build/smoke-<slice>.log` for the
 helper output (pngcheck, pincheck, CMake) while the `ok:`/`FAIL:` lines stay on
 stdout for the PR report.
 
+`task ci` adapts its parallelism to the host. On a workstation it runs the
+smoke slices at `min(nproc, 9)` and lets Task use every core. On GitHub Actions
+(four vCPUs) it caps Task at two concurrent tasks and runs three smoke slices
+at a time, so the GDB and QEMU tests are not starved by the C and firmware
+builds. The mode is selected from `GITHUB_ACTIONS`; no workflow flag is
+needed. `task ci:all` is the full graph without the adaptive wrapper.
+
 ## Pull request reports
 
 The `ci` workflow runs on every pull request. It captures the full `task ci`

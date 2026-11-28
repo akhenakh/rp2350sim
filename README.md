@@ -375,7 +375,7 @@ against `tools/ethhost`) plus a headless UI snapshot checked with
 `tools/pngcheck`. `.github/workflows/ci.yml` runs the same target.
 
 Lint, the unit tests and the smoke suite run concurrently. The smoke suite is
-split into nine slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`), each
+split into eight slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`), each
 with its own helper log under `build/smoke-<slice>.log`.
 
 The decoder regression gate is a differential harness that runs a generated

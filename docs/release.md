@@ -105,12 +105,14 @@ Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end. See the
 - `task ci` runs lint, the unit tests and the smoke suite concurrently. Lint is
   split per module and the module gates run in sequence (golangci-lint holds a
   cache lock), the tests run as independent tasks, and the smoke suite is
-  nine slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`): the network
+  eight slices (`basic1`, `network`, `basic2`, `c`, `pex1`–`pex4`): the network
   checks stay together because they share host ports, and the Pico SDK C
   examples and pico-examples are built once and reused. Each slice writes its
   own `build/smoke-<slice>.log`. On a 24-core host the warm full run drops from
   2:18 to 36 s at about 4× CPU; `bash tools/smoke.sh` still runs the whole
-  suite sequentially.
+  suite sequentially. `task ci` uses all cores locally and caps GitHub Actions
+  at two concurrent tasks with three smoke slices, because the four-core runner
+  starves the GDB/QEMU tests otherwise.
 - A virtual CYW43 BLE controller runs stock Pico W BTstack firmware against a
   deterministic link layer and a scripted Environmental Sensing peer. The
   emulator binds the CYW43 HCI symbols in the ELF, so `ble_temp_reader`
