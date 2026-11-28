@@ -179,6 +179,7 @@ trap 'kill "$host" 2>/dev/null' EXIT
 sleep 0.5
 out=$("$EMU" -fw "$BUILD/w5500.elf" -seconds 12 -eth 2>&1)
 kill "$host" 2>/dev/null || true
+wait "$host" 2>/dev/null || true
 trap - EXIT
 log=$(cat "$BUILD/ethhost-w5500.log")
 contains "W5500 TCP echo" "tcp echo:" "$out"
@@ -213,6 +214,7 @@ else
 	bad "UI Ethernet tab" "$(cat "$SMOKE_LOG")"
 fi
 kill "$host" 2>/dev/null || true
+wait "$host" 2>/dev/null || true
 trap - EXIT
 
 # --- UI headless snapshot ---------------------------------------------------
@@ -226,6 +228,7 @@ chhost=$!
 sleep 0.5
 out=$("$EMU" -fw "$BUILD/ch9120.elf" -seconds 1.5 -ch9120 2>&1)
 kill "$chhost" 2>/dev/null || true
+wait "$chhost" 2>/dev/null || true
 contains "CH9120 TCP echo" "echo: hello ch9120" "$out"
 contains "CH9120 network advertised" "tcp/2000 established" "$out"
 
@@ -239,6 +242,7 @@ cywhost=$!
 sleep 0.5
 out=$("$EMU" -fw "$BUILD/pico2wnet.elf" -cyw43439 -cyw43439-host app.lan=10.0.2.2 -seconds 10 2>&1)
 kill "$cywhost" 2>/dev/null || true
+wait "$cywhost" 2>/dev/null || true
 log=$(cat "$BUILD/ethhost-cyw.log")
 contains "CYW43439 DHCP lease" "pico2wnet: dhcp addr 10.0.2.15" "$out"
 contains "CYW43439 DNS" "pico2wnet: dns app.lan 10.0.2.2" "$out"
@@ -251,6 +255,7 @@ wifihost=$!
 sleep 0.5
 out=$("$EMU" -fw "$BUILD/wifi.elf" -seconds 3 -ch9120 2>&1)
 kill "$wifihost" 2>/dev/null || true
+wait "$wifihost" 2>/dev/null || true
 contains "virtual Wi-Fi netdev" "wifi echo: hello wifi" "$out"
 contains "virtual Wi-Fi network" "ip=10.0.0.5" "$out"
 
