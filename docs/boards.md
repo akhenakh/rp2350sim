@@ -147,6 +147,9 @@ to.
   datagram's length, truncating a datagram larger than the caller's buffer. TCP
   advances only by the bytes copied, so a short read leaves the rest of the
   stream queued for the next call.
+- TinyGo's `net.DialUDP` loses the destination address on its second netdev
+  call in this build; UDP firmware should use the driver's
+  `Socket`/`Bind`/`Connect`/`Send` directly (TCP through `net` is fine).
 
 ## W5500 (breadboard)
 
@@ -159,7 +162,9 @@ to.
   WIZnet 8-byte peer header, as on hardware. The stock TinyGo driver's `Recv`
   does not skip that header; use the socket API directly for UDP receives.
   The stock driver rejects the 16-byte IPv4-mapped address that `net.IPv4`
-  returns, so the client passes a 4-byte `net.IP{127,0,0,1}`.
+  returns, so the client passes a 4-byte `net.IP{127,0,0,1}`. TinyGo's
+  `net.Dial("tcp", "host:port")` also needs `LookupPort`, which is absent in
+  this build; construct a `net.DialTCP` address with an explicit port.
 
 ## Waveshare RP2350-ETH (CH9120, non-PoE)
 
