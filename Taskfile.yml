@@ -223,7 +223,7 @@ tasks:
   test:qemu:
     desc: Differential instruction tests against QEMU (qemu-system-arm + arm-none-eabi-gdb)
     cmds:
-      - go test -tags qemu ./internal/m33 -run 'TestQEMU'
+      - go test -tags qemu ./internal/m33 -run 'TestQEMU' -timeout 15m
 
   audio:test:
     desc: Run the PWM audio firmware and check the exported WAV

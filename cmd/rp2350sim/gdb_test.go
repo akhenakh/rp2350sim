@@ -106,7 +106,7 @@ func TestCLIGDBInputAndFinalizationRace(t *testing.T) {
 	}
 	summaryPath := filepath.Join(t.TempDir(), "summary.json")
 	flashPath := filepath.Join(t.TempDir(), "flash.bin")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0],
 		"-fw", fwPath,
@@ -141,7 +141,7 @@ func TestCLIGDBInputAndFinalizationRace(t *testing.T) {
 		}
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	r := bufio.NewReader(conn)

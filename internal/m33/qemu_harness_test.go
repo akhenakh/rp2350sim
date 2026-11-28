@@ -11,6 +11,8 @@ package m33
 // Run with: go test -tags qemu ./internal/m33 -run TestQEMU
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -47,6 +49,8 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 
 	cmd := exec.Command(qemu, "-M", "mps2-an505", "-S", "-display", "none",
 		"-nographic", "-gdb", fmt.Sprintf("tcp:127.0.0.1:%d", port))
+	var qemuErr bytes.Buffer
+	cmd.Stderr = &qemuErr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,13 +59,20 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 		cmd.Wait()
 	}()
 	deadline := time.Now().Add(5 * time.Second)
+	connected := false
 	for time.Now().Before(deadline) {
 		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
 		if err == nil {
+			connected = true
 			c.Close()
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if !connected {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("qemu gdb port %d did not open: %s", port, qemuErr.String())
 	}
 
 	var script strings.Builder
@@ -121,11 +132,16 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 	if err := os.WriteFile(scriptPath, []byte(script.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	g := exec.Command(gdbPath, "-batch", "-x", scriptPath)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	g := exec.CommandContext(ctx, gdbPath, "-batch", "-x", scriptPath)
 	var out, stderr strings.Builder
 	g.Stdout = &out
 	g.Stderr = &stderr
 	gdbErr := g.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("gdb oracle timed out after 8m: %s", stderr.String())
+	}
 
 	results := make([]oracleResult, len(cases))
 	seen := make([]bool, len(cases))
