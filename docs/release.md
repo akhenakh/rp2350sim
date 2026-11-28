@@ -110,9 +110,9 @@ Wi-Fi clock demo and the Wi-Fi/UART tabs show it end to end. See the
   examples and pico-examples are built once and reused. Each slice writes its
   own `build/smoke-<slice>.log`. On a 24-core host the warm full run drops from
   2:18 to 36 s at about 4× CPU; `bash tools/smoke.sh` still runs the whole
-  suite sequentially. `task ci` uses all cores locally and caps GitHub Actions
-  at two concurrent tasks with three smoke slices, because the four-core runner
-  starves the GDB/QEMU tests otherwise.
+  suite sequentially. `task ci` uses all cores locally and phases GitHub Actions
+  into a lint/unit/QEMU pass and then a smoke pass with three slices, because
+  the four-core runner starves the GDB/QEMU tests otherwise.
 - A virtual CYW43 BLE controller runs stock Pico W BTstack firmware against a
   deterministic link layer and a scripted Environmental Sensing peer. The
   emulator binds the CYW43 HCI symbols in the ELF, so `ble_temp_reader`

@@ -127,10 +127,11 @@ stdout for the PR report.
 
 `task ci` adapts its parallelism to the host. On a workstation it runs the
 smoke slices at `min(nproc, 9)` and lets Task use every core. On GitHub Actions
-(four vCPUs) it caps Task at two concurrent tasks and runs three smoke slices
-at a time, so the GDB and QEMU tests are not starved by the C and firmware
-builds. The mode is selected from `GITHUB_ACTIONS`; no workflow flag is
-needed. `task ci:all` is the full graph without the adaptive wrapper.
+(four vCPUs) it runs in two phases: lint plus the unit/QEMU tests first (two
+concurrent tasks), then the smoke builds and three slices at a time. That keeps
+the GDB and QEMU tests away from the C and firmware build storm. The mode is
+selected from `GITHUB_ACTIONS`; no workflow flag is needed. `task ci:all` is
+the full graph without the adaptive wrapper.
 
 ## Pull request reports
 

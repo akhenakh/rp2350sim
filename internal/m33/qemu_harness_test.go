@@ -132,7 +132,7 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 	if err := os.WriteFile(scriptPath, []byte(script.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	g := exec.CommandContext(ctx, gdbPath, "-batch", "-x", scriptPath)
 	var out, stderr strings.Builder
@@ -140,7 +140,7 @@ func runOracle(t *testing.T, cases []diffCase) []oracleResult {
 	g.Stderr = &stderr
 	gdbErr := g.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		t.Fatalf("gdb oracle timed out after 8m: %s", stderr.String())
+		t.Fatalf("gdb oracle timed out after 12m: %s", stderr.String())
 	}
 
 	results := make([]oracleResult, len(cases))

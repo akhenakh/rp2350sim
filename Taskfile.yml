@@ -119,7 +119,16 @@ tasks:
             sysctl -n hw.ncpu 2>/dev/null || echo 4
           fi
     cmds:
-      - task --concurrency {{.CI_CONCURRENCY}} ci:all
+      - |
+        set -e
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then
+          # Four vCPUs: run the CPU-bound unit/QEMU phase before the smoke
+          # builds, so the GDB/QEMU tests are not starved.
+          task --concurrency {{.CI_CONCURRENCY}} lint ci:test
+          task --concurrency {{.CI_CONCURRENCY}} ci:smoke
+        else
+          task --concurrency {{.CI_CONCURRENCY}} ci:all
+        fi
 
   ci:all:
     desc: Full verification graph (internal; use `task ci`)
@@ -243,7 +252,7 @@ tasks:
   test:qemu:
     desc: Differential instruction tests against QEMU (qemu-system-arm + arm-none-eabi-gdb)
     cmds:
-      - go test -tags qemu ./internal/m33 -run 'TestQEMU' -timeout 15m
+      - go test -tags qemu ./internal/m33 -run 'TestQEMU' -timeout 20m
 
   audio:test:
     desc: Run the PWM audio firmware and check the exported WAV
